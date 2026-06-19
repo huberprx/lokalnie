@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lokalnie — podgląd aplikacji</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="logo">
+      <span class="logo-mark">L</span>
+      <span class="logo-text">Lokalnie</span>
+    </div>
+  </header>
+
+  <main class="preview-section">
+    <div class="preview-columns">
+      <!-- Lewa kolumna: użytkownik -->
+      <div class="preview-column preview-column--user">
+        <article class="phone-panel">
+        <div class="panel-label">
+          <span class="role-badge role-user">Użytkownik</span>
+          <span class="role-desc">Szuka usługi i rezerwuje termin</span>
+        </div>
+
+        <div class="phone">
+          <div class="phone-notch"></div>
+          <div class="app-screen app-screen--user">
+            <header class="business-header">
+              <button class="back-btn" aria-hidden="true">←</button>
+              <div class="business-header-info">
+                <div class="avatar avatar--provider">GB</div>
+                <div>
+                  <strong>Grzesiu Barber</strong>
+                  <span class="status">Fryzjer · Barber · Warszawa</span>
+                </div>
+              </div>
+            </header>
+
+            <div class="services-body">
+              <h2 class="services-title">Usługi</h2>
+
+              <ul class="services-list" role="group" aria-label="Usługi Grzesiu Barber">
+                <li>
+                  <div class="service-card" data-service-name="Strzyżenie męskie" data-service-subtitle="Klasyczne strzyżenie maszynką i nożyczkami" data-service-duration="30 min" data-service-price="60 zł">
+                    <div class="service-card__header">
+                      <span class="service-name">Strzyżenie męskie</span>
+                      <button type="button" class="service-card__toggle" aria-expanded="false" aria-label="Pokaż opis usługi">
+                        <span class="service-card__arrow" aria-hidden="true">›</span>
+                      </button>
+                    </div>
+                    <div class="service-card__meta">
+                      <span class="service-duration">30 min</span>
+                      <span class="service-price">60 zł</span>
+                    </div>
+                    <p class="service-subtitle">Klasyczne strzyżenie maszynką i nożyczkami</p>
+                  </div>
+                </li>
+
+                <li>
+                  <div class="service-card" data-service-name="Strzyżenie brody" data-service-subtitle="Modelowanie i wyrównanie linii brody" data-service-duration="20 min" data-service-price="40 zł">
+                    <div class="service-card__header">
+                      <span class="service-name">Strzyżenie brody</span>
+                      <button type="button" class="service-card__toggle" aria-expanded="false" aria-label="Pokaż opis usługi">
+                        <span class="service-card__arrow" aria-hidden="true">›</span>
+                      </button>
+                    </div>
+                    <div class="service-card__meta">
+                      <span class="service-duration">20 min</span>
+                      <span class="service-price">40 zł</span>
+                    </div>
+                    <p class="service-subtitle">Modelowanie i wyrównanie linii brody</p>
+                  </div>
+                </li>
+
+                <li>
+                  <div class="service-card" data-service-name="Combo: włosy + broda" data-service-subtitle="Strzyżenie i pełna stylizacja brody" data-service-duration="45 min" data-service-price="85 zł">
+                    <div class="service-card__header">
+                      <span class="service-name">Combo: włosy + broda</span>
+                      <button type="button" class="service-card__toggle" aria-expanded="false" aria-label="Pokaż opis usługi">
+                        <span class="service-card__arrow" aria-hidden="true">›</span>
+                      </button>
+                    </div>
+                    <div class="service-card__meta">
+                      <span class="service-duration">45 min</span>
+                      <span class="service-price">85 zł</span>
+                    </div>
+                    <p class="service-subtitle">Strzyżenie i pełna stylizacja brody</p>
+                  </div>
+                </li>
+
+                <li>
+                  <div class="service-card" data-service-name="Skin fade" data-service-subtitle="Precyzyjny fade z boków i karku" data-service-duration="35 min" data-service-price="70 zł">
+                    <div class="service-card__header">
+                      <span class="service-name">Skin fade</span>
+                      <button type="button" class="service-card__toggle" aria-expanded="false" aria-label="Pokaż opis usługi">
+                        <span class="service-card__arrow" aria-hidden="true">›</span>
+                      </button>
+                    </div>
+                    <div class="service-card__meta">
+                      <span class="service-duration">35 min</span>
+                      <span class="service-price">70 zł</span>
+                    </div>
+                    <p class="service-subtitle">Precyzyjny fade z boków i karku</p>
+                  </div>
+                </li>
+
+                <li>
+                  <div class="service-card" data-service-name="Strzyżenie damskie" data-service-subtitle="Krótkie i średnie włosy, mycie w cenie" data-service-duration="45 min" data-service-price="80 zł">
+                    <div class="service-card__header">
+                      <span class="service-name">Strzyżenie damskie</span>
+                      <button type="button" class="service-card__toggle" aria-expanded="false" aria-label="Pokaż opis usługi">
+                        <span class="service-card__arrow" aria-hidden="true">›</span>
+                      </button>
+                    </div>
+                    <div class="service-card__meta">
+                      <span class="service-duration">45 min</span>
+                      <span class="service-price">80 zł</span>
+                    </div>
+                    <p class="service-subtitle">Krótkie i średnie włosy, mycie w cenie</p>
+                  </div>
+                </li>
+
+                <li>
+                  <div class="service-card" data-service-name="Golenie brzytwą" data-service-subtitle="Tradycyjne golenie z gorącym kompresem" data-service-duration="25 min" data-service-price="50 zł">
+                    <div class="service-card__header">
+                      <span class="service-name">Golenie brzytwą</span>
+                      <button type="button" class="service-card__toggle" aria-expanded="false" aria-label="Pokaż opis usługi">
+                        <span class="service-card__arrow" aria-hidden="true">›</span>
+                      </button>
+                    </div>
+                    <div class="service-card__meta">
+                      <span class="service-duration">25 min</span>
+                      <span class="service-price">50 zł</span>
+                    </div>
+                    <p class="service-subtitle">Tradycyjne golenie z gorącym kompresem</p>
+                  </div>
+                </li>
+              </ul>
+
+              <div class="chat-body chat-body--compact" data-chat="user">
+                <div class="chat-live" data-live-messages="user"></div>
+              </div>
+            </div>
+
+            <form class="chat-input" data-role="user">
+              <div class="chat-input__field">
+                <div class="selection-chip" data-selection-chip hidden>
+                  <span class="selection-chip__label" data-selection-chip-label>Wybrano 0</span>
+                  <button type="button" class="selection-chip__clear" aria-label="Odznacz wybór">×</button>
+                </div>
+                <input
+                  type="text"
+                  name="message"
+                  placeholder="Napisz wiadomość…"
+                  autocomplete="off"
+                />
+              </div>
+              <button type="submit" class="send-btn" aria-label="Wyślij">↑</button>
+            </form>
+          </div>
+        </div>
+        </article>
+
+        <section class="calendar-section" aria-labelledby="calendar-user-title">
+          <div class="calendar-section-header">
+            <h2 id="calendar-user-title">Kalendarz Google · użytkownik</h2>
+            <p>Podłącz swój kalendarz, aby testować rezerwacje po stronie klienta.</p>
+          </div>
+          <form class="calendar-connect" data-role="user">
+            <input
+              type="text"
+              name="calendarId"
+              placeholder="ID kalendarza, np. twoj@email.com"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button type="submit">Połącz</button>
+          </form>
+          <div class="calendar-frame calendar-frame--user" data-role="user">
+            <p class="calendar-placeholder">Wklej ID kalendarza Google i kliknij „Połącz”.</p>
+          </div>
+        </section>
+      </div>
+
+      <!-- Prawa kolumna: usługodawca -->
+      <div class="preview-column preview-column--provider">
+        <article class="phone-panel">
+        <div class="panel-label">
+          <span class="role-badge role-provider">Usługodawca</span>
+          <span class="role-desc">Odpowiada i potwierdza rezerwacje</span>
+        </div>
+
+        <div class="phone">
+          <div class="phone-notch"></div>
+          <div class="app-screen app-screen--provider">
+            <header class="chat-header chat-header--provider">
+              <button class="back-btn" aria-hidden="true">←</button>
+              <div class="chat-header-info">
+                <div class="avatar avatar--user">HZ</div>
+                <div>
+                  <strong>Hubert Z</strong>
+                  <span class="status">nowa wiadomość</span>
+                </div>
+              </div>
+              <button class="calendar-btn" aria-hidden="true">📅</button>
+            </header>
+
+            <div class="chat-body" data-chat="provider">
+              <div class="provider-incoming-service" data-provider-service hidden>
+                <span class="provider-incoming-service__label">Klient wybrał usługi</span>
+                <ul class="provider-incoming-service__list" data-provider-service-list></ul>
+              </div>
+
+              <div class="date-divider">Dziś, 14:32</div>
+
+              <div class="message message--outgoing">
+                <p>Cześć! 👋 W czym mogę pomóc?</p>
+                <span class="time">14:32</span>
+              </div>
+
+              <div class="message message--incoming">
+                <p>Cześć, chciałbym umówić skin fade na sobotę.</p>
+                <span class="time">14:33</span>
+              </div>
+
+              <div class="message message--outgoing">
+                <p>Jasne! Mamy wolne terminy:</p>
+                <div class="booking-card booking-card--provider">
+                  <div class="booking-slot">10:00</div>
+                  <div class="booking-slot">14:30</div>
+                  <div class="booking-slot booking-slot--sent">16:00 ✓</div>
+                </div>
+                <span class="time">14:34</span>
+              </div>
+
+              <div class="message message--incoming">
+                <p>16:00 będzie super ✓</p>
+                <span class="time">14:35</span>
+              </div>
+
+              <div class="message message--system">
+                <div class="reservation-confirmed reservation-confirmed--provider">
+                  <span class="check">✓</span>
+                  <div>
+                    <strong>Nowa rezerwacja</strong>
+                    <span>Hubert Z · Sob 21 cze, 16:00 · Skin fade</span>
+                  </div>
+                  <button class="action-btn">Szczegóły</button>
+                </div>
+              </div>
+
+              <div class="chat-live" data-live-messages="provider"></div>
+            </div>
+
+            <form class="chat-input chat-input--provider" data-role="provider">
+              <button type="button" class="quick-reply" aria-hidden="true" tabindex="-1">Terminy</button>
+              <input type="text" name="message" placeholder="Odpowiedz klientowi…" autocomplete="off" />
+              <button type="submit" class="send-btn send-btn--provider" aria-label="Wyślij">↑</button>
+            </form>
+          </div>
+        </div>
+        </article>
+
+        <section class="calendar-section" aria-labelledby="calendar-provider-title">
+          <div class="calendar-section-header">
+            <h2 id="calendar-provider-title">Kalendarz Google · usługodawca</h2>
+            <p>Podłącz kalendarz usługodawcy, aby sprawdzać terminy i rezerwacje.</p>
+          </div>
+          <form class="calendar-connect" data-role="provider">
+            <input
+              type="text"
+              name="calendarId"
+              placeholder="ID kalendarza, np. studio@email.com"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button type="submit">Połącz</button>
+          </form>
+          <div class="calendar-frame calendar-frame--provider" data-role="provider">
+            <p class="calendar-placeholder">Wklej ID kalendarza Google i kliknij „Połącz”.</p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <p>Wersja podglądu · interfejs w budowie</p>
+  </footer>
+  <script src="chat.js"></script>
+  <script src="calendar.js"></script>
+</body>
+</html>
