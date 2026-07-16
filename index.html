@@ -24,6 +24,7 @@
         <nav class="site-nav" aria-label="Menu główne">
           <a href="#simulator" class="site-nav__link">Symulator</a>
           <a href="#calendar" class="site-nav__link">Kalendarz</a>
+          <button type="button" class="site-nav__link" data-action="open-my-calendar">Mój kalendarz</button>
         </nav>
         <div class="site-header__actions">
           <button type="button" class="site-nav__action site-nav__action--primary" data-action="test-login">
@@ -160,6 +161,10 @@
           <span class="logo-mark">L</span>
           <span class="logo-text">Lokalnie</span>
         </button>
+
+        <nav class="app-header__nav" aria-label="Menu aplikacji">
+          <button type="button" class="site-nav__link" data-action="open-my-calendar">Mój kalendarz</button>
+        </nav>
 
         <!-- Przełącznik ról — widoczny gdy klient MA opłaconą rolę usługodawcy -->
         <div class="app-role-switch" id="app-role-switch" hidden>

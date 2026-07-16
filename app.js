@@ -713,8 +713,10 @@
       .map(function (s) {
         return `
         <div class="time-row">
-          <span class="time-row__range">${escapeHtml(s.from)}→${escapeHtml(s.to)}</span>
-          <span class="time-row__place">${escapeHtml(s.locationLabel || "—")}</span>
+          <div class="time-row__info">
+            <span class="time-row__range">${escapeHtml(s.from)}→${escapeHtml(s.to)}</span>
+            <span class="time-row__place">${escapeHtml(s.locationLabel || "—")}</span>
+          </div>
           <button type="button" class="btn btn--primary btn--sm time-row__btn" data-action="book-slot" data-slot="${escapeHtml(s.id)}">Rezeruj</button>
         </div>`;
       })
@@ -1243,6 +1245,9 @@
       window.AppState.searchOpenSlug = null;
     }
     window.AppState.screen.client = screen;
+    if (window.AppState.loggedIn) {
+      updateAppHeader(window.AppState.activeRole || "client");
+    }
     saveState();
     renderAll();
   }
@@ -1600,6 +1605,23 @@
         btn.setAttribute("aria-pressed", btn.dataset.role === activeRole ? "true" : "false");
       });
     }
+
+    const onMyCalendar = activeRole === "client" && window.AppState.screen.client === "myCalendar";
+    document.querySelectorAll('[data-action="open-my-calendar"]').forEach(function (btn) {
+      btn.classList.toggle("site-nav__link--active", onMyCalendar);
+      btn.setAttribute("aria-current", onMyCalendar ? "page" : "false");
+    });
+  }
+
+  function openMyCalendar() {
+    window.AppState.loggedIn = true;
+    window.AppState.activeRole = "client";
+    window.AppState.screen.client = "myCalendar";
+    window.AppState.searchOpenSlug = null;
+    saveState();
+    updateAppHeader("client");
+    renderAll();
+    showPage("app");
   }
 
   function testLogin(startRole) {
@@ -1655,6 +1677,7 @@
     switch (a) {
       case "reset-demo": resetDemo(); break;
       case "test-login": event.preventDefault(); testLogin(d.target); break;
+      case "open-my-calendar": event.preventDefault(); openMyCalendar(); break;
       case "logout": logout(); break;
       case "go-home": event.preventDefault(); logout(); break;
       case "switch-role": switchRole(d.role); break;

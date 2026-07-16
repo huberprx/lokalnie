@@ -139,6 +139,19 @@ a.site-nav__link,
   transition: color 0.15s ease, background 0.15s ease;
 }
 
+button.site-nav__link {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.site-nav__link--active {
+  color: var(--accent-client);
+  background: var(--accent-client-soft);
+}
+
 a.site-nav__link:visited {
   color: var(--text-muted);
   text-decoration: none;
@@ -1239,6 +1252,13 @@ a.site-nav__link:hover,
   display: flex;
   align-items: center;
   gap: 1rem;
+}
+
+.app-header__nav {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
 }
 
 .logo--btn {
@@ -2826,7 +2846,7 @@ a.site-nav__link:hover,
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.65rem;
   padding: 0.55rem 0.65rem;
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -2838,18 +2858,22 @@ a.site-nav__link:hover,
   border-color: var(--accent-client);
 }
 
+.time-row__info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  flex: 1;
+  min-width: 0;
+}
+
 .time-row__range {
-  flex-shrink: 0;
   font-weight: 600;
   font-size: 0.82rem;
-  min-width: 5.25rem;
   white-space: nowrap;
 }
 
 .time-row__place {
-  flex: 1;
-  min-width: 0;
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -2858,7 +2882,6 @@ a.site-nav__link:hover,
 
 .time-row__btn {
   flex-shrink: 0;
-  margin-left: auto;
   padding: 0.38rem 0.7rem;
   font-size: 0.75rem;
 }
