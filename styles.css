@@ -2223,6 +2223,9 @@ a.site-nav__link:hover,
   border-top: none;
   border-radius: 0 0 12px 12px;
   background: var(--surface);
+}
+
+.provider-booking-panel--enter {
   animation: providerPanelSlideDown 0.3s ease;
 }
 
@@ -2304,7 +2307,7 @@ a.site-nav__link:hover,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .provider-booking-panel,
+  .provider-booking-panel--enter,
   .provider-booking-panel--closing {
     animation: none;
   }
@@ -3088,14 +3091,6 @@ a.site-nav__link:hover,
   opacity: 0.35;
 }
 
-.cal__hint {
-  margin-top: auto;
-  padding-top: 0.5rem;
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: var(--accent-client);
-}
-
 .time-list--vertical {
   display: flex;
   flex-direction: column;
@@ -3279,6 +3274,16 @@ a.site-nav__link:hover,
 .bottom-nav__icon {
   font-size: 1.1rem;
   line-height: 1;
+}
+
+.device-frame[data-view="desktop"] .bottom-nav {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .app-fullscreen .bottom-nav {
+    display: none;
+  }
 }
 
 /* ---- Karty wizyt / próśb ---- */

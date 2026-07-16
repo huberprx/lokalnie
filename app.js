@@ -196,6 +196,85 @@
     });
   }
 
+  function refreshBookingPanelElement(panel, p, ctx) {
+    if (p.bookingMode === "approval") {
+      const servicesEl = panel.querySelector(".provider-booking-panel__services");
+      if (servicesEl) servicesEl.innerHTML = ctx.services;
+    } else {
+      const servicesList = panel.querySelector(".booking__services-list");
+      if (servicesList) servicesList.innerHTML = ctx.services;
+
+      const calendar = panel.querySelector(".booking__calendar");
+      if (calendar) {
+        calendar.innerHTML = `
+          <h3 class="booking__panel-label">Wybierz dzień</h3>
+          ${ctx.availDates.length ? ctx.calendarGrid : `<p class="empty-note">Brak dostępnych terminów.</p>`}`;
+      }
+
+      const times = panel.querySelector(".booking__times");
+      if (times) {
+        times.innerHTML = `
+          <h3 class="booking__panel-label">${ctx.activeDate ? `Wolne terminy · ${escapeHtml(formatDateLong(ctx.activeDate))}` : "Wolne terminy"}</h3>
+          <div class="time-list time-list--vertical">
+            ${ctx.activeDate ? ctx.timeList || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>` : `<p class="empty-note">Wybierz dzień w kalendarzu.</p>`}
+          </div>`;
+      }
+    }
+
+    const summary = panel.querySelector(".selection-summary--inline");
+    if (summary) summary.remove();
+    if (ctx.totals.count) {
+      const mode = p.bookingMode === "approval" ? "approval" : "auto";
+      panel.insertAdjacentHTML("beforeend", renderSelectionSummaryBar(p, ctx, mode));
+    }
+  }
+
+  function refreshBookingDraftUI() {
+    const draft = window.AppState.draft;
+    if (!draft) return false;
+
+    const p = getProviderBySlug(draft.slug);
+    if (!p) return false;
+
+    const ctx = buildBookingContext(p);
+    if (!ctx) return false;
+
+    let updated = false;
+
+    document.querySelectorAll(".provider-item--open .provider-booking-panel").forEach(function (panel) {
+      refreshBookingPanelElement(panel, p, ctx);
+      updated = true;
+    });
+
+    const bookingScreen = document.querySelector(".app-screen--booking");
+    if (bookingScreen && window.AppState.screen.client === "booking") {
+      const layout = bookingScreen.querySelector(".booking-layout");
+      if (layout) layout.outerHTML = renderBookingLayoutBlock(p, ctx);
+      updated = true;
+    }
+
+    const profileServices = document.querySelector(".app-screen--client .profile .service-list");
+    if (profileServices && window.AppState.screen.client === "profile") {
+      profileServices.innerHTML = renderServiceRows(p, draft.serviceIds || []);
+      updated = true;
+    }
+
+    return updated;
+  }
+
+  function applyServiceRowExpanded(serviceId, expanded) {
+    document.querySelectorAll('.service-row[data-service-id="' + serviceId + '"]').forEach(function (row) {
+      row.classList.toggle("service-row--expanded", expanded);
+      row.querySelectorAll('[data-action="toggle-service-desc"]').forEach(function (btn) {
+        btn.setAttribute("aria-expanded", expanded ? "true" : "false");
+      });
+      const label = row.querySelector(".service-row__more-label");
+      if (label) label.textContent = expanded ? "Mniej" : "Więcej";
+      const detail = row.querySelector(".service-row__detail");
+      if (detail) detail.hidden = !expanded;
+    });
+  }
+
   function defaultServiceIds(p) {
     if (p.bookingMode === "approval" || !p.services || !p.services.length) return [];
     return [p.services[0].id];
@@ -303,7 +382,7 @@
 
     if (p.bookingMode === "approval") {
       return `
-        <div class="provider-booking-panel provider-booking-panel--approval">
+        <div class="provider-booking-panel provider-booking-panel--approval${window.AppState.bookingPanelEnterSlug === p.slug ? " provider-booking-panel--enter" : ""}">
           <p class="profile__mode">Rezerwacja na akceptację — usługodawca zaproponuje termin.</p>
           <div class="provider-booking-panel__services service-list">${ctx.services}</div>
           ${renderSelectionSummaryBar(p, ctx, "approval")}
@@ -311,7 +390,7 @@
     }
 
     return `
-      <div class="provider-booking-panel">
+      <div class="provider-booking-panel${window.AppState.bookingPanelEnterSlug === p.slug ? " provider-booking-panel--enter" : ""}">
         ${renderBookingLayoutBlock(p, ctx)}
         ${ctx.totals.count ? renderSelectionSummaryBar(p, ctx, "auto") : ""}
       </div>`;
@@ -717,7 +796,7 @@
         const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
 
         return `
-        <article class="service-row${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}">
+        <article class="service-row${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}" data-service-id="${escapeHtml(s.id)}">
           <button type="button"
             class="service-row__select service-row__select--${selectKind}${on ? " service-row__select--on" : ""}"
             data-action="toggle-service"
@@ -788,7 +867,6 @@
         </div>
         <div class="cal__weekdays">${CAL_WEEKDAYS.map((w) => `<span>${w}</span>`).join("")}</div>
         <div class="cal__grid">${cells}</div>
-        ${totals.duration ? `<p class="cal__hint">${escapeHtml(formatDuration(totals.duration))} · ${totals.hasNullPrice ? "wycena indyw." : escapeHtml(totals.price + " zł")}</p>` : ""}
       </div>`;
   }
 
@@ -1429,6 +1507,7 @@
       window.AppState.searchOpenSlug = slug;
       window.AppState.screen.client =
         window.AppState.screen.client === "favorites" ? "favorites" : "search";
+      window.AppState.bookingPanelEnterSlug = slug;
     } else if (p.bookingMode === "approval") {
       window.AppState.searchOpenSlug = null;
       window.AppState.screen.client = "profile";
@@ -1439,6 +1518,7 @@
 
     saveState();
     renderAll();
+    window.AppState.bookingPanelEnterSlug = null;
   }
 
   function openProfile(slug) {
@@ -1463,8 +1543,9 @@
     if (idx === -1) ids.push(serviceId);
     else ids.splice(idx, 1);
 
+    const expanded = ids.indexOf(serviceId) !== -1;
     saveState();
-    renderAll();
+    applyServiceRowExpanded(serviceId, expanded);
   }
 
   function toggleService(serviceId) {
@@ -1486,9 +1567,16 @@
     draft.slotId = null;
     if (!draft.serviceIds.length) {
       window.AppState.searchOpenSlug = null;
+      saveState();
+      if (clientUsesDesktopBookingLayout()) {
+        closeProvider();
+      } else {
+        renderAll();
+      }
+      return;
     }
     saveState();
-    renderAll();
+    if (!refreshBookingDraftUI()) renderAll();
   }
 
   function startBooking(slug) {
@@ -1509,7 +1597,7 @@
     window.AppState.draft.calMonth = dateISO.slice(0, 7);
     window.AppState.draft.slotId = null;
     saveState();
-    renderAll();
+    if (!refreshBookingDraftUI()) renderAll();
   }
 
   function shiftCalMonth(delta) {
@@ -1520,14 +1608,13 @@
     const d = new Date(parts[0], parts[1] - 1 + delta, 1);
     draft.calMonth = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
     saveState();
-    renderAll();
+    if (!refreshBookingDraftUI()) renderAll();
   }
 
   function pickSlot(slotId) {
     if (!window.AppState.draft) return;
     window.AppState.draft.slotId = slotId;
     saveState();
-    renderAll();
   }
 
   function bookSlot(slotId) {
