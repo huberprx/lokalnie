@@ -325,8 +325,22 @@
     },
   };
 
-  PROVIDERS.forEach((p) => {
-    p.availability = buildAvailability(p.id, WEEKLY[p.id] || {});
+  const DEMO_TODAY_ISO = "2026-07-16";
+
+  function todayOpenHoursLabel(weekly) {
+    if (!weekly || !Object.keys(weekly).length) return "Brak grafiku";
+    const dow = new Date(DEMO_TODAY_ISO + "T00:00:00").getDay();
+    const blocks = weekly[dow];
+    if (!blocks || !blocks.length) return "Zamknięte dziś";
+    return blocks.map(function (b) {
+      return b.from + "–" + b.to;
+    }).join(", ");
+  }
+
+  PROVIDERS.forEach(function (p) {
+    const weekly = WEEKLY[p.id] || {};
+    p.availability = buildAvailability(p.id, weekly);
+    p.openHoursToday = todayOpenHoursLabel(weekly);
   });
 
   window.LOKALNIE_DATA = {
@@ -334,5 +348,6 @@
     CATEGORIES,
     HOLIDAYS_2026,
     CURRENT_USER,
+    DEMO_TODAY_ISO,
   };
 })();

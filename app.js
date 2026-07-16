@@ -270,13 +270,6 @@
     return `
       <div class="booking-layout">
         <aside class="booking__services">
-          <div class="booking__services-head">
-            <button type="button" class="topbar__back" data-action="close-provider" aria-label="Zwiń">‹</button>
-            <div class="booking__services-info">
-              <span class="booking__prov">${escapeHtml(p.name)}</span>
-              <span class="booking__cat">${escapeHtml(providerCategoryLine(p))}</span>
-            </div>
-          </div>
           <h3 class="booking__panel-label">Usługi</h3>
           <div class="booking__services-list service-list">${ctx.services}</div>
         </aside>
@@ -315,19 +308,72 @@
       </div>`;
   }
 
+  function mapsSearchUrl(address) {
+    return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(address);
+  }
+
+  function providerShareUrl(slug) {
+    return location.origin + location.pathname + "#provider/" + slug;
+  }
+
+  function shareProvider(slug) {
+    const p = getProviderBySlug(slug);
+    if (!p) return;
+
+    const url = providerShareUrl(slug);
+    const text = p.name + (p.address ? " · " + p.address : "");
+
+    if (navigator.share) {
+      navigator.share({ title: p.name, text: text, url: url }).catch(function () {
+        /* anulowano */
+      });
+      return;
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(
+        function () {
+          showToast("Link do profilu skopiowany ✓");
+        },
+        function () {
+          showToast(url);
+        }
+      );
+      return;
+    }
+
+    showToast(url);
+  }
+
   function renderProviderCard(p, isOpen) {
     const fav = window.AppState.favorites.indexOf(p.slug) !== -1;
-    const dist = p.address ? `${p.distanceKm.toFixed(1)} km` : "Online";
+    const dist = p.address ? p.distanceKm.toFixed(1) + " km" : "Online";
+    const hours = p.openHoursToday || "";
+    const metaParts = [dist];
+    if (hours) metaParts.push(hours);
+    if (p.bookingMode === "approval") metaParts.push("na akceptację");
+    const metaLine = metaParts.join(" · ");
+    const navLink = p.address
+      ? `<a href="${escapeHtml(mapsSearchUrl(p.address))}" class="provider-card__nav" target="_blank" rel="noopener noreferrer" aria-label="Nawiguj do ${escapeHtml(p.address)}" title="Otwórz w mapach"><span class="provider-card__nav-icon" aria-hidden="true"></span></a>`
+      : "";
+
     return `
-      <button type="button" class="provider-card${isOpen ? " provider-card--open" : ""}" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">
-        <span class="provider-card__avatar">${escapeHtml(p.avatarInitials)}</span>
-        <span class="provider-card__body">
-          <span class="provider-card__name">${escapeHtml(p.name)}</span>
-          <span class="provider-card__cat">${escapeHtml(providerCategoryLine(p))}</span>
-          <span class="provider-card__distance">${escapeHtml(dist)}${p.bookingMode === "approval" ? " · na akceptację" : ""}</span>
-        </span>
-        <span class="provider-card__fav${fav ? " provider-card__fav--on" : ""}" aria-hidden="true">♥</span>
-      </button>`;
+      <div class="provider-card${isOpen ? " provider-card--open" : ""}">
+        <button type="button" class="provider-card__main" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">
+          <span class="provider-card__avatar">${escapeHtml(p.avatarInitials)}</span>
+          <span class="provider-card__body">
+            <span class="provider-card__name">${escapeHtml(p.name)}</span>
+            <span class="provider-card__cat">${escapeHtml(providerCategoryLine(p))}</span>
+            <span class="provider-card__meta">${escapeHtml(metaLine)}</span>
+            ${p.address ? `<span class="provider-card__addr">${escapeHtml(p.address)}</span>` : ""}
+          </span>
+        </button>
+        <div class="provider-card__aside">
+          ${navLink}
+          <button type="button" class="provider-card__share" data-action="share-provider" data-slug="${escapeHtml(p.slug)}" aria-label="Udostępnij ${escapeHtml(p.name)}" title="Udostępnij"><span class="provider-card__share-icon" aria-hidden="true"></span></button>
+          <button type="button" class="provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__fav-icon" aria-hidden="true"></span></button>
+        </div>
+      </div>`;
   }
 
   function renderProviderListItem(p, isOpen) {
@@ -771,7 +817,7 @@
             <button type="button" class="topbar__back" data-action="go-screen" data-screen="search" aria-label="Wróć">‹</button>
             <span class="topbar__title">Profil</span>
             <button type="button" class="fav-btn${fav ? " fav-btn--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}"
-              aria-pressed="${fav ? "true" : "false"}" aria-label="Dodaj do ulubionych">♥</button>
+              aria-pressed="${fav ? "true" : "false"}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="fav-btn__icon" aria-hidden="true"></span></button>
           </div>
 
           <div class="profile">
@@ -1563,7 +1609,7 @@
     window.AppState = defaultState();
     saveState();
     renderAll();
-    showPage("home");
+    showSimulator();
   }
 
   function showToast(message) {
@@ -1588,6 +1634,39 @@
     } else {
       app.hidden = true;
       home.hidden = false;
+    }
+  }
+
+  function showSimulator() {
+    showPage("home");
+    const sim = document.getElementById("simulator");
+    if (sim) {
+      requestAnimationFrame(function () {
+        sim.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }
+
+  function handleRouteHash() {
+    const hash = (location.hash || "").replace(/^#/, "");
+    if (hash === "simulator") {
+      showSimulator();
+      return;
+    }
+    const providerMatch = hash.match(/^provider\/(.+)$/);
+    if (providerMatch && providerMatch[1]) {
+      showSimulator();
+      openProvider(decodeURIComponent(providerMatch[1]));
+      return;
+    }
+    if (hash === "calendar") {
+      showPage("home");
+      const cal = document.getElementById("calendar");
+      if (cal) {
+        requestAnimationFrame(function () {
+          cal.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
     }
   }
 
@@ -1639,7 +1718,7 @@
     window.AppState.loggedIn = false;
     window.AppState.activeRole = null;
     saveState();
-    showPage("home");
+    showSimulator();
   }
 
   function switchRole(role) {
@@ -1662,6 +1741,7 @@
     logout: logout,
     switchRole: switchRole,
     showPage: showPage,
+    showSimulator: showSimulator,
     computeSlots: computeSlots,
   };
 
@@ -1669,6 +1749,16 @@
   // Delegacja zdarzeń
   // ─────────────────────────────────────────────────────────
   document.addEventListener("click", function (event) {
+    if (event.target.closest(".provider-card__nav")) return;
+
+    const simLink = event.target.closest('a[href="#simulator"]');
+    if (simLink) {
+      event.preventDefault();
+      if (location.hash !== "#simulator") location.hash = "#simulator";
+      else handleRouteHash();
+      return;
+    }
+
     const btn = event.target.closest("[data-action]");
     if (!btn) return;
     const a = btn.dataset.action;
@@ -1679,7 +1769,11 @@
       case "test-login": event.preventDefault(); testLogin(d.target); break;
       case "open-my-calendar": event.preventDefault(); openMyCalendar(); break;
       case "logout": logout(); break;
-      case "go-home": event.preventDefault(); logout(); break;
+      case "go-home":
+      case "show-simulator":
+        event.preventDefault();
+        showSimulator();
+        break;
       case "switch-role": switchRole(d.role); break;
 
       case "go-screen": goScreen(d.screen); break;
@@ -1687,6 +1781,7 @@
       case "open-profile": openProvider(d.slug); break;
       case "close-provider": closeProvider(); break;
       case "toggle-fav": toggleFav(d.slug); break;
+      case "share-provider": event.preventDefault(); shareProvider(d.slug); break;
       case "toggle-service": toggleService(d.serviceId); break;
       case "start-booking": startBooking(d.slug); break;
       case "send-request": sendRequest(d.slug); break;
@@ -1767,9 +1862,12 @@
     bindFilterScroll();
     loadState();
     renderAll();
+    showPage("home");
     if (window.AppState.loggedIn && window.AppState.activeRole) {
       updateAppHeader(window.AppState.activeRole);
-      showPage("app");
     }
+    handleRouteHash();
   });
+
+  window.addEventListener("hashchange", handleRouteHash);
 })();
