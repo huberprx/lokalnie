@@ -205,10 +205,19 @@
     window.AppState.draft = {
       slug: p.slug,
       serviceIds: defaultServiceIds(p),
+      expandedServiceIds: [],
       dateISO: null,
       slotId: null,
       calMonth: null,
     };
+  }
+
+  function serviceDetailText(s) {
+    return s.description || s.subtitle || "";
+  }
+
+  function serviceHasDetail(s) {
+    return !!serviceDetailText(s);
   }
 
   function buildBookingContext(p) {
@@ -270,7 +279,7 @@
     return `
       <div class="booking-layout">
         <aside class="booking__services">
-          <h3 class="booking__panel-label">Usługi</h3>
+          <h3 class="booking__panel-label">Usługi${p.multiSelect ? '<span class="booking__panel-hint"> · kilka naraz</span>' : ""}</h3>
           <div class="booking__services-list service-list">${ctx.services}</div>
         </aside>
 
@@ -695,22 +704,51 @@
   }
 
   function renderServiceRows(p, selectedIds) {
+    const draft = window.AppState.draft;
+    const expandedIds = (draft && draft.expandedServiceIds) || [];
+    const selectKind = p.multiSelect ? "checkbox" : "radio";
+
     return (p.services || [])
       .map((s) => {
         const on = selectedIds.indexOf(s.id) !== -1;
+        const expanded = expandedIds.indexOf(s.id) !== -1;
+        const detail = serviceDetailText(s);
+        const hasDetail = serviceHasDetail(s);
+        const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
+
         return `
-        <button type="button" class="service-row${on ? " service-row--selected" : ""}"
-          data-action="toggle-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}">
-          <span class="service-row__check" aria-hidden="true">${on ? "✓" : ""}</span>
-          <span class="service-row__body">
-            <span class="service-row__name">${escapeHtml(s.name)}</span>
-            <span class="service-row__sub">${escapeHtml(s.subtitle)}</span>
-          </span>
-          <span class="service-row__meta">
-            <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
-            <span class="service-row__price">${escapeHtml(formatPrice(s.price))}</span>
-          </span>
-        </button>`;
+        <article class="service-row${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}">
+          <button type="button"
+            class="service-row__select service-row__select--${selectKind}${on ? " service-row__select--on" : ""}"
+            data-action="toggle-service"
+            data-service-id="${escapeHtml(s.id)}"
+            aria-pressed="${on ? "true" : "false"}"
+            aria-label="${escapeHtml(selectLabel)}"
+            title="${escapeHtml(selectLabel)}">
+            <span class="service-row__select-mark" aria-hidden="true"></span>
+          </button>
+          <div class="service-row__content">
+            <div class="service-row__head">
+              <button type="button" class="service-row__main" data-action="toggle-service-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}">
+                <span class="service-row__name">${escapeHtml(s.name)}</span>
+                ${s.subtitle ? `<span class="service-row__sub">${escapeHtml(s.subtitle)}</span>` : ""}
+              </button>
+              <div class="service-row__meta">
+                <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
+                <span class="service-row__price">${escapeHtml(formatPrice(s.price))}</span>
+              </div>
+            </div>
+            ${
+              hasDetail
+                ? `<button type="button" class="service-row__more" data-action="toggle-service-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}">
+                    <span class="service-row__more-label">${expanded ? "Mniej" : "Więcej"}</span>
+                    <span class="service-row__chev" aria-hidden="true"></span>
+                  </button>
+                  <div class="service-row__detail"${expanded ? "" : " hidden"}>${escapeHtml(detail)}</div>`
+                : ""
+            }
+          </div>
+        </article>`;
       })
       .join("");
   }
@@ -1306,17 +1344,72 @@
     return !!(window.AppState.simView && window.AppState.simView.client === "desktop");
   }
 
-  function closeProvider() {
+  const PROVIDER_PANEL_MS = 300;
+
+  function prefersReducedMotion() {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  function applyCloseProviderState() {
     window.AppState.searchOpenSlug = null;
     window.AppState.draft = null;
     if (window.AppState.screen.client === "booking" || window.AppState.screen.client === "profile") {
       window.AppState.screen.client = "search";
     }
     saveState();
-    renderAll();
+  }
+
+  function animateCloseProviderPanels(done) {
+    const panels = document.querySelectorAll(".provider-item--open .provider-booking-panel");
+    if (!panels.length || prefersReducedMotion()) {
+      done();
+      return;
+    }
+
+    let finished = false;
+    const finish = function () {
+      if (finished) return;
+      finished = true;
+      done();
+    };
+
+    panels.forEach(function (panel) {
+      panel.classList.add("provider-booking-panel--closing");
+      const card = panel.closest(".provider-item")?.querySelector(".provider-card");
+      if (card) card.classList.add("provider-card--closing");
+    });
+
+    const firstPanel = panels[0];
+    firstPanel.addEventListener(
+      "animationend",
+      function (event) {
+        if (event.target === firstPanel) finish();
+      },
+      { once: true }
+    );
+    window.setTimeout(finish, PROVIDER_PANEL_MS + 40);
+  }
+
+  function closeProvider() {
+    if (window.AppState.closingProvider) return;
+
+    const hasInlinePanel = !!document.querySelector(".provider-item--open .provider-booking-panel");
+    if (!hasInlinePanel || prefersReducedMotion()) {
+      applyCloseProviderState();
+      renderAll();
+      return;
+    }
+
+    window.AppState.closingProvider = true;
+    animateCloseProviderPanels(function () {
+      window.AppState.closingProvider = false;
+      applyCloseProviderState();
+      renderAll();
+    });
   }
 
   function openProvider(slug) {
+    if (window.AppState.closingProvider) return;
     const p = getProviderBySlug(slug);
     if (!p) return;
 
@@ -1356,6 +1449,20 @@
     const i = window.AppState.favorites.indexOf(slug);
     if (i === -1) window.AppState.favorites.push(slug);
     else window.AppState.favorites.splice(i, 1);
+    saveState();
+    renderAll();
+  }
+
+  function toggleServiceDesc(serviceId) {
+    const draft = window.AppState.draft;
+    if (!draft) return;
+    if (!Array.isArray(draft.expandedServiceIds)) draft.expandedServiceIds = [];
+
+    const ids = draft.expandedServiceIds;
+    const idx = ids.indexOf(serviceId);
+    if (idx === -1) ids.push(serviceId);
+    else ids.splice(idx, 1);
+
     saveState();
     renderAll();
   }
@@ -1783,6 +1890,7 @@
       case "toggle-fav": toggleFav(d.slug); break;
       case "share-provider": event.preventDefault(); shareProvider(d.slug); break;
       case "toggle-service": toggleService(d.serviceId); break;
+      case "toggle-service-desc": toggleServiceDesc(d.serviceId); break;
       case "start-booking": startBooking(d.slug); break;
       case "send-request": sendRequest(d.slug); break;
       case "pick-date": pickDate(d.date); break;

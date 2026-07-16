@@ -99,8 +99,8 @@
         { id: "loc-gb-2", label: "Filia Praga", address: "ul. Ząbkowska 8, Warszawa" },
       ],
       services: [
-        { id: "svc-gb-1", name: "Strzyżenie męskie", durationMin: 30, price: 60, subtitle: "Klasyczne strzyżenie maszynką i nożyczkami" },
-        { id: "svc-gb-2", name: "Strzyżenie brody", durationMin: 20, price: 40, subtitle: "Modelowanie i wyrównanie linii brody" },
+        { id: "svc-gb-1", name: "Strzyżenie męskie", durationMin: 30, price: 60, subtitle: "Klasyczne strzyżenie maszynką i nożyczkami", description: "Klasyczne strzyżenie maszynką i nożyczkami. Mycie głowy, modelowanie i stylizacja w cenie. Czas ok. 30 min w zależności od długości włosów." },
+        { id: "svc-gb-2", name: "Strzyżenie brody", durationMin: 20, price: 40, subtitle: "Modelowanie i wyrównanie linii brody", description: "Modelowanie i wyrównanie linii brody. Strzyżenie nadmiaru, konturowanie i olejek po goleniu." },
         { id: "svc-gb-3", name: "Combo: włosy + broda", durationMin: 45, price: 85, subtitle: "Strzyżenie i pełna stylizacja brody" },
         { id: "svc-gb-4", name: "Skin fade", durationMin: 35, price: 70, subtitle: "Precyzyjny fade z boków i karku" },
         { id: "svc-gb-5", name: "Strzyżenie damskie", durationMin: 45, price: 80, subtitle: "Krótkie i średnie włosy, mycie w cenie" },
@@ -154,7 +154,7 @@
         { id: "loc-mr-1", label: "Gabinet", address: "ul. Puławska 100, Warszawa" },
       ],
       services: [
-        { id: "svc-mr-1", name: "Masaż klasyczny 60 min", durationMin: 60, price: 150, subtitle: "Całe ciało, rozluźniający" },
+        { id: "svc-mr-1", name: "Masaż klasyczny 60 min", durationMin: 60, price: 150, subtitle: "Całe ciało, rozluźniający", description: "Pełny masaż całego ciała techniką klasyczną. Praca na plecach, kończynach i karku. Idealny po ciężkim dniu." },
         { id: "svc-mr-2", name: "Masaż pleców", durationMin: 30, price: 90, subtitle: "Odcinek szyjny i lędźwiowy" },
         { id: "svc-mr-3", name: "Masaż relaksacyjny 90 min", durationMin: 90, price: 210, subtitle: "Aromaterapia i ciepłe olejki" },
       ],

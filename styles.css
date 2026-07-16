@@ -2226,6 +2226,16 @@ a.site-nav__link:hover,
   animation: providerPanelSlideDown 0.3s ease;
 }
 
+.provider-booking-panel--closing {
+  animation: providerPanelSlideUp 0.3s ease forwards;
+  pointer-events: none;
+}
+
+.provider-card--closing {
+  border-bottom-left-radius: 12px;
+  border-bottom-right-radius: 12px;
+}
+
 .provider-booking-panel--approval {
   padding: 0.85rem 1rem 0;
 }
@@ -2269,6 +2279,20 @@ a.site-nav__link:hover,
   }
 }
 
+@keyframes providerPanelSlideUp {
+  from {
+    opacity: 1;
+    max-height: 420px;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    max-height: 0;
+    transform: translateY(-0.35rem);
+  }
+}
+
 .device-frame[data-view="desktop"] .provider-booking-panel .booking-layout {
   display: grid;
 }
@@ -2280,7 +2304,8 @@ a.site-nav__link:hover,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .provider-booking-panel {
+  .provider-booking-panel,
+  .provider-booking-panel--closing {
     animation: none;
   }
 }
@@ -2300,7 +2325,11 @@ a.site-nav__link:hover,
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 12px;
-  transition: border-color 0.15s ease, transform 0.1s ease;
+  transition:
+    border-color 0.15s ease,
+    transform 0.1s ease,
+    border-bottom-left-radius 0.3s ease,
+    border-bottom-right-radius 0.3s ease;
 }
 
 .provider-card:hover {
@@ -2547,16 +2576,14 @@ a.site-nav__link:hover,
 
 .service-row {
   display: flex;
-  align-items: center;
-  gap: 0.7rem;
+  align-items: flex-start;
+  gap: 0.55rem;
   width: 100%;
-  text-align: left;
-  padding: 0.75rem;
+  padding: 0.65rem 0.7rem;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 12px;
-  cursor: pointer;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .service-row--static {
@@ -2572,21 +2599,101 @@ a.site-nav__link:hover,
   background: var(--accent-client-soft);
 }
 
-.service-row__check {
+.service-row__select {
+  appearance: none;
+  -webkit-appearance: none;
   display: grid;
   place-items: center;
-  width: 1.4rem;
-  height: 1.4rem;
-  border-radius: 50%;
+  width: 1.45rem;
+  height: 1.45rem;
+  margin-top: 0.1rem;
+  padding: 0;
   border: 2px solid var(--border);
-  color: #fff;
-  font-size: 0.8rem;
+  background: var(--surface);
+  cursor: pointer;
   flex-shrink: 0;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.service-row--selected .service-row__check {
+.service-row__select--checkbox {
+  border-radius: 5px;
+}
+
+.service-row__select--radio {
+  border-radius: 50%;
+}
+
+.service-row__select:hover {
+  border-color: var(--accent-client);
+}
+
+.service-row__select--on.service-row__select--checkbox {
   background: var(--accent-client);
   border-color: var(--accent-client);
+}
+
+.service-row__select--on.service-row__select--radio {
+  border-color: var(--accent-client);
+}
+
+.service-row__select-mark {
+  display: block;
+  width: 0.55rem;
+  height: 0.55rem;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.service-row__select--checkbox.service-row__select--on .service-row__select-mark {
+  width: 0.65rem;
+  height: 0.35rem;
+  border-left: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  transform: rotate(-45deg) scale(1);
+  opacity: 1;
+  border-radius: 0;
+  margin-top: -0.1rem;
+}
+
+.service-row__select--radio.service-row__select--on .service-row__select-mark {
+  border-radius: 50%;
+  background: var(--accent-client);
+  opacity: 1;
+  transform: scale(1);
+}
+
+.service-row__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.service-row__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.service-row__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.service-row__main:hover .service-row__name {
+  color: var(--accent-client);
 }
 
 .service-row__body {
@@ -2600,11 +2707,23 @@ a.site-nav__link:hover,
 .service-row__name {
   font-weight: 600;
   font-size: 0.9rem;
+  line-height: 1.3;
+  transition: color 0.15s ease;
 }
 
 .service-row__sub {
   font-size: 0.78rem;
   color: var(--text-muted);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.service-row--expanded .service-row__sub {
+  -webkit-line-clamp: unset;
+  display: block;
 }
 
 .service-row__meta {
@@ -2623,6 +2742,50 @@ a.site-nav__link:hover,
 .service-row__price {
   font-weight: 700;
   font-size: 0.85rem;
+}
+
+.service-row__more {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-client);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.service-row__more:hover {
+  text-decoration: underline;
+}
+
+.service-row__chev {
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  margin-top: -0.15rem;
+  transition: transform 0.2s ease;
+}
+
+.service-row--expanded .service-row__chev {
+  transform: rotate(-135deg);
+  margin-top: 0.1rem;
+}
+
+.service-row__detail {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+  padding-top: 0.15rem;
+  border-top: 1px solid var(--border);
 }
 
 /* ---- Pasek podsumowania wyboru ---- */
@@ -2729,6 +2892,13 @@ a.site-nav__link:hover,
   letter-spacing: 0.04em;
   margin: 0 0 0.55rem;
   flex-shrink: 0;
+}
+
+.booking__panel-hint {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--accent-client);
 }
 
 .booking__services-list {
