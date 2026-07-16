@@ -17,10 +17,23 @@
   --user-accent-soft: rgba(91, 141, 239, 0.15);
   --provider-accent: #3ecf8e;
   --provider-accent-soft: rgba(62, 207, 142, 0.15);
+  /* Akcenty ról (CONTRACT §9) */
+  --accent-client: #5b8def;
+  --accent-client-soft: rgba(91, 141, 239, 0.15);
+  --accent-provider: #3ecf8e;
+  --accent-provider-soft: rgba(62, 207, 142, 0.15);
+  --danger: #ef5b5b;
+  --danger-soft: rgba(239, 91, 91, 0.15);
+  --warning: #f5b544;
+  --warning-soft: rgba(245, 181, 68, 0.15);
   --success: #3ecf8e;
   --phone-bg: #111318;
   --radius: 16px;
   --phone-radius: 36px;
+  /* Symulator — zawsze 1:1, bez pomniejszenia */
+  --frame-h: 620px;
+  --frame-mobile-w: 320px;
+  --frame-desktop-w: 760px;
 }
 
 html {
@@ -35,34 +48,127 @@ body {
   line-height: 1.5;
 }
 
-/* Header */
+/* Header — standardowy pasek menu */
 .site-header {
-  text-align: center;
-  padding: 2.5rem 1.5rem 1rem;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  width: 100%;
+  height: 64px;
+  padding: 0 1.5rem;
+  background: #14171f;
+  border-bottom: 1px solid var(--border);
 }
 
+.site-header__inner {
+  max-width: 1440px;
+  height: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+a.logo,
 .logo {
   display: inline-flex;
+  flex-direction: row;
   align-items: center;
   gap: 0.6rem;
-  margin-bottom: 0.5rem;
+  color: var(--text);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+a.logo:visited,
+a.logo:hover,
+a.logo:active {
+  color: var(--text);
+  text-decoration: none;
 }
 
 .logo-mark {
   display: grid;
   place-items: center;
-  width: 2.25rem;
-  height: 2.25rem;
+  width: 2rem;
+  height: 2rem;
   background: linear-gradient(135deg, var(--user-accent), var(--provider-accent));
-  border-radius: 10px;
+  border-radius: 8px;
   font-weight: 700;
-  font-size: 1.1rem;
+  font-size: 1rem;
+  color: #fff;
 }
 
 .logo-text {
-  font-size: 1.5rem;
+  font-size: 1.15rem;
   font-weight: 700;
   letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.site-nav {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+a.site-nav__link,
+.site-nav__link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  padding: 0.55rem 0.85rem;
+  border-radius: 8px;
+  white-space: nowrap;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+a.site-nav__link:visited {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+a.site-nav__link:hover,
+.site-nav__link:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  text-decoration: none;
+}
+
+.site-nav__action {
+  appearance: none;
+  -webkit-appearance: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1;
+  padding: 0.55rem 0.9rem;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.site-nav__action:hover {
+  background: #2c3142;
+  border-color: rgba(255, 255, 255, 0.16);
 }
 
 .tagline {
@@ -70,48 +176,35 @@ body {
   font-size: 0.95rem;
 }
 
-/* Preview section */
-.preview-section {
-  padding: 1rem 1.5rem 3rem;
-  max-width: 1400px;
-  margin: 0 auto;
-}
-
-.preview-columns {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2rem;
-  align-items: start;
-}
-
-.preview-column {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1.75rem;
-  min-width: 0;
-}
-
-.preview-column--user {
-  justify-self: start;
-  width: 100%;
-}
-
-.preview-column--provider {
-  justify-self: end;
-  width: 100%;
-}
-
-@media (max-width: 900px) {
-  .preview-columns {
-    grid-template-columns: 1fr;
-    max-width: 360px;
-    margin: 0 auto;
+@media (max-width: 640px) {
+  .site-header {
+    height: auto;
+    min-height: 56px;
+    padding: 0.65rem 1rem;
   }
 
-  .preview-column--user,
-  .preview-column--provider {
-    justify-self: center;
+  .site-header__inner {
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+  }
+
+  .site-nav {
+    order: 3;
+    width: 100%;
+  }
+
+  .site-nav__action {
+    margin-left: auto;
+  }
+
+  .logo-text {
+    font-size: 1.05rem;
+  }
+
+  a.site-nav__link,
+  .site-nav__link {
+    font-size: 0.875rem;
+    padding: 0.45rem 0.7rem;
   }
 }
 
@@ -137,11 +230,11 @@ body {
   line-height: 1.45;
 }
 
-.preview-column--user .calendar-section-header h2 {
+.calendar-section:has(.calendar-frame--user) .calendar-section-header h2 {
   color: var(--user-accent);
 }
 
-.preview-column--provider .calendar-section-header h2 {
+.calendar-section:has(.calendar-frame--provider) .calendar-section-header h2 {
   color: var(--provider-accent);
 }
 
@@ -179,12 +272,12 @@ body {
   cursor: pointer;
 }
 
-.preview-column--user .calendar-connect button {
+.calendar-section:has(.calendar-frame--user) .calendar-connect button {
   background: var(--user-accent);
   color: #fff;
 }
 
-.preview-column--provider .calendar-connect button {
+.calendar-section:has(.calendar-frame--provider) .calendar-connect button {
   background: var(--provider-accent);
   color: #0f1117;
 }
@@ -215,11 +308,11 @@ body {
   color: var(--text-muted);
 }
 
-.preview-column--user .calendar-frame {
+.calendar-frame--user {
   border-color: rgba(91, 141, 239, 0.2);
 }
 
-.preview-column--provider .calendar-frame {
+.calendar-frame--provider {
   border-color: rgba(62, 207, 142, 0.2);
 }
 
@@ -1005,4 +1098,409 @@ body {
 .site-footer p {
   font-size: 0.8rem;
   color: var(--text-muted);
+}
+
+/* ============================================================
+   Page + Hero
+   ============================================================ */
+.page {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0.5rem 1.5rem 3rem;
+}
+
+.hero {
+  max-width: 640px;
+  margin: 0 auto 2.5rem;
+  text-align: center;
+}
+
+.hero__title {
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  background: linear-gradient(120deg, var(--accent-client), var(--accent-provider));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hero__subtitle {
+  margin-top: 0.85rem;
+  font-size: 1rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+/* ============================================================
+   Symulator (CONTRACT §3, PLAN M1 kroki 4 + 6)
+   ============================================================ */
+.simulator {
+  margin: 0 auto;
+}
+
+.simulator__stage {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.sim-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.sim-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.15rem 0.15rem;
+}
+
+.sim-toolbar__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.sim-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sim-dot--client {
+  background: var(--accent-client);
+}
+
+.sim-dot--provider {
+  background: var(--accent-provider);
+}
+
+/* Toggle desktop/mobile */
+.sim-viewtoggle {
+  display: inline-flex;
+  padding: 0.2rem;
+  gap: 0.2rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.sim-viewtoggle button {
+  padding: 0.35rem 0.85rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.sim-viewtoggle button:hover {
+  color: var(--text);
+}
+
+.sim-preview[data-side="client"] .sim-viewtoggle button[aria-pressed="true"] {
+  background: var(--accent-client);
+  color: #fff;
+}
+
+.sim-preview[data-side="provider"] .sim-viewtoggle button[aria-pressed="true"] {
+  background: var(--accent-provider);
+  color: #0f1117;
+}
+
+/* Viewport — zawsze pełna skala (1:1), bez pomniejszenia */
+.sim-viewport {
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+  height: var(--frame-h);
+}
+
+/* Ramka urządzenia — ta sama wysokość dla mobile i desktop */
+.device-frame {
+  --w: var(--frame-mobile-w);
+  width: var(--w);
+  height: var(--frame-h);
+  flex-shrink: 0;
+  background: var(--phone-bg);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 24px 64px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition:
+    width 0.5s cubic-bezier(0.22, 0.61, 0.36, 1),
+    border-radius 0.5s ease;
+}
+
+.device-frame[data-view="mobile"] {
+  --w: var(--frame-mobile-w);
+  border-radius: 28px;
+}
+
+.device-frame[data-view="desktop"] {
+  --w: var(--frame-desktop-w);
+  height: var(--frame-h);
+  border-radius: 16px;
+}
+
+/* Wnętrze montażu aplikacji */
+.app-mount {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.app-mount:empty {
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  text-align: center;
+}
+
+.app-mount:empty::after {
+  content: "Podgląd aplikacji załaduje się tutaj";
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+/* Powłoka aplikacji renderowana przez backend (bazowe style) */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 100%;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.app-shell[data-role="client"] {
+  --accent: var(--accent-client);
+  --accent-soft: var(--accent-client-soft);
+}
+
+.app-shell[data-role="provider"] {
+  --accent: var(--accent-provider);
+  --accent-soft: var(--accent-provider-soft);
+}
+
+.app-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  height: 100%;
+  min-height: 100%;
+  padding: 1.5rem;
+  text-align: center;
+  background:
+    radial-gradient(ellipse at top, var(--accent-soft), transparent 55%),
+    var(--surface);
+}
+
+.app-placeholder__role {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.app-placeholder__screen {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+/* Desktop zmienia układ wewnętrzny, nie tylko szerokość ramki */
+.device-frame[data-view="desktop"] .app-shell {
+  --shell-layout: desktop;
+}
+
+.device-frame[data-view="mobile"] .app-shell {
+  --shell-layout: mobile;
+}
+
+@media (max-width: 900px) {
+  .simulator__stage {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+
+  .sim-viewport {
+    overflow-x: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .device-frame,
+  .sim-viewtoggle button {
+    transition: none;
+  }
+}
+
+/* ============================================================
+   Bazowe przyciski + statusy (CONTRACT §7)
+   ============================================================ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1.1rem;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease,
+    transform 0.08s ease;
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+.btn--primary {
+  background: var(--accent, var(--accent-client));
+  color: #fff;
+}
+
+.btn--primary:hover {
+  opacity: 0.92;
+}
+
+.btn--ghost {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.btn--ghost:hover {
+  border-color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.btn--danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.btn--danger:hover {
+  opacity: 0.92;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+}
+
+.status-badge[data-status="confirmed"] {
+  background: var(--success-soft, rgba(62, 207, 142, 0.15));
+  color: var(--success);
+  border-color: rgba(62, 207, 142, 0.3);
+}
+
+.status-badge[data-status="pending"] {
+  background: var(--warning-soft);
+  color: var(--warning);
+  border-color: rgba(245, 181, 68, 0.3);
+}
+
+.status-badge[data-status="proposed"] {
+  background: var(--accent-client-soft);
+  color: var(--accent-client);
+  border-color: rgba(91, 141, 239, 0.3);
+}
+
+.status-badge[data-status="rejected"] {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: rgba(239, 91, 91, 0.3);
+}
+
+.status-badge[data-status="cancelled"] {
+  background: rgba(139, 146, 168, 0.15);
+  color: var(--text-muted);
+  border-color: rgba(139, 146, 168, 0.3);
+}
+
+/* ============================================================
+   Sekcja kalendarza Google (opcjonalna, PLAN decyzja #4)
+   ============================================================ */
+.calendar-block {
+  margin-top: 3.5rem;
+  padding-top: 2.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.calendar-block__header {
+  text-align: center;
+  max-width: 640px;
+  margin: 0 auto 1.75rem;
+}
+
+.calendar-block__header h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.calendar-block__header p {
+  margin-top: 0.4rem;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.calendar-block__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  justify-items: center;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .calendar-block__grid {
+    grid-template-columns: 1fr;
+  }
 }
