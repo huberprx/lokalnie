@@ -2236,11 +2236,18 @@ a.site-nav__link:hover,
 
 .provider-booking-panel__services {
   margin-bottom: 0.5rem;
+  max-height: 220px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .provider-booking-panel .booking-layout {
   min-height: 280px;
   max-height: 340px;
+  height: 340px;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .provider-booking-panel .selection-summary--inline {
@@ -2693,6 +2700,7 @@ a.site-nav__link:hover,
   flex: 1;
   min-height: 0;
   grid-template-columns: minmax(9.5rem, 1fr) minmax(11rem, 1.15fr) minmax(9.5rem, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
 }
 
@@ -2703,6 +2711,7 @@ a.site-nav__link:hover,
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  overflow: hidden;
   padding: 0.85rem 1rem;
   border-right: 1px solid var(--border);
   background: var(--surface);
@@ -2725,8 +2734,22 @@ a.site-nav__link:hover,
 .booking__services-list {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
   padding-right: 0.15rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
+}
+
+.booking__services-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.booking__services-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 999px;
 }
 
 .booking__calendar {
@@ -2734,9 +2757,45 @@ a.site-nav__link:hover,
   justify-content: flex-start;
 }
 
+.booking__calendar .cal {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 0.15rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
+}
+
+.booking__calendar .cal::-webkit-scrollbar {
+  width: 6px;
+}
+
+.booking__calendar .cal::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 999px;
+}
+
 .booking__times .time-list--vertical {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
+}
+
+.booking__times .time-list--vertical::-webkit-scrollbar {
+  width: 6px;
+}
+
+.booking__times .time-list--vertical::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 999px;
 }
 
 .app-screen--booking {
@@ -2873,6 +2932,13 @@ a.site-nav__link:hover,
   gap: 0.45rem;
   overflow-y: auto;
   padding-right: 0.15rem;
+}
+
+/* Pełnoekranowy widok rezerwacji — kolumny wypełniają wysokość ekranu */
+.app-screen--booking .booking-layout {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .device-frame[data-view="desktop"] .app-screen--booking .booking-mobile {
