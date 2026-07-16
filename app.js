@@ -433,6 +433,100 @@
     showToast(url);
   }
 
+  function reportProvider(slug) {
+    const p = getProviderBySlug(slug);
+    if (!p) return;
+    showToast("Dziękujemy — zgłoszenie dotyczące „" + p.name + "” zostało przyjęte.");
+  }
+
+  let providerCardMenuTrigger = null;
+
+  function ensureProviderCardPopover() {
+    let el = document.getElementById("provider-card-popover");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "provider-card-popover";
+      el.className = "provider-card-popover";
+      el.hidden = true;
+      el.setAttribute("role", "menu");
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+
+  function positionProviderCardPopover(popover, trigger) {
+    popover.style.visibility = "hidden";
+    popover.hidden = false;
+
+    const triggerRect = trigger.getBoundingClientRect();
+    const popRect = popover.getBoundingClientRect();
+    const gap = 6;
+    let top = triggerRect.bottom + gap;
+    let left = triggerRect.right - popRect.width;
+
+    if (left < 8) left = 8;
+    if (left + popRect.width > window.innerWidth - 8) {
+      left = window.innerWidth - popRect.width - 8;
+    }
+    if (top + popRect.height > window.innerHeight - 8) {
+      top = triggerRect.top - popRect.height - gap;
+    }
+
+    popover.style.top = Math.max(8, top) + "px";
+    popover.style.left = Math.max(8, left) + "px";
+    popover.style.visibility = "visible";
+  }
+
+  function closeProviderCardMenu() {
+    const popover = document.getElementById("provider-card-popover");
+    if (popover) {
+      popover.hidden = true;
+      popover.innerHTML = "";
+      popover.style.visibility = "";
+    }
+    if (providerCardMenuTrigger) {
+      providerCardMenuTrigger.classList.remove("provider-card__menu--open");
+      providerCardMenuTrigger.setAttribute("aria-expanded", "false");
+      providerCardMenuTrigger = null;
+    }
+  }
+
+  function openProviderCardMenu(slug, trigger) {
+    const p = getProviderBySlug(slug);
+    if (!p || !trigger) return;
+
+    const popover = ensureProviderCardPopover();
+    if (trigger === providerCardMenuTrigger && !popover.hidden) {
+      closeProviderCardMenu();
+      return;
+    }
+
+    closeProviderCardMenu();
+
+    const navItem = p.address
+      ? `<a href="${escapeHtml(mapsSearchUrl(p.address))}" class="provider-card-popover__item" role="menuitem" target="_blank" rel="noopener noreferrer">
+          <span class="provider-card-popover__item-icon provider-card-popover__item-icon--nav" aria-hidden="true"></span>
+          Nawiguj
+        </a>`
+      : "";
+
+    popover.innerHTML = `
+      <button type="button" class="provider-card-popover__item" role="menuitem" data-action="share-provider" data-slug="${escapeHtml(p.slug)}">
+        <span class="provider-card-popover__item-icon provider-card-popover__item-icon--share" aria-hidden="true"></span>
+        Udostępnij
+      </button>
+      ${navItem}
+      <button type="button" class="provider-card-popover__item provider-card-popover__item--report" role="menuitem" data-action="report-provider" data-slug="${escapeHtml(p.slug)}">
+        <span class="provider-card-popover__item-icon provider-card-popover__item-icon--report" aria-hidden="true"></span>
+        Zgłoś
+      </button>`;
+
+    positionProviderCardPopover(popover, trigger);
+    trigger.classList.add("provider-card__menu--open");
+    trigger.setAttribute("aria-expanded", "true");
+    providerCardMenuTrigger = trigger;
+  }
+
   function renderProviderCard(p, isOpen) {
     const fav = window.AppState.favorites.indexOf(p.slug) !== -1;
     const dist = p.address ? p.distanceKm.toFixed(1) + " km" : "Online";
@@ -441,9 +535,6 @@
     if (hours) metaParts.push(hours);
     if (p.bookingMode === "approval") metaParts.push("na akceptację");
     const metaLine = metaParts.join(" · ");
-    const navLink = p.address
-      ? `<a href="${escapeHtml(mapsSearchUrl(p.address))}" class="provider-card__nav" target="_blank" rel="noopener noreferrer" aria-label="Nawiguj do ${escapeHtml(p.address)}" title="Otwórz w mapach"><span class="provider-card__nav-icon" aria-hidden="true"></span></a>`
-      : "";
 
     return `
       <div class="provider-card${isOpen ? " provider-card--open" : ""}">
@@ -457,9 +548,8 @@
           </span>
         </button>
         <div class="provider-card__aside">
-          ${navLink}
-          <button type="button" class="provider-card__share" data-action="share-provider" data-slug="${escapeHtml(p.slug)}" aria-label="Udostępnij ${escapeHtml(p.name)}" title="Udostępnij"><span class="provider-card__share-icon" aria-hidden="true"></span></button>
           <button type="button" class="provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__fav-icon" aria-hidden="true"></span></button>
+          <button type="button" class="provider-card__menu" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Więcej opcji dla ${escapeHtml(p.name)}" title="Więcej opcji"><span class="provider-card__menu-icon" aria-hidden="true"></span></button>
         </div>
       </div>`;
   }
@@ -1324,6 +1414,7 @@
   }
 
   function renderAll() {
+    closeProviderCardMenu();
     INSTANCES.forEach(render);
     renderFullscreen();
   }
@@ -1943,7 +2034,18 @@
   // Delegacja zdarzeń
   // ─────────────────────────────────────────────────────────
   document.addEventListener("click", function (event) {
-    if (event.target.closest(".provider-card__nav")) return;
+    const popover = document.getElementById("provider-card-popover");
+    const insidePopover = event.target.closest("#provider-card-popover");
+    const menuBtn = event.target.closest("[data-action=open-provider-menu]");
+
+    if (popover && !popover.hidden && !insidePopover && !menuBtn) {
+      closeProviderCardMenu();
+    }
+
+    if (event.target.closest(".provider-card-popover__item[href]")) {
+      closeProviderCardMenu();
+      return;
+    }
 
     const simLink = event.target.closest('a[href="#simulator"]');
     if (simLink) {
@@ -1975,7 +2077,25 @@
       case "open-profile": openProvider(d.slug); break;
       case "close-provider": closeProvider(); break;
       case "toggle-fav": toggleFav(d.slug); break;
-      case "share-provider": event.preventDefault(); shareProvider(d.slug); break;
+      case "open-provider-menu":
+        event.preventDefault();
+        event.stopPropagation();
+        openProviderCardMenu(d.slug, btn);
+        break;
+      case "close-provider-menu":
+        event.preventDefault();
+        closeProviderCardMenu();
+        break;
+      case "share-provider":
+        event.preventDefault();
+        shareProvider(d.slug);
+        closeProviderCardMenu();
+        break;
+      case "report-provider":
+        event.preventDefault();
+        reportProvider(d.slug);
+        closeProviderCardMenu();
+        break;
       case "toggle-service": toggleService(d.serviceId); break;
       case "toggle-service-desc": toggleServiceDesc(d.serviceId); break;
       case "start-booking": startBooking(d.slug); break;
@@ -2065,4 +2185,11 @@
   });
 
   window.addEventListener("hashchange", handleRouteHash);
+
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") closeProviderCardMenu();
+  });
+
+  window.addEventListener("resize", closeProviderCardMenu);
+  window.addEventListener("scroll", closeProviderCardMenu, true);
 })();
