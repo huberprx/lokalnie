@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=9" />
+  <link rel="stylesheet" href="styles.css?v=15" />
 </head>
 <body>
 
@@ -22,8 +22,6 @@
           <span class="logo-text">Lokalnie</span>
         </a>
         <nav class="site-nav" aria-label="Menu główne">
-          <a href="#simulator" class="site-nav__link">Symulator</a>
-          <a href="#calendar" class="site-nav__link">Kalendarz</a>
           <button type="button" class="site-nav__link" data-action="open-my-calendar">Mój kalendarz</button>
         </nav>
         <div class="site-header__actions">
@@ -154,7 +152,7 @@
   <!-- ══════════════════════════════════════════════
        PEŁNOEKRANOWA APLIKACJA — pojawia się po zalogowaniu
        ══════════════════════════════════════════════ -->
-  <div id="page-app" hidden>
+  <div id="page-app" hidden data-active-role="client">
     <header class="app-header">
       <div class="app-header__inner">
         <button type="button" class="logo logo--btn" data-action="go-home" aria-label="Lokalnie — wróć do strony głównej">
@@ -163,7 +161,6 @@
         </button>
 
         <nav class="app-header__nav" aria-label="Menu aplikacji">
-          <button type="button" class="site-nav__link" data-action="show-simulator">Symulator</button>
           <button type="button" class="site-nav__link" data-action="open-my-calendar">Mój kalendarz</button>
         </nav>
 
@@ -192,8 +189,8 @@
   <div class="toast" id="app-toast" role="status" aria-live="polite" hidden></div>
 
   <script src="data.js"></script>
-  <script src="app.js?v=8"></script>
-  <script src="simulator.js"></script>
+  <script src="app.js?v=15"></script>
+  <script src="simulator.js?v=12"></script>
   <script src="chat.js"></script>
   <script src="calendar.js"></script>
 </body>

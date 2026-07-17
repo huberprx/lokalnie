@@ -527,7 +527,8 @@
     providerCardMenuTrigger = trigger;
   }
 
-  function renderProviderCard(p, isOpen) {
+  function renderProviderCard(p, isOpen, opts) {
+    opts = opts || {};
     const fav = window.AppState.favorites.indexOf(p.slug) !== -1;
     const dist = p.address ? p.distanceKm.toFixed(1) + " km" : "Online";
     const hours = p.openHoursToday || "";
@@ -536,17 +537,22 @@
     if (p.bookingMode === "approval") metaParts.push("na akceptację");
     const metaLine = metaParts.join(" · ");
 
-    return `
-      <div class="provider-card${isOpen ? " provider-card--open" : ""}">
-        <button type="button" class="provider-card__main" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">
+    const bodyHtml = `
           <span class="provider-card__avatar">${escapeHtml(p.avatarInitials)}</span>
           <span class="provider-card__body">
             <span class="provider-card__name">${escapeHtml(p.name)}</span>
             <span class="provider-card__cat">${escapeHtml(providerCategoryLine(p))}</span>
             <span class="provider-card__meta">${escapeHtml(metaLine)}</span>
             ${p.address ? `<span class="provider-card__addr">${escapeHtml(p.address)}</span>` : ""}
-          </span>
-        </button>
+          </span>`;
+
+    const mainHtml = opts.staticMain
+      ? `<div class="provider-card__main provider-card__main--static">${bodyHtml}</div>`
+      : `<button type="button" class="provider-card__main" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">${bodyHtml}</button>`;
+
+    return `
+      <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}">
+        ${mainHtml}
         <div class="provider-card__aside">
           <button type="button" class="provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__fav-icon" aria-hidden="true"></span></button>
           <button type="button" class="provider-card__menu" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Więcej opcji dla ${escapeHtml(p.name)}" title="Więcej opcji"><span class="provider-card__menu-icon" aria-hidden="true"></span></button>
@@ -738,21 +744,62 @@
     const items = [
       { tab: "favorites", label: "Ulubione", icon: "♥" },
       { tab: "search", label: "Szukaj", icon: "⌕" },
-      { tab: "myCalendar", label: "Mój kalendarz", icon: "▦" },
+      { tab: "myCalendar", label: "Kalendarz", icon: "▦" },
     ];
     return `
       <nav class="bottom-nav" aria-label="Menu klienta">
-        ${items
-          .map(
-            (it) => `
-          <button type="button" class="bottom-nav__item${active === it.tab ? " bottom-nav__item--active" : ""}"
-            data-action="go-screen" data-screen="${it.tab}" ${active === it.tab ? 'aria-current="page"' : ""}>
-            <span class="bottom-nav__icon" aria-hidden="true">${it.icon}</span>
-            <span class="bottom-nav__label">${it.label}</span>
-          </button>`
-          )
-          .join("")}
+        <div class="bottom-nav__tabs">
+          ${items
+            .map(
+              (it) => `
+            <button type="button" class="bottom-nav__item${active === it.tab ? " bottom-nav__item--active" : ""}"
+              data-action="go-screen" data-screen="${it.tab}" ${active === it.tab ? 'aria-current="page"' : ""}>
+              <span class="bottom-nav__icon" aria-hidden="true">${it.icon}</span>
+              <span class="bottom-nav__label">${it.label}</span>
+            </button>`
+            )
+            .join("")}
+        </div>
+        <button type="button" class="bottom-nav__profile${active === "account" ? " bottom-nav__profile--active" : ""}"
+          data-action="go-screen" data-screen="account" aria-label="Profil" ${active === "account" ? 'aria-current="page"' : ""}>
+          <span class="bottom-nav__profile-icon" aria-hidden="true"></span>
+        </button>
       </nav>`;
+  }
+
+  function accountInitials(name) {
+    const parts = String(name || "U").trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return "U";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  function renderAccount() {
+    const user = data().CURRENT_USER || {};
+    const hasProvider = user.providerRole && user.providerRole.active;
+
+    return `
+      <div class="app-screen app-screen--client">
+        <div class="app-scroll">
+          <header class="screen-head">
+            <h2 class="screen-head__title">Profil</h2>
+            <p class="screen-head__sub">Twoje konto w Lokalnie.</p>
+          </header>
+          <div class="account-card">
+            <span class="account-card__avatar">${escapeHtml(accountInitials(user.name))}</span>
+            <p class="account-card__name">${escapeHtml(user.name || "Użytkownik")}</p>
+          </div>
+          <div class="account-actions">
+            ${
+              hasProvider
+                ? `<button type="button" class="btn btn--ghost account-actions__btn" data-action="switch-role" data-role="provider">Przełącz na usługodawcę</button>`
+                : ""
+            }
+            <button type="button" class="btn btn--ghost account-actions__btn account-actions__btn--logout" data-action="logout">Wyloguj</button>
+          </div>
+        </div>
+        ${bottomNav("account")}
+      </div>`;
   }
 
   function renderSearch() {
@@ -1088,11 +1135,13 @@
           </div>
 
           <div class="booking">
-            <div class="booking__header">
-              <span class="booking__prov">${escapeHtml(p.name)}</span>
+            <div class="booking__provider-card">
+              ${renderProviderCard(p, false, { staticMain: true, bookingHeader: true })}
+            </div>
+            <p class="booking__selection">
               <span class="booking__svc">${escapeHtml(ctx.svcNames)}</span>
               <span class="booking__meta">${escapeHtml(formatDuration(ctx.totals.duration))} · ${ctx.totals.hasNullPrice ? "wycena indyw." : escapeHtml(ctx.totals.price + " zł")}</span>
-            </div>
+            </p>
 
             <h3 class="booking__label">Wybierz dzień</h3>
             <div class="date-strip">${dateStrip || `<p class="empty-note">Brak dostępnych terminów.</p>`}</div>
@@ -1115,6 +1164,8 @@
         return renderFavorites();
       case "myCalendar":
         return renderMyCalendar();
+      case "account":
+        return renderAccount();
       case "profile":
         return renderProfile(window.AppState.params.client && window.AppState.params.client.slug);
       case "booking":
@@ -1505,12 +1556,12 @@
     renderAll();
   }
 
+  function usesDesktopLayout() {
+    return window.matchMedia("(min-width: 900px)").matches;
+  }
+
   function clientUsesDesktopBookingLayout() {
-    const pageApp = document.getElementById("page-app");
-    if (pageApp && !pageApp.hidden) {
-      return window.matchMedia("(min-width: 900px)").matches;
-    }
-    return !!(window.AppState.simView && window.AppState.simView.client === "desktop");
+    return usesDesktopLayout();
   }
 
   const PROVIDER_PANEL_MS = 300;
@@ -1960,6 +2011,9 @@
     const userEl = document.getElementById("app-header-user");
     if (userEl && user) userEl.textContent = user.name || "";
 
+    const pageApp = document.getElementById("page-app");
+    if (pageApp) pageApp.dataset.activeRole = activeRole || "client";
+
     const hasProviderRole = user && user.providerRole && user.providerRole.active;
     const roleSwitch = document.getElementById("app-role-switch");
     if (roleSwitch) roleSwitch.hidden = !hasProviderRole;
@@ -2028,6 +2082,7 @@
     showPage: showPage,
     showSimulator: showSimulator,
     computeSlots: computeSlots,
+    usesDesktopLayout: usesDesktopLayout,
   };
 
   // ─────────────────────────────────────────────────────────
@@ -2182,6 +2237,10 @@
       updateAppHeader(window.AppState.activeRole);
     }
     handleRouteHash();
+
+    window.matchMedia("(min-width: 900px)").addEventListener("change", function () {
+      renderAll();
+    });
   });
 
   window.addEventListener("hashchange", handleRouteHash);
