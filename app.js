@@ -742,28 +742,22 @@
   // ─────────────────────────────────────────────────────────
   function bottomNav(active) {
     const items = [
-      { tab: "favorites", label: "Ulubione", icon: "♥" },
-      { tab: "search", label: "Szukaj", icon: "⌕" },
-      { tab: "myCalendar", label: "Kalendarz", icon: "▦" },
+      { tab: "search", label: "Szukaj", icon: "search" },
+      { tab: "favorites", label: "Ulubione", icon: "heart" },
+      { tab: "myCalendar", label: "Kalendarz", icon: "calendar" },
+      { tab: "account", label: "Profil", icon: "profile" },
     ];
     return `
       <nav class="bottom-nav" aria-label="Menu klienta">
-        <div class="bottom-nav__tabs">
-          ${items
-            .map(
-              (it) => `
-            <button type="button" class="bottom-nav__item${active === it.tab ? " bottom-nav__item--active" : ""}"
-              data-action="go-screen" data-screen="${it.tab}" ${active === it.tab ? 'aria-current="page"' : ""}>
-              <span class="bottom-nav__icon" aria-hidden="true">${it.icon}</span>
-              <span class="bottom-nav__label">${it.label}</span>
-            </button>`
-            )
-            .join("")}
-        </div>
-        <button type="button" class="bottom-nav__profile${active === "account" ? " bottom-nav__profile--active" : ""}"
-          data-action="go-screen" data-screen="account" aria-label="Profil" ${active === "account" ? 'aria-current="page"' : ""}>
-          <span class="bottom-nav__profile-icon" aria-hidden="true"></span>
-        </button>
+        ${items
+          .map(
+            (it) => `
+          <button type="button" class="bottom-nav__item${active === it.tab ? " bottom-nav__item--active" : ""}"
+            data-action="go-screen" data-screen="${it.tab}" aria-label="${it.label}" ${active === it.tab ? 'aria-current="page"' : ""}>
+            <span class="bottom-nav__icon bottom-nav__icon--${it.icon}" aria-hidden="true"></span>
+          </button>`
+          )
+          .join("")}
       </nav>`;
   }
 
