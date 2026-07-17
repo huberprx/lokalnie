@@ -327,6 +327,7 @@
       calMonth: calMonth,
       slots: slots,
       timeList: renderTimeSlots(slots, draft),
+      timeListMobile: renderTimeSlots(slots, draft, { mobile: true }),
       services: renderServiceRows(p, draft.serviceIds || []),
       calendarGrid: renderCalendarGrid(p, activeDate, calMonth, availDates, totals),
       svcNames: draftServices(p).map((s) => s.name).join(", "),
@@ -592,14 +593,9 @@
       ? `<div class="provider-card__details">${detailsInner}</div>`
       : `<button type="button" class="provider-card__details" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">${detailsInner}</button>`;
 
-    const backHtml = opts.showBack
-      ? `<button type="button" class="provider-card__action provider-card__back" data-action="close-provider" aria-label="Wróć">‹</button>`
-      : "";
-
     return `
-      <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}${opts.staticMain ? " provider-card--static" : ""}${opts.showBack ? " provider-card--with-back" : ""}">
+      <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}${opts.staticMain ? " provider-card--static" : ""}">
         <div class="provider-card__head">
-          ${backHtml}
           ${nameHtml}
           <div class="provider-card__toolbar">
             <button type="button" class="provider-card__action provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__action-icon provider-card__fav-icon" aria-hidden="true"></span></button>
@@ -793,7 +789,9 @@
   // ─────────────────────────────────────────────────────────
   // KLIENT — ekrany
   // ─────────────────────────────────────────────────────────
-  function bottomNav(active) {
+  function bottomNav(active, opts) {
+    opts = opts || {};
+    const backOnSearch = !!opts.backOnSearch;
     const items = [
       { tab: "search", label: "Szukaj", icon: "search" },
       { tab: "favorites", label: "Ulubione", icon: "heart" },
@@ -804,14 +802,38 @@
       <nav class="bottom-nav" aria-label="Menu klienta">
         <span class="bottom-nav__indicator" aria-hidden="true"></span>
         ${items
-          .map(
-            (it) => `
-          <button type="button" class="bottom-nav__item${active === it.tab ? " bottom-nav__item--active" : ""}"
-            data-action="go-screen" data-screen="${it.tab}" aria-label="${it.label}" ${active === it.tab ? 'aria-current="page"' : ""}>
-            <span class="bottom-nav__icon bottom-nav__icon--${it.icon}" aria-hidden="true"></span>
-          </button>`
-          )
+          .map(function (it) {
+            const isBack = backOnSearch && it.tab === "search";
+            const isActive = active === it.tab;
+            const action = isBack ? "close-provider" : "go-screen";
+            const label = isBack ? "Wróć" : it.label;
+            const icon = isBack ? "back" : it.icon;
+            return `
+          <button type="button" class="bottom-nav__item${isActive ? " bottom-nav__item--active" : ""}"
+            data-action="${action}" data-screen="${it.tab}" aria-label="${label}" ${isActive ? 'aria-current="page"' : ""}>
+            <span class="bottom-nav__icon bottom-nav__icon--${icon}" aria-hidden="true"></span>
+          </button>`;
+          })
           .join("")}
+      </nav>`;
+  }
+
+  function bookingBottomNav(draft) {
+    const hasSlot = !!(draft && draft.slotId);
+    return `
+      <nav class="bottom-nav bottom-nav--booking${hasSlot ? " bottom-nav--booking-confirm" : " bottom-nav--booking-back"}" aria-label="Menu rezerwacji">
+        <button type="button" class="bottom-nav__item${hasSlot ? "" : " bottom-nav__item--active"}"
+          data-action="close-provider" data-screen="search" aria-label="Wróć"${hasSlot ? "" : ' aria-current="page"'}>
+          <span class="bottom-nav__icon bottom-nav__icon--back" aria-hidden="true"></span>
+        </button>
+        ${
+          hasSlot
+            ? `<button type="button" class="bottom-nav__book" data-action="confirm-booking">Rezerwuj</button>
+        <button type="button" class="bottom-nav__clear" data-action="clear-slot" aria-label="Anuluj wybór godziny">
+          <span class="bottom-nav__icon bottom-nav__icon--close" aria-hidden="true"></span>
+        </button>`
+            : ""
+        }
       </nav>`;
   }
 
@@ -1086,14 +1108,29 @@
       </div>`;
   }
 
-  function renderTimeSlots(slots, draft) {
+  function renderTimeSlots(slots, draft, opts) {
+    opts = opts || {};
+    const mobile = !!opts.mobile;
     return slots
       .map(function (s) {
+        const range = `${escapeHtml(s.from)}→${escapeHtml(s.to)}`;
+        const place = escapeHtml(s.locationLabel || "—");
+        if (mobile) {
+          const selected = draft && draft.slotId === s.id;
+          return `
+        <button type="button" class="time-row time-row--chip${selected ? " time-row--selected" : ""}" data-action="pick-slot" data-slot="${escapeHtml(s.id)}"
+          aria-label="Wybierz ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${selected ? "true" : "false"}">
+          <span class="time-row__info">
+            <span class="time-row__range">${range}</span>
+            <span class="time-row__place">${place}</span>
+          </span>
+        </button>`;
+        }
         return `
         <div class="time-row">
           <div class="time-row__info">
-            <span class="time-row__range">${escapeHtml(s.from)}→${escapeHtml(s.to)}</span>
-            <span class="time-row__place">${escapeHtml(s.locationLabel || "—")}</span>
+            <span class="time-row__range">${range}</span>
+            <span class="time-row__place">${place}</span>
           </div>
           <button type="button" class="btn btn--primary btn--sm time-row__btn" data-action="book-slot" data-slot="${escapeHtml(s.id)}">Rezeruj</button>
         </div>`;
@@ -1146,7 +1183,6 @@
       <div class="app-screen app-screen--client">
         <div class="app-scroll">
           <div class="topbar">
-            <button type="button" class="topbar__back" data-action="go-screen" data-screen="search" aria-label="Wróć">‹</button>
             <span class="topbar__title">Profil</span>
             <button type="button" class="fav-btn${fav ? " fav-btn--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}"
               aria-pressed="${fav ? "true" : "false"}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="fav-btn__icon" aria-hidden="true"></span></button>
@@ -1179,7 +1215,7 @@
                </div>`
             : ""
         }
-        ${bottomNav("search")}
+        ${bottomNav("search", { backOnSearch: true })}
       </div>`;
   }
 
@@ -1209,7 +1245,7 @@
         <div class="booking-mobile app-scroll">
           <div class="booking">
             <div class="booking__provider-card">
-              ${renderProviderCard(p, false, { staticMain: true, bookingHeader: true, showBack: true })}
+              ${renderProviderCard(p, false, { staticMain: true, bookingHeader: true })}
             </div>
 
             <h3 class="booking__label">Wybierz usługę${p.multiSelect ? ' <span class="booking__label-hint">(możesz wybrać kilka)</span>' : ""}</h3>
@@ -1219,14 +1255,13 @@
             <div class="date-strip">${dateStrip || `<p class="empty-note">Brak dostępnych terminów.</p>`}</div>
 
             ${ctx.activeDate ? `<h3 class="booking__label">Wybierz godzinę · ${escapeHtml(formatDateLong(ctx.activeDate))}</h3>
-            <div class="time-list">${ctx.timeList || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>`}</div>` : ""}
+            <div class="time-list time-list--horizontal">${ctx.timeListMobile || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>`}</div>` : ""}
           </div>
         </div>
 
         ${renderBookingLayoutBlock(p, ctx)}
 
-        ${renderSelectionSummaryBar(p, ctx, "auto")}
-        ${bottomNav("search")}
+        ${bookingBottomNav(ctx.draft)}
       </div>`;
   }
 
@@ -1831,6 +1866,14 @@
     if (!window.AppState.draft) return;
     window.AppState.draft.slotId = slotId;
     saveState();
+    renderAll();
+  }
+
+  function clearSlot() {
+    if (!window.AppState.draft) return;
+    window.AppState.draft.slotId = null;
+    saveState();
+    renderAll();
   }
 
   function bookSlot(slotId) {
@@ -2247,6 +2290,7 @@
       case "send-request": sendRequest(d.slug); break;
       case "pick-date": pickDate(d.date); break;
       case "pick-slot": pickSlot(d.slot); break;
+      case "clear-slot": clearSlot(); break;
       case "book-slot": bookSlot(d.slot); break;
       case "cal-prev": shiftCalMonth(-1); break;
       case "cal-next": shiftCalMonth(1); break;
