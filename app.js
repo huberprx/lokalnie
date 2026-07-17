@@ -1011,7 +1011,6 @@
   function renderServiceRows(p, selectedIds) {
     const draft = window.AppState.draft;
     const expandedIds = (draft && draft.expandedServiceIds) || [];
-    const selectKind = p.multiSelect ? "checkbox" : "radio";
 
     return (p.services || [])
       .map((s) => {
@@ -1023,18 +1022,9 @@
 
         return `
         <article class="service-row${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}" data-service-id="${escapeHtml(s.id)}">
-          <button type="button"
-            class="service-row__select service-row__select--${selectKind}${on ? " service-row__select--on" : ""}"
-            data-action="toggle-service"
-            data-service-id="${escapeHtml(s.id)}"
-            aria-pressed="${on ? "true" : "false"}"
-            aria-label="${escapeHtml(selectLabel)}"
-            title="${escapeHtml(selectLabel)}">
-            <span class="service-row__select-mark" aria-hidden="true"></span>
-          </button>
           <div class="service-row__content">
             <div class="service-row__head">
-              <button type="button" class="service-row__main" data-action="toggle-service-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}">
+              <button type="button" class="service-row__main" data-action="toggle-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
                 <span class="service-row__name">${escapeHtml(s.name)}</span>
                 ${s.subtitle ? `<span class="service-row__sub">${escapeHtml(s.subtitle)}</span>` : ""}
               </button>

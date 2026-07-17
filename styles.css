@@ -2890,6 +2890,11 @@ a.site-nav__link:hover,
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
+/* Tymczasowo bez checkboxów/radio — wybór przez klik w nazwę usługi */
+.service-row__select {
+  display: none !important;
+}
+
 .service-row--static {
   cursor: default;
 }
@@ -3202,7 +3207,28 @@ a.site-nav__link:hover,
 
 .booking-mobile .booking__services-list {
   margin: 0 0 0.85rem;
-  max-height: none;
+  height: 35dvh;
+  max-height: 35dvh;
+  min-height: 10rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.booking-mobile .booking__services-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.device-frame .booking-mobile .booking__services-list {
+  height: calc(var(--frame-h) * 0.35);
+  max-height: calc(var(--frame-h) * 0.35);
+  min-height: 8.5rem;
 }
 
 /* ---- Rezerwacja desktop: 3 kolumny (usługi | kalendarz | terminy) ---- */
@@ -3491,36 +3517,55 @@ a.site-nav__link:hover,
 }
 
 .date-strip {
+  --date-chip-gap: 0.28rem;
   display: flex;
-  gap: 0.45rem;
+  gap: var(--date-chip-gap);
   overflow-x: auto;
-  padding-bottom: 0.4rem;
+  overflow-y: hidden;
+  padding-bottom: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.date-strip::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .date-chip {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.15rem;
-  min-width: 3rem;
-  padding: 0.5rem 0.4rem;
+  justify-content: center;
+  gap: 0.05rem;
+  /* Min. 7 dni w widocznym obszarze */
+  flex: 0 0 calc((100% - 6 * var(--date-chip-gap)) / 7);
+  width: calc((100% - 6 * var(--date-chip-gap)) / 7);
+  min-width: calc((100% - 6 * var(--date-chip-gap)) / 7);
+  max-width: calc((100% - 6 * var(--date-chip-gap)) / 7);
+  padding: 0.35rem 0.1rem;
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 8px;
   cursor: pointer;
-  flex-shrink: 0;
+  box-sizing: border-box;
   transition: all 0.15s ease;
 }
 
 .date-chip__dow {
-  font-size: 0.7rem;
+  font-size: 0.58rem;
   color: var(--text-muted);
   text-transform: uppercase;
+  line-height: 1.1;
+  letter-spacing: 0.01em;
 }
 
 .date-chip__day {
-  font-size: 1.05rem;
+  font-size: 0.88rem;
   font-weight: 700;
+  line-height: 1.1;
 }
 
 .date-chip:hover {
