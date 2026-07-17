@@ -439,6 +439,28 @@
     showToast("Dziękujemy — zgłoszenie dotyczące „" + p.name + "” zostało przyjęte.");
   }
 
+  function openProviderInfo(slug) {
+    const p = getProviderBySlug(slug);
+    if (!p) return;
+    initDraftForProvider(p);
+    window.AppState.params.client = { slug: slug };
+    window.AppState.searchOpenSlug = null;
+    window.AppState.screen.client = "profile";
+    saveState();
+    renderAll();
+  }
+
+  function callProvider(slug) {
+    const p = getProviderBySlug(slug);
+    if (!p) return;
+    const phone = p.phone ? String(p.phone).replace(/\s/g, "") : "";
+    if (phone) {
+      window.location.href = "tel:" + phone;
+      return;
+    }
+    showToast("Brak numeru telefonu dla „" + p.name + "”.");
+  }
+
   let providerCardMenuTrigger = null;
 
   function ensureProviderCardPopover() {
@@ -510,7 +532,22 @@
         </a>`
       : "";
 
+    const callItem = p.phone
+      ? `<a href="tel:${escapeHtml(String(p.phone).replace(/\s/g, ""))}" class="provider-card-popover__item" role="menuitem">
+          <span class="provider-card-popover__item-icon provider-card-popover__item-icon--call" aria-hidden="true"></span>
+          Zadzwoń
+        </a>`
+      : `<button type="button" class="provider-card-popover__item" role="menuitem" data-action="call-provider" data-slug="${escapeHtml(p.slug)}">
+          <span class="provider-card-popover__item-icon provider-card-popover__item-icon--call" aria-hidden="true"></span>
+          Zadzwoń
+        </button>`;
+
     popover.innerHTML = `
+      <button type="button" class="provider-card-popover__item" role="menuitem" data-action="open-provider-info" data-slug="${escapeHtml(p.slug)}">
+        <span class="provider-card-popover__item-icon provider-card-popover__item-icon--info" aria-hidden="true"></span>
+        Więcej informacji
+      </button>
+      ${callItem}
       <button type="button" class="provider-card-popover__item" role="menuitem" data-action="share-provider" data-slug="${escapeHtml(p.slug)}">
         <span class="provider-card-popover__item-icon provider-card-popover__item-icon--share" aria-hidden="true"></span>
         Udostępnij
@@ -537,25 +574,34 @@
     if (p.bookingMode === "approval") metaParts.push("na akceptację");
     const metaLine = metaParts.join(" · ");
 
-    const bodyHtml = `
-          <span class="provider-card__avatar">${escapeHtml(p.avatarInitials)}</span>
-          <span class="provider-card__body">
-            <span class="provider-card__name">${escapeHtml(p.name)}</span>
+    const toolbarHtml = `
+        <div class="provider-card__toolbar">
+          <button type="button" class="provider-card__action provider-card__menu" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Więcej opcji dla ${escapeHtml(p.name)}" title="Więcej opcji"><span class="provider-card__action-icon provider-card__menu-icon" aria-hidden="true"></span></button>
+          <button type="button" class="provider-card__action provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__action-icon provider-card__fav-icon" aria-hidden="true"></span></button>
+        </div>`;
+
+    const detailsHtml = `
             <span class="provider-card__cat">${escapeHtml(providerCategoryLine(p))}</span>
             <span class="provider-card__meta">${escapeHtml(metaLine)}</span>
-            ${p.address ? `<span class="provider-card__addr">${escapeHtml(p.address)}</span>` : ""}
-          </span>`;
+            ${p.address ? `<span class="provider-card__addr">${escapeHtml(p.address)}</span>` : ""}`;
 
-    const mainHtml = opts.staticMain
-      ? `<div class="provider-card__main provider-card__main--static">${bodyHtml}</div>`
-      : `<button type="button" class="provider-card__main" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">${bodyHtml}</button>`;
+    const nameHtml = opts.staticMain
+      ? `<span class="provider-card__name">${escapeHtml(p.name)}</span>`
+      : `<button type="button" class="provider-card__name" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">${escapeHtml(p.name)}</button>`;
+
+    const detailsBlock = opts.staticMain
+      ? `<div class="provider-card__details">${detailsHtml}</div>`
+      : `<button type="button" class="provider-card__details" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">${detailsHtml}</button>`;
 
     return `
-      <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}">
-        ${mainHtml}
-        <div class="provider-card__aside">
-          <button type="button" class="provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__fav-icon" aria-hidden="true"></span></button>
-          <button type="button" class="provider-card__menu" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Więcej opcji dla ${escapeHtml(p.name)}" title="Więcej opcji"><span class="provider-card__menu-icon" aria-hidden="true"></span></button>
+      <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}${opts.staticMain ? " provider-card--static" : ""}">
+        <span class="provider-card__avatar">${escapeHtml(p.avatarInitials)}</span>
+        <div class="provider-card__body">
+          <div class="provider-card__head">
+            ${nameHtml}
+            ${toolbarHtml}
+          </div>
+          ${detailsBlock}
         </div>
       </div>`;
   }
@@ -749,6 +795,7 @@
     ];
     return `
       <nav class="bottom-nav" aria-label="Menu klienta">
+        <span class="bottom-nav__indicator" aria-hidden="true"></span>
         ${items
           .map(
             (it) => `
@@ -759,6 +806,47 @@
           )
           .join("")}
       </nav>`;
+  }
+
+  function captureBottomNavTab() {
+    const active = document.querySelector(".bottom-nav .bottom-nav__item--active");
+    return active ? active.getAttribute("data-screen") : null;
+  }
+
+  function syncBottomNavIndicators(prevTab) {
+    document.querySelectorAll(".bottom-nav").forEach(function (nav) {
+      const indicator = nav.querySelector(".bottom-nav__indicator");
+      const items = Array.from(nav.querySelectorAll(".bottom-nav__item"));
+      const activeIndex = items.findIndex(function (item) {
+        return item.classList.contains("bottom-nav__item--active");
+      });
+      if (!indicator || activeIndex === -1) return;
+
+      const prevIndex = prevTab
+        ? items.findIndex(function (item) {
+            return item.getAttribute("data-screen") === prevTab;
+          })
+        : activeIndex;
+
+      function indicatorLeft(item) {
+        return item.offsetLeft + (item.offsetWidth - indicator.offsetWidth) / 2;
+      }
+
+      const fromItem = items[prevIndex >= 0 ? prevIndex : activeIndex];
+      const toItem = items[activeIndex];
+      const fromLeft = indicatorLeft(fromItem);
+      const toLeft = indicatorLeft(toItem);
+      const shouldAnimate = prevTab && prevIndex >= 0 && prevIndex !== activeIndex;
+
+      indicator.style.transition = "none";
+      indicator.style.transform = "translateX(" + (shouldAnimate ? fromLeft : toLeft) + "px)";
+      indicator.offsetHeight;
+
+      if (shouldAnimate) {
+        indicator.style.transition = "";
+        indicator.style.transform = "translateX(" + toLeft + "px)";
+      }
+    });
   }
 
   function accountInitials(name) {
@@ -1460,8 +1548,10 @@
 
   function renderAll() {
     closeProviderCardMenu();
+    const prevBottomNavTab = captureBottomNavTab();
     INSTANCES.forEach(render);
     renderFullscreen();
+    syncBottomNavIndicators(prevBottomNavTab);
   }
 
   // Poziome przewijanie wierszy filtrów — delegacja (przetrwa re-render).
@@ -2124,8 +2214,24 @@
       case "go-screen": goScreen(d.screen); break;
       case "open-provider": openProvider(d.slug); break;
       case "open-profile": openProvider(d.slug); break;
+      case "open-provider-info":
+        event.preventDefault();
+        event.stopPropagation();
+        closeProviderCardMenu();
+        openProviderInfo(d.slug);
+        break;
+      case "call-provider":
+        event.preventDefault();
+        event.stopPropagation();
+        closeProviderCardMenu();
+        callProvider(d.slug);
+        break;
       case "close-provider": closeProvider(); break;
-      case "toggle-fav": toggleFav(d.slug); break;
+      case "toggle-fav":
+        event.preventDefault();
+        event.stopPropagation();
+        toggleFav(d.slug);
+        break;
       case "open-provider-menu":
         event.preventDefault();
         event.stopPropagation();
@@ -2234,6 +2340,10 @@
 
     window.matchMedia("(min-width: 900px)").addEventListener("change", function () {
       renderAll();
+    });
+
+    window.addEventListener("resize", function () {
+      syncBottomNavIndicators(null);
     });
   });
 
