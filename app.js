@@ -875,20 +875,22 @@
       { tab: "myCalendar", label: "Kalendarz", icon: "calendar" },
       { tab: "account", label: "Profil", icon: "profile" },
     ];
+    const backButton = backOnSearch
+      ? `<button type="button" class="bottom-nav__item bottom-nav__item--active"
+          data-action="close-provider" data-screen="search" aria-label="Wróć" aria-current="page">
+          <span class="bottom-nav__icon bottom-nav__icon--home" aria-hidden="true"></span>
+        </button>`
+      : "";
     return `
-      <nav class="bottom-nav" aria-label="Menu klienta">
+      <nav class="bottom-nav${backOnSearch ? " bottom-nav--with-back" : ""}" aria-label="Menu klienta">
         <span class="bottom-nav__indicator" aria-hidden="true"></span>
-        ${items
+        ${backButton}${items
           .map(function (it) {
-            const isBack = backOnSearch && it.tab === "search";
-            const isActive = active === it.tab;
-            const action = isBack ? "close-provider" : "go-screen";
-            const label = isBack ? "Wróć" : it.label;
-            const icon = isBack ? "back" : it.icon;
+            const isActive = !backOnSearch && active === it.tab;
             return `
           <button type="button" class="bottom-nav__item${isActive ? " bottom-nav__item--active" : ""}"
-            data-action="${action}" data-screen="${it.tab}" aria-label="${label}" ${isActive ? 'aria-current="page"' : ""}>
-            <span class="bottom-nav__icon bottom-nav__icon--${icon}" aria-hidden="true"></span>
+            data-action="go-screen" data-screen="${it.tab}" aria-label="${it.label}" ${isActive ? 'aria-current="page"' : ""}>
+            <span class="bottom-nav__icon bottom-nav__icon--${it.icon}" aria-hidden="true"></span>
           </button>`;
           })
           .join("")}
@@ -902,9 +904,6 @@
     }
     return `
       <nav class="bottom-nav bottom-nav--booking bottom-nav--booking-confirm" aria-label="Potwierdź rezerwację">
-        <button type="button" class="bottom-nav__item" data-action="close-provider" data-screen="search" aria-label="Wróć">
-          <span class="bottom-nav__icon bottom-nav__icon--back" aria-hidden="true"></span>
-        </button>
         <button type="button" class="bottom-nav__book" data-action="confirm-booking">Rezerwuj</button>
         <button type="button" class="bottom-nav__clear" data-action="clear-slot" aria-label="Anuluj wybór godziny">
           <span class="bottom-nav__icon bottom-nav__icon--close" aria-hidden="true"></span>
@@ -1721,6 +1720,10 @@
   function goScreen(screen) {
     if (screen !== "search" && screen !== "favorites") {
       window.AppState.searchOpenSlug = null;
+    }
+    if (screen === "search" && window.AppState.screen.client === "booking") {
+      window.AppState.draft = null;
+      window.AppState.params.client = {};
     }
     window.AppState.screen.client = screen;
     if (window.AppState.loggedIn) {

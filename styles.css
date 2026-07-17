@@ -48,7 +48,7 @@
   --booking-panel-summary-h: 3.75rem;
   --booking-panel-animate-h: calc(var(--booking-panel-layout-h) + var(--booking-panel-summary-h) + 0.5rem);
   --phi: 1.618;
-  --bottom-nav-pill-h: 52px;
+  --bottom-nav-pill-h: 56px;
   --bottom-nav-pad-x: 0.35rem;
   --bottom-nav-gap: 0.15rem;
   --bottom-nav-item-w: calc(var(--bottom-nav-pill-h) / var(--phi) * 1.382);
@@ -3180,7 +3180,7 @@ body:has(#page-app:not([hidden])) {
   }
 
   .app-screen--booking .booking__provider-card {
-    margin: 0 -1rem 0.75rem;
+    margin: 0 -1rem 0.2rem;
   }
 
   .app-screen--booking .provider-card--booking-header {
@@ -3202,7 +3202,7 @@ body:has(#page-app:not([hidden])) {
 }
 
 .device-frame[data-view="mobile"] .app-screen--booking .booking__provider-card {
-  margin: 0 -0.85rem 0.75rem;
+  margin: 0 -0.85rem 0.2rem;
 }
 
 .device-frame[data-view="mobile"] .app-screen--booking .provider-card--booking-header {
@@ -3304,11 +3304,13 @@ body:has(#page-app:not([hidden])) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding-top: 0.15rem;
+  padding-top: 0;
 }
 
 .booking__main .booking__label {
   flex-shrink: 0;
+  margin-top: 0.15rem;
+  margin-bottom: 0.35rem;
 }
 
 .booking-mobile .booking__services-list {
@@ -3895,6 +3897,16 @@ body:has(#page-app:not([hidden])) {
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Cpath d='M10.5 3a7.5 7.5 0 0 1 5.89 12.08l4.28 4.28-1.42 1.42-4.28-4.28A7.5 7.5 0 1 1 10.5 3Zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Z'/%3E%3C/svg%3E");
 }
 
+.bottom-nav__icon--home {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 10.5 12 4l8 6.5'/%3E%3Cpath d='M6 10.5V19h12v-8.5'/%3E%3Cpath d='M10 19v-5h4v5'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 10.5 12 4l8 6.5'/%3E%3Cpath d='M6 10.5V19h12v-8.5'/%3E%3Cpath d='M10 19v-5h4v5'/%3E%3C/svg%3E");
+}
+
+.bottom-nav__item--active .bottom-nav__icon--home {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Cpath d='M12 3.2 4 10v10h5v-6h6v6h5V10L12 3.2Z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Cpath d='M12 3.2 4 10v10h5v-6h6v6h5V10L12 3.2Z'/%3E%3C/svg%3E");
+}
+
 .bottom-nav__icon--back {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 18l-6-6 6-6'/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 18l-6-6 6-6'/%3E%3C/svg%3E");
@@ -3914,6 +3926,13 @@ body:has(#page-app:not([hidden])) {
   gap: 0.35rem;
   padding-left: 0.55rem;
   padding-right: 0.55rem;
+}
+
+.bottom-nav--with-back .bottom-nav__item {
+  width: auto;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: none;
 }
 
 .bottom-nav--booking-confirm {
