@@ -248,9 +248,14 @@
 
     const bookingScreen = document.querySelector(".app-screen--booking");
     if (bookingScreen && window.AppState.screen.client === "booking") {
-      const layout = bookingScreen.querySelector(".booking-layout");
-      if (layout) layout.outerHTML = renderBookingLayoutBlock(p, ctx);
-      updated = true;
+      if (clientUsesDesktopBookingLayout()) {
+        const layout = bookingScreen.querySelector(".booking-layout");
+        if (layout) {
+          layout.outerHTML = renderBookingLayoutBlock(p, ctx);
+          updated = true;
+        }
+      }
+      // Na mobile pełny re-render (lista usług + terminy + podsumowanie)
     }
 
     const profileServices = document.querySelector(".app-screen--client .profile .service-list");
@@ -1216,10 +1221,9 @@
             <div class="booking__provider-card">
               ${renderProviderCard(p, false, { staticMain: true, bookingHeader: true, showBack: true })}
             </div>
-            <p class="booking__selection">
-              <span class="booking__svc">${escapeHtml(ctx.svcNames)}</span>
-              <span class="booking__meta">${escapeHtml(formatDuration(ctx.totals.duration))} · ${ctx.totals.hasNullPrice ? "wycena indyw." : escapeHtml(ctx.totals.price + " zł")}</span>
-            </p>
+
+            <h3 class="booking__label">Wybierz usługę${p.multiSelect ? ' <span class="booking__label-hint">(możesz wybrać kilka)</span>' : ""}</h3>
+            <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
 
             <h3 class="booking__label">Wybierz dzień</h3>
             <div class="date-strip">${dateStrip || `<p class="empty-note">Brak dostępnych terminów.</p>`}</div>

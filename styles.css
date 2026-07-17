@@ -2176,13 +2176,13 @@ a.site-nav__link:hover,
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  overflow-x: scroll;
+  overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
   touch-action: pan-x;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(0, 0, 0, 0.25) transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   cursor: grab;
   user-select: none;
 }
@@ -2200,12 +2200,9 @@ a.site-nav__link:hover,
 }
 
 .filter-scroll::-webkit-scrollbar {
-  height: 5px;
-}
-
-.filter-scroll::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.22);
-  border-radius: 999px;
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .filter-scroll__track {
@@ -2215,7 +2212,7 @@ a.site-nav__link:hover,
   gap: 0.4rem;
   width: max-content;
   min-width: min(100%, max-content);
-  padding: 0 0.15rem 0.35rem;
+  padding: 0 0.15rem;
 }
 
 .filter-scroll--sub .filter-scroll__track {
@@ -2421,8 +2418,7 @@ a.site-nav__link:hover,
   grid-template-columns: auto 1fr auto;
   grid-template-areas:
     "head head head"
-    "avatar details details"
-    ". . menu";
+    "avatar details menu";
   column-gap: 0.75rem;
   row-gap: 0.45rem;
   align-items: start;
@@ -2573,8 +2569,9 @@ a.site-nav__link:hover,
 .provider-card__menu-slot {
   grid-area: menu;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: flex-end;
+  align-self: end;
 }
 
 /* Desktop: avatar po lewej, nazwa + ⋯ ♥ w jednym wierszu */
@@ -2627,13 +2624,20 @@ a.site-nav__link:hover,
   grid-template-columns: auto 1fr auto;
   grid-template-areas:
     "head head head"
-    "avatar details details"
-    ". . menu";
+    "avatar details menu";
   align-items: start;
 }
 
-/* Mobile lista: bez ⋮; otwarty profil/rezerwacja — ⋮ zostaje */
+.device-frame[data-view="mobile"] .provider-card__menu-slot {
+  align-self: end;
+}
+
+/* Mobile lista: bez ⋯; otwarty profil/rezerwacja — ⋯ zlicowane z dołem szczegółów */
 @media (max-width: 899px) {
+  .provider-card__menu-slot {
+    align-self: end;
+  }
+
   .provider-card:not(.provider-card--booking-header):not(.provider-card--open) {
     grid-template-areas:
       "head head head"
@@ -3187,6 +3191,18 @@ a.site-nav__link:hover,
   font-weight: 600;
   color: var(--text-muted);
   margin: 0.5rem 0 0.5rem;
+}
+
+.booking__label-hint {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--accent-client);
+}
+
+.booking-mobile .booking__services-list {
+  margin: 0 0 0.85rem;
+  max-height: none;
 }
 
 /* ---- Rezerwacja desktop: 3 kolumny (usługi | kalendarz | terminy) ---- */
