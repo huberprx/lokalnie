@@ -36,7 +36,7 @@
   --radius: 16px;
   --phone-radius: 36px;
   /* Symulator — zawsze 1:1, bez pomniejszenia */
-  --frame-h: 620px;
+  --frame-h: 720px;
   --frame-mobile-w: 320px;
   --frame-desktop-w: 760px;
 }
@@ -2257,10 +2257,15 @@ a.site-nav__link:hover,
 }
 
 .provider-booking-panel .booking-layout {
-  min-height: 280px;
-  max-height: 340px;
-  height: 340px;
+  min-height: 400px;
+  max-height: 400px;
+  height: 400px;
   grid-template-rows: minmax(0, 1fr);
+}
+
+.provider-booking-panel .booking__calendar .cal {
+  flex: 0 0 auto;
+  overflow-y: visible;
 }
 
 .provider-booking-panel .selection-summary--inline {
@@ -2277,7 +2282,7 @@ a.site-nav__link:hover,
 
   to {
     opacity: 1;
-    max-height: 420px;
+    max-height: 520px;
     transform: translateY(0);
   }
 }
@@ -2285,7 +2290,7 @@ a.site-nav__link:hover,
 @keyframes providerPanelSlideUp {
   from {
     opacity: 1;
-    max-height: 420px;
+    max-height: 520px;
     transform: translateY(0);
   }
 
