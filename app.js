@@ -574,34 +574,36 @@
     if (p.bookingMode === "approval") metaParts.push("na akceptację");
     const metaLine = metaParts.join(" · ");
 
-    const toolbarHtml = `
-        <div class="provider-card__toolbar">
-          <button type="button" class="provider-card__action provider-card__menu" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Więcej opcji dla ${escapeHtml(p.name)}" title="Więcej opcji"><span class="provider-card__action-icon provider-card__menu-icon" aria-hidden="true"></span></button>
-          <button type="button" class="provider-card__action provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__action-icon provider-card__fav-icon" aria-hidden="true"></span></button>
-        </div>`;
-
-    const detailsHtml = `
-            <span class="provider-card__cat">${escapeHtml(providerCategoryLine(p))}</span>
-            <span class="provider-card__meta">${escapeHtml(metaLine)}</span>
-            ${p.address ? `<span class="provider-card__addr">${escapeHtml(p.address)}</span>` : ""}`;
-
     const nameHtml = opts.staticMain
       ? `<span class="provider-card__name">${escapeHtml(p.name)}</span>`
       : `<button type="button" class="provider-card__name" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">${escapeHtml(p.name)}</button>`;
 
+    const detailsInner = `
+            <span class="provider-card__cat">${escapeHtml(providerCategoryLine(p))}</span>
+            <span class="provider-card__meta">${escapeHtml(metaLine)}</span>
+            ${p.address ? `<span class="provider-card__addr">${escapeHtml(p.address)}</span>` : ""}`;
+
     const detailsBlock = opts.staticMain
-      ? `<div class="provider-card__details">${detailsHtml}</div>`
-      : `<button type="button" class="provider-card__details" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">${detailsHtml}</button>`;
+      ? `<div class="provider-card__details">${detailsInner}</div>`
+      : `<button type="button" class="provider-card__details" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">${detailsInner}</button>`;
+
+    const backHtml = opts.showBack
+      ? `<button type="button" class="provider-card__action provider-card__back" data-action="close-provider" aria-label="Wróć">‹</button>`
+      : "";
 
     return `
-      <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}${opts.staticMain ? " provider-card--static" : ""}">
-        <span class="provider-card__avatar">${escapeHtml(p.avatarInitials)}</span>
-        <div class="provider-card__body">
-          <div class="provider-card__head">
-            ${nameHtml}
-            ${toolbarHtml}
+      <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}${opts.staticMain ? " provider-card--static" : ""}${opts.showBack ? " provider-card--with-back" : ""}">
+        <div class="provider-card__head">
+          ${backHtml}
+          ${nameHtml}
+          <div class="provider-card__toolbar">
+            <button type="button" class="provider-card__action provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__action-icon provider-card__fav-icon" aria-hidden="true"></span></button>
           </div>
-          ${detailsBlock}
+        </div>
+        <span class="provider-card__avatar">${escapeHtml(p.avatarInitials)}</span>
+        ${detailsBlock}
+        <div class="provider-card__menu-slot">
+          <button type="button" class="provider-card__action provider-card__menu" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Więcej opcji dla ${escapeHtml(p.name)}" title="Więcej opcji"><span class="provider-card__action-icon provider-card__menu-icon" aria-hidden="true"></span></button>
         </div>
       </div>`;
   }
@@ -1210,15 +1212,9 @@
     return `
       <div class="app-screen app-screen--client app-screen--booking">
         <div class="booking-mobile app-scroll">
-          <div class="topbar">
-            <button type="button" class="topbar__back" data-action="close-provider" aria-label="Wróć">‹</button>
-            <span class="topbar__title">Rezerwacja</span>
-            <span class="topbar__spacer"></span>
-          </div>
-
           <div class="booking">
             <div class="booking__provider-card">
-              ${renderProviderCard(p, false, { staticMain: true, bookingHeader: true })}
+              ${renderProviderCard(p, false, { staticMain: true, bookingHeader: true, showBack: true })}
             </div>
             <p class="booking__selection">
               <span class="booking__svc">${escapeHtml(ctx.svcNames)}</span>

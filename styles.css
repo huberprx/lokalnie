@@ -2417,10 +2417,15 @@ a.site-nav__link:hover,
 }
 
 .provider-card {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  gap: 0.75rem;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "head head head"
+    "avatar details details"
+    ". . menu";
+  column-gap: 0.75rem;
+  row-gap: 0.45rem;
+  align-items: start;
   width: 100%;
   padding: 0.8rem;
   background: var(--surface-2);
@@ -2441,7 +2446,37 @@ a.site-nav__link:hover,
   margin-bottom: 0.65rem;
 }
 
+.provider-card__head {
+  grid-area: head;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.provider-card__back {
+  flex-shrink: 0;
+  font-size: 1.35rem;
+  line-height: 1;
+  color: var(--text);
+}
+
+.provider-card__back:hover {
+  background: var(--surface-2);
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+.provider-card--with-back .provider-card__name {
+  flex: 1;
+  min-width: 0;
+}
+
 .provider-card__avatar {
+  grid-area: avatar;
   display: grid;
   place-items: center;
   width: 2.75rem;
@@ -2452,24 +2487,6 @@ a.site-nav__link:hover,
   font-weight: 700;
   font-size: 0.95rem;
   flex-shrink: 0;
-}
-
-.provider-card__body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  flex: 1;
-  min-width: 0;
-}
-
-.provider-card__head {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  min-width: 0;
-  width: 100%;
 }
 
 .provider-card__name {
@@ -2494,6 +2511,7 @@ a.site-nav__link:hover,
 }
 
 .provider-card__details {
+  grid-area: details;
   appearance: none;
   -webkit-appearance: none;
   display: flex;
@@ -2552,6 +2570,91 @@ a.site-nav__link:hover,
   width: auto;
 }
 
+.provider-card__menu-slot {
+  grid-area: menu;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* Desktop: avatar po lewej, nazwa + ⋯ ♥ w jednym wierszu */
+@media (min-width: 900px) {
+  .provider-card {
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+      "avatar head menu"
+      "avatar details details";
+    row-gap: 0.15rem;
+    align-items: center;
+  }
+
+  .provider-card__head {
+    align-items: center;
+  }
+
+  .provider-card__menu-slot {
+    align-self: center;
+  }
+
+  .provider-card__details {
+    align-self: start;
+  }
+
+  .provider-card__avatar {
+    align-self: start;
+  }
+}
+
+.device-frame[data-view="desktop"] .provider-card {
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "avatar head menu"
+    "avatar details details";
+  row-gap: 0.15rem;
+  align-items: center;
+}
+
+.device-frame[data-view="desktop"] .provider-card__menu-slot {
+  align-self: center;
+}
+
+.device-frame[data-view="desktop"] .provider-card__details,
+.device-frame[data-view="desktop"] .provider-card__avatar {
+  align-self: start;
+}
+
+.device-frame[data-view="mobile"] .provider-card {
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "head head head"
+    "avatar details details"
+    ". . menu";
+  align-items: start;
+}
+
+/* Mobile lista: bez ⋮; otwarty profil/rezerwacja — ⋮ zostaje */
+@media (max-width: 899px) {
+  .provider-card:not(.provider-card--booking-header):not(.provider-card--open) {
+    grid-template-areas:
+      "head head head"
+      "avatar details details";
+  }
+
+  .provider-card:not(.provider-card--booking-header):not(.provider-card--open) .provider-card__menu-slot {
+    display: none;
+  }
+}
+
+.device-frame[data-view="mobile"] .provider-card:not(.provider-card--booking-header):not(.provider-card--open) {
+  grid-template-areas:
+    "head head head"
+    "avatar details details";
+}
+
+.device-frame[data-view="mobile"] .provider-card:not(.provider-card--booking-header):not(.provider-card--open) .provider-card__menu-slot {
+  display: none;
+}
+
 .provider-card__action {
   appearance: none;
   -webkit-appearance: none;
@@ -2600,8 +2703,8 @@ a.site-nav__link:hover,
 }
 
 .provider-card__menu-icon {
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Ccircle cx='12' cy='5' r='2'/%3E%3Ccircle cx='12' cy='12' r='2'/%3E%3Ccircle cx='12' cy='19' r='2'/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Ccircle cx='12' cy='5' r='2'/%3E%3Ccircle cx='12' cy='12' r='2'/%3E%3Ccircle cx='12' cy='19' r='2'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Ccircle cx='5' cy='12' r='2'/%3E%3Ccircle cx='12' cy='12' r='2'/%3E%3Ccircle cx='19' cy='12' r='2'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Ccircle cx='5' cy='12' r='2'/%3E%3Ccircle cx='12' cy='12' r='2'/%3E%3Ccircle cx='19' cy='12' r='2'/%3E%3C/svg%3E");
 }
 
 .provider-card__fav:hover {
@@ -3019,6 +3122,46 @@ a.site-nav__link:hover,
 /* ---- Rezerwacja (kalendarz + godziny) ---- */
 .booking__provider-card {
   margin: 0 -0.15rem 0.35rem;
+}
+
+/* Mobile: karta po otwarciu usługodawcy — bez zaokrągleń, przycisk wstecz w wierszu nazwy */
+@media (max-width: 899px) {
+  .app-screen--booking .booking-mobile {
+    padding-top: 0;
+  }
+
+  .app-screen--booking .booking__provider-card {
+    margin: 0 -1rem 0.75rem;
+  }
+
+  .app-screen--booking .provider-card--booking-header {
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    border-top: none;
+    margin-bottom: 0;
+  }
+
+  .device-frame .app-screen--booking .booking__provider-card {
+    margin-left: -0.85rem;
+    margin-right: -0.85rem;
+  }
+}
+
+.device-frame[data-view="mobile"] .app-screen--booking .booking-mobile {
+  padding-top: 0;
+}
+
+.device-frame[data-view="mobile"] .app-screen--booking .booking__provider-card {
+  margin: 0 -0.85rem 0.75rem;
+}
+
+.device-frame[data-view="mobile"] .app-screen--booking .provider-card--booking-header {
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  margin-bottom: 0;
 }
 
 .booking__selection {
