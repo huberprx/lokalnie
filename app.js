@@ -662,7 +662,7 @@
       : `<button type="button" class="provider-card__details" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">${detailsInner}</button>`;
 
     const backHtml = opts.showBack
-      ? `<button type="button" class="provider-card__action provider-card__back" data-action="close-provider" aria-label="Wróć">‹</button>`
+      ? `<button type="button" class="provider-card__back" data-action="close-provider" aria-label="Wróć"><span class="provider-card__back-icon" aria-hidden="true"></span></button>`
       : "";
 
     const favBtn = `<button type="button" class="provider-card__action provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__action-icon provider-card__fav-icon" aria-hidden="true"></span></button>`;
@@ -931,8 +931,12 @@
           })
         : activeIndex;
 
+      const indicatorSize = 44;
+
       function indicatorLeft(item) {
-        return item.offsetLeft + (item.offsetWidth - indicator.offsetWidth) / 2;
+        indicator.style.width = indicatorSize + "px";
+        indicator.style.height = indicatorSize + "px";
+        return item.offsetLeft + (item.offsetWidth - indicatorSize) / 2;
       }
 
       const fromItem = items[prevIndex >= 0 ? prevIndex : activeIndex];

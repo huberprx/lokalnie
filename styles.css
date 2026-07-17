@@ -52,8 +52,8 @@
   --bottom-nav-pad-x: 0.35rem;
   --bottom-nav-gap: 0.15rem;
   --bottom-nav-item-w: calc(var(--bottom-nav-pill-h) / var(--phi) * 1.382);
-  --bottom-nav-item-h: calc(var(--bottom-nav-pill-h) - 14px);
-  --bottom-nav-active-w: calc(var(--bottom-nav-item-w) * var(--phi));
+  --bottom-nav-item-h: 44px;
+  --bottom-nav-active-w: 44px;
   --bottom-nav-float-gap: 0px;
   --bottom-nav-h: var(--bottom-nav-pill-h);
   --bottom-nav-clearance: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px));
@@ -1249,8 +1249,10 @@ a.site-nav__link:hover,
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100svh;
   height: 100dvh;
   max-height: 100vh;
+  max-height: 100svh;
   max-height: 100dvh;
   min-height: 0;
   overflow: hidden;
@@ -1260,8 +1262,10 @@ a.site-nav__link:hover,
 body:has(#page-app:not([hidden])) {
   overflow: hidden;
   height: 100vh;
+  height: 100svh;
   height: 100dvh;
   max-height: 100vh;
+  max-height: 100svh;
   max-height: 100dvh;
   min-height: 0;
 }
@@ -1624,8 +1628,48 @@ body:has(#page-app:not([hidden])) {
   width: 100%;
   height: 100%;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
-  overflow-y: auto;
+}
+
+.device-frame .app-mount {
+  flex: 1 1 auto;
+}
+
+.device-frame .app-screen {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.device-frame .app-screen--booking {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.device-frame .app-screen--booking .booking-mobile {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.device-frame .app-screen--booking .booking-layout {
+  display: none;
+}
+
+.device-frame .app-screen--booking > .bottom-nav {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  transform: none;
+  flex-shrink: 0;
 }
 
 .app-mount:empty {
@@ -2477,16 +2521,40 @@ body:has(#page-app:not([hidden])) {
 }
 
 .provider-card__back {
+  appearance: none;
+  -webkit-appearance: none;
   flex-shrink: 0;
-  font-size: 1.35rem;
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: auto;
+  height: auto;
+  padding: 0;
+  margin: 0 0.2rem 0 0;
+  border: none;
+  background: transparent;
   color: var(--text);
+  cursor: pointer;
+}
+
+.provider-card__back-icon {
+  display: block;
+  width: 0.62rem;
+  height: 1.05rem;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 6l-7 6 7 6'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 6l-7 6 7 6'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 .provider-card__back:hover {
-  background: var(--surface-2);
-  border-color: var(--text-muted);
-  color: var(--text);
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+}
+
+.provider-card__back:active {
+  transform: scale(0.94);
 }
 
 .provider-card--with-back .provider-card__name {
@@ -3264,6 +3332,8 @@ body:has(#page-app:not([hidden])) {
   min-height: 0;
   max-height: 100%;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .app-screen--booking .booking-mobile {
@@ -3319,6 +3389,7 @@ body:has(#page-app:not([hidden])) {
   height: auto;
   max-height: none;
   margin: 0;
+  gap: 0.28rem;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
@@ -3928,11 +3999,25 @@ body:has(#page-app:not([hidden])) {
   padding-right: 0.55rem;
 }
 
+.bottom-nav--with-back {
+  gap: 0;
+  padding-left: 0.2rem;
+  padding-right: 0.2rem;
+  justify-content: stretch;
+  overflow: hidden;
+}
+
 .bottom-nav--with-back .bottom-nav__item {
-  width: auto;
+  width: 0;
   flex: 1 1 0;
   min-width: 0;
   max-width: none;
+  flex-shrink: 1;
+}
+
+.bottom-nav--with-back .bottom-nav__indicator {
+  width: var(--bottom-nav-active-w);
+  height: var(--bottom-nav-item-h);
 }
 
 .bottom-nav--booking-confirm {
@@ -4148,18 +4233,6 @@ body:has(#page-app:not([hidden])) {
 
   .app-fullscreen .app-screen--client .selection-summary {
     margin-bottom: var(--bottom-nav-clearance);
-  }
-
-  .device-frame .app-mount {
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .device-frame .app-screen {
-    flex: 1;
-    min-height: 0;
-    position: relative;
   }
 
   .device-frame .app-screen--client .app-scroll {
