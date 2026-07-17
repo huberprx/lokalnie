@@ -3618,18 +3618,15 @@ body:has(#page-app:not([hidden])) {
   overflow-y: auto;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
-  padding-right: 0.15rem;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
+  padding-right: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .booking__services-list::-webkit-scrollbar {
-  width: 6px;
-}
-
-.booking__services-list::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.22);
-  border-radius: 999px;
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .booking__calendar {
@@ -3644,18 +3641,15 @@ body:has(#page-app:not([hidden])) {
   overflow-y: auto;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
-  padding-right: 0.15rem;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
+  padding-right: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .booking__calendar .cal::-webkit-scrollbar {
-  width: 6px;
-}
-
-.booking__calendar .cal::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.22);
-  border-radius: 999px;
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .booking__times .time-list--vertical {
@@ -3665,17 +3659,14 @@ body:has(#page-app:not([hidden])) {
   overflow-y: auto;
   overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(0, 0, 0, 0.22) transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .booking__times .time-list--vertical::-webkit-scrollbar {
-  width: 6px;
-}
-
-.booking__times .time-list--vertical::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.22);
-  border-radius: 999px;
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .app-screen--booking {
