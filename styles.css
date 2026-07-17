@@ -48,16 +48,14 @@
   --booking-panel-summary-h: 3.75rem;
   --booking-panel-animate-h: calc(var(--booking-panel-layout-h) + var(--booking-panel-summary-h) + 0.5rem);
   --phi: 1.618;
-  --bottom-nav-pill-h: 44px;
-  /* złoty podział między poprzednim max (19rem) a naturalną szer. treści (~12.4rem) */
-  --bottom-nav-pill-min-w: calc(19rem - (19rem - 12.4rem) / var(--phi));
-  --bottom-nav-pad-x: calc(var(--bottom-nav-pill-h) / var(--phi) * 0.48);
-  --bottom-nav-gap: calc(var(--bottom-nav-pill-h) / var(--phi) / var(--phi));
+  --bottom-nav-pill-h: 52px;
+  --bottom-nav-pad-x: 0.35rem;
+  --bottom-nav-gap: 0.15rem;
   --bottom-nav-item-w: calc(var(--bottom-nav-pill-h) / var(--phi) * 1.382);
-  --bottom-nav-item-h: calc(var(--bottom-nav-pill-h) - 8px);
+  --bottom-nav-item-h: calc(var(--bottom-nav-pill-h) - 14px);
   --bottom-nav-active-w: calc(var(--bottom-nav-item-w) * var(--phi));
-  --bottom-nav-float-gap: calc(var(--bottom-nav-pill-h) / var(--phi) / 2);
-  --bottom-nav-h: calc(var(--bottom-nav-pill-h) + var(--bottom-nav-float-gap) * 2);
+  --bottom-nav-float-gap: 0px;
+  --bottom-nav-h: var(--bottom-nav-pill-h);
   --bottom-nav-clearance: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px));
   --frame-h: 700px;
   --frame-mobile-w: 320px;
@@ -1250,8 +1248,22 @@ a.site-nav__link:hover,
 #page-app {
   display: flex;
   flex-direction: column;
-  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   background: var(--bg);
+}
+
+body:has(#page-app:not([hidden])) {
+  overflow: hidden;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  min-height: 0;
 }
 
 /* Topbar aplikacji */
@@ -1292,8 +1304,11 @@ a.site-nav__link:hover,
   }
 
   #page-app[data-active-role="client"] .app-fullscreen {
-    /* pełna wysokość bez headera */
-    min-height: 100dvh;
+    flex: 1 1 0;
+    min-height: 0;
+    max-height: 100%;
+    height: auto;
+    overflow: hidden;
   }
 
   #page-app[data-active-role="provider"] .app-header__nav,
@@ -1400,19 +1415,24 @@ a.site-nav__link:hover,
 
 /* Obszar treści aplikacji — pełna szerokość, bez ramki */
 .app-fullscreen {
-  flex: 1;
+  flex: 1 1 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  max-height: 100%;
   width: 100%;
   padding: 0;
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 .app-fullscreen .app-screen {
   width: 100%;
   max-width: none;
-  height: 100%;
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+  max-height: 100%;
   border: none;
   border-radius: 0;
   overflow: hidden;
@@ -1849,11 +1869,14 @@ a.site-nav__link:hover,
 .app-screen {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1 1 0;
+  height: auto;
   min-height: 0;
+  max-height: 100%;
   min-width: 0;
   width: 100%;
   max-width: 100%;
+  overflow: hidden;
   background: var(--surface);
   color: var(--text);
 }
@@ -2453,6 +2476,24 @@ a.site-nav__link:hover,
   width: 100%;
 }
 
+.provider-card__back {
+  flex-shrink: 0;
+  font-size: 1.35rem;
+  line-height: 1;
+  color: var(--text);
+}
+
+.provider-card__back:hover {
+  background: var(--surface-2);
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+.provider-card--with-back .provider-card__name {
+  flex: 1;
+  min-width: 0;
+}
+
 .provider-card__avatar {
   grid-area: avatar;
   display: grid;
@@ -2691,6 +2732,23 @@ a.site-nav__link:hover,
 .provider-card__menu-icon {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Ccircle cx='5' cy='12' r='2'/%3E%3Ccircle cx='12' cy='12' r='2'/%3E%3Ccircle cx='19' cy='12' r='2'/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Ccircle cx='5' cy='12' r='2'/%3E%3Ccircle cx='12' cy='12' r='2'/%3E%3Ccircle cx='19' cy='12' r='2'/%3E%3C/svg%3E");
+}
+
+.provider-card__info:hover {
+  background: var(--surface-2);
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+.provider-card__info--open {
+  background: var(--accent-client-soft);
+  border-color: var(--accent-client);
+  color: var(--accent-client);
+}
+
+.provider-card__info-icon {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 10v6M12 7h.01'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 10v6M12 7h.01'/%3E%3C/svg%3E");
 }
 
 .provider-card__fav:hover {
@@ -3180,6 +3238,11 @@ a.site-nav__link:hover,
   margin: 0.5rem 0 0.5rem;
 }
 
+.booking__label--caps {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .booking__label-hint {
   font-weight: 500;
   text-transform: none;
@@ -3187,11 +3250,73 @@ a.site-nav__link:hover,
   color: var(--accent-client);
 }
 
+/* Mobile booking: usługi rosną z wysokością ekranu; daty/godziny tuż nad menu */
+.booking-mobile {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-screen--booking {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.app-screen--booking .booking-mobile {
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 0 1rem;
+  padding-bottom: 0;
+  box-sizing: border-box;
+}
+
+.device-frame .app-screen--booking .booking-mobile {
+  padding-left: 0.85rem;
+  padding-right: 0.85rem;
+}
+
+/* Na ekranie rezerwacji menu jest w flow — nie zasłania kalendarza */
+.app-screen--booking > .bottom-nav {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  transform: none;
+  flex-shrink: 0;
+  margin-top: 0;
+}
+
+.booking--mobile-split {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.booking__main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-top: 0.15rem;
+}
+
+.booking__main .booking__label {
+  flex-shrink: 0;
+}
+
 .booking-mobile .booking__services-list {
-  margin: 0 0 0.85rem;
-  height: 35dvh;
-  max-height: 35dvh;
-  min-height: 10rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  margin: 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
@@ -3207,19 +3332,30 @@ a.site-nav__link:hover,
   height: 0;
 }
 
-.device-frame .booking-mobile .booking__services-list {
-  height: calc(var(--frame-h) * 0.35);
-  max-height: calc(var(--frame-h) * 0.35);
-  min-height: 8.5rem;
+.booking__schedule {
+  flex: 0 0 auto;
+  margin: 0 -1rem;
+  padding: 0.45rem 1rem 0.55rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.booking__schedule .booking__label {
+  margin-top: 0.35rem;
+}
+
+.booking__schedule .booking__label:first-child {
+  margin-top: 0;
+}
+
+.device-frame .booking__schedule {
+  margin-left: -0.85rem;
+  margin-right: -0.85rem;
+  padding-left: 0.85rem;
+  padding-right: 0.85rem;
 }
 
 /* ---- Rezerwacja desktop: 3 kolumny (usługi | kalendarz | terminy) ---- */
-.booking-mobile {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
 
 .booking-layout {
   display: none;
@@ -3669,7 +3805,7 @@ a.site-nav__link:hover,
   font-size: 0.75rem;
 }
 
-/* ---- Dolne menu klienta (pływająca kapsuła, styl Insta) ---- */
+/* ---- Dolne menu klienta (pełna szerokość, biały pasek + fasolka) ---- */
 .bottom-nav {
   position: relative;
   display: flex;
@@ -3677,32 +3813,30 @@ a.site-nav__link:hover,
   justify-content: space-evenly;
   gap: var(--bottom-nav-gap);
   flex-shrink: 0;
-  width: fit-content;
-  min-width: min(var(--bottom-nav-pill-min-w), calc(100vw - 2rem));
-  max-width: calc(100% - 1.5rem);
-  height: var(--bottom-nav-pill-h);
-  min-height: var(--bottom-nav-pill-h);
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  height: calc(var(--bottom-nav-pill-h) + env(safe-area-inset-bottom, 0px));
+  min-height: calc(var(--bottom-nav-pill-h) + env(safe-area-inset-bottom, 0px));
   padding: 0 var(--bottom-nav-pad-x);
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(22, 22, 28, 0.78);
-  backdrop-filter: blur(18px) saturate(1.35);
-  -webkit-backdrop-filter: blur(18px) saturate(1.35);
-  box-shadow:
-    0 12px 40px rgba(0, 0, 0, 0.24),
-    0 2px 8px rgba(0, 0, 0, 0.12);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-radius: 0;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: #fff;
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.06);
   z-index: 120;
 }
 
 .bottom-nav__indicator {
   position: absolute;
-  top: 50%;
+  top: calc(var(--bottom-nav-pill-h) / 2);
   left: 0;
   width: var(--bottom-nav-active-w);
   height: var(--bottom-nav-item-h);
   margin-top: calc(var(--bottom-nav-item-h) / -2);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.16);
+  background: color-mix(in srgb, var(--accent-client) 14%, #e8eef5);
   transform: translateX(0);
   transition: transform 0.38s cubic-bezier(0.34, 1.08, 0.38, 1);
   pointer-events: none;
@@ -3724,14 +3858,14 @@ a.site-nav__link:hover,
   border: none;
   border-radius: 999px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.58);
+  color: rgba(28, 35, 51, 0.42);
   cursor: pointer;
   flex-shrink: 0;
   transition: color 0.18s ease;
 }
 
 .bottom-nav__item:hover {
-  color: rgba(255, 255, 255, 0.92);
+  color: rgba(28, 35, 51, 0.72);
 }
 
 .bottom-nav__item:active {
@@ -3739,7 +3873,7 @@ a.site-nav__link:hover,
 }
 
 .bottom-nav__item--active {
-  color: #fff;
+  color: var(--text);
 }
 
 .bottom-nav__icon {
@@ -3777,27 +3911,17 @@ a.site-nav__link:hover,
 }
 
 .bottom-nav--booking {
-  min-width: 0;
   gap: 0.35rem;
-  padding: 0 0.4rem;
-}
-
-.bottom-nav--booking-back {
-  justify-content: center;
+  padding-left: 0.55rem;
+  padding-right: 0.55rem;
 }
 
 .bottom-nav--booking-confirm {
   justify-content: flex-start;
-  padding-right: 0.35rem;
 }
 
 .bottom-nav--booking .bottom-nav__item {
   width: var(--bottom-nav-item-w);
-  color: #fff;
-}
-
-.bottom-nav--booking-back .bottom-nav__item--active {
-  background: rgba(255, 255, 255, 0.16);
 }
 
 .bottom-nav__book {
@@ -3844,14 +3968,14 @@ a.site-nav__link:hover,
   border: none;
   border-radius: 999px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.72);
+  color: rgba(28, 35, 51, 0.5);
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .bottom-nav__clear:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  background: rgba(28, 35, 51, 0.06);
 }
 
 .bottom-nav__clear:active {
@@ -3977,14 +4101,30 @@ a.site-nav__link:hover,
   .app-fullscreen .bottom-nav {
     display: flex;
     position: fixed;
-    left: 50%;
-    bottom: calc(var(--bottom-nav-float-gap) + env(safe-area-inset-bottom, 0px));
-    transform: translateX(-50%);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    transform: none;
   }
 
-  .app-fullscreen .app-screen--client .app-scroll,
-  .app-fullscreen .app-screen--client .booking-mobile {
+  .app-fullscreen .app-screen--client .app-scroll {
     padding-bottom: calc(var(--bottom-nav-clearance) + 0.35rem);
+  }
+
+  .app-fullscreen .app-screen--client:not(.app-screen--booking) .booking-mobile {
+    padding-bottom: calc(var(--bottom-nav-clearance) + 0.35rem);
+  }
+
+  .app-fullscreen .app-screen--booking .booking-mobile {
+    padding-bottom: 0;
+  }
+
+  .app-fullscreen .app-screen--booking > .bottom-nav {
+    position: relative;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    transform: none;
   }
 
   .app-fullscreen .app-screen--client .selection-summary {
@@ -4003,9 +4143,16 @@ a.site-nav__link:hover,
     position: relative;
   }
 
-  .device-frame .app-screen--client .app-scroll,
-  .device-frame .app-screen--client .booking-mobile {
+  .device-frame .app-screen--client .app-scroll {
     padding-bottom: calc(var(--bottom-nav-clearance) + 0.35rem);
+  }
+
+  .device-frame .app-screen--client:not(.app-screen--booking) .booking-mobile {
+    padding-bottom: calc(var(--bottom-nav-clearance) + 0.35rem);
+  }
+
+  .device-frame .app-screen--booking .booking-mobile {
+    padding-bottom: 0;
   }
 
   .device-frame .app-screen--client .selection-summary {
@@ -4014,10 +4161,19 @@ a.site-nav__link:hover,
 
   .device-frame .bottom-nav {
     position: absolute;
-    left: 50%;
-    bottom: calc(var(--bottom-nav-float-gap) + env(safe-area-inset-bottom, 0px));
-    transform: translateX(-50%);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    transform: none;
     margin-top: 0;
+  }
+
+  .device-frame .app-screen--booking > .bottom-nav {
+    position: relative;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    transform: none;
   }
 }
 

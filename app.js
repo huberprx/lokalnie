@@ -229,6 +229,70 @@
     }
   }
 
+  function renderDateStripHtml(availDates, activeDate) {
+    if (!availDates.length) return `<p class="empty-note">Brak dostępnych terminów.</p>`;
+    return availDates
+      .map(function (dateISO) {
+        const dt = new Date(dateISO + "T00:00:00");
+        const on = dateISO === activeDate;
+        const hol = isHoliday(dateISO);
+        return `
+        <button type="button" class="date-chip${on ? " date-chip--active" : ""}${hol ? " date-chip--holiday" : ""}"
+          data-action="pick-date" data-date="${escapeHtml(dateISO)}">
+          <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span>
+          <span class="date-chip__day">${dt.getDate()}</span>
+        </button>`;
+      })
+      .join("");
+  }
+
+  function refreshMobileBookingScreen(screen, p, ctx) {
+    const services = screen.querySelector('[data-role="booking-mobile-services"]');
+    const servicesScrollTop = services ? services.scrollTop : 0;
+    const dateStripEl = screen.querySelector(".booking-mobile .date-strip");
+    const dateScrollLeft = dateStripEl ? dateStripEl.scrollLeft : 0;
+    const timeListEl = screen.querySelector('[data-role="booking-mobile-times"]');
+    const timeScrollLeft = timeListEl ? timeListEl.scrollLeft : 0;
+
+    if (services) {
+      services.innerHTML = ctx.services;
+      services.scrollTop = servicesScrollTop;
+    }
+
+    if (dateStripEl) {
+      dateStripEl.innerHTML = renderDateStripHtml(ctx.availDates, ctx.activeDate);
+      dateStripEl.scrollLeft = dateScrollLeft;
+    }
+
+    const timeLabel = screen.querySelector('[data-role="booking-mobile-time-label"]');
+    const timeList = screen.querySelector('[data-role="booking-mobile-times"]');
+    if (ctx.activeDate) {
+      if (timeLabel) {
+        timeLabel.hidden = false;
+        timeLabel.textContent = "Wolne terminy";
+      }
+      if (timeList) {
+        timeList.hidden = false;
+        timeList.innerHTML = ctx.timeListMobile || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>`;
+        timeList.scrollLeft = timeScrollLeft;
+      }
+    } else {
+      if (timeLabel) timeLabel.hidden = true;
+      if (timeList) {
+        timeList.hidden = true;
+        timeList.innerHTML = "";
+      }
+    }
+
+    const nav = screen.querySelector(".bottom-nav");
+    if (nav) {
+      nav.outerHTML = bookingBottomNav(ctx.draft);
+      if (!(ctx.draft && ctx.draft.slotId)) {
+        syncBottomNavIndicators(null);
+      }
+    }
+  }
+
   function refreshBookingDraftUI() {
     const draft = window.AppState.draft;
     if (!draft) return false;
@@ -246,16 +310,20 @@
       updated = true;
     });
 
-    const bookingScreen = document.querySelector(".app-screen--booking");
-    if (bookingScreen && window.AppState.screen.client === "booking") {
-      if (clientUsesDesktopBookingLayout()) {
-        const layout = bookingScreen.querySelector(".booking-layout");
-        if (layout) {
-          layout.outerHTML = renderBookingLayoutBlock(p, ctx);
+    if (window.AppState.screen.client === "booking") {
+      document.querySelectorAll(".app-screen--booking").forEach(function (bookingScreen) {
+        if (clientUsesDesktopBookingLayout()) {
+          const layout = bookingScreen.querySelector(".booking-layout");
+          if (layout) {
+            layout.outerHTML = renderBookingLayoutBlock(p, ctx);
+            updated = true;
+          }
+        }
+        if (bookingScreen.querySelector(".booking-mobile")) {
+          refreshMobileBookingScreen(bookingScreen, p, ctx);
           updated = true;
         }
-      }
-      // Na mobile pełny re-render (lista usług + terminy + podsumowanie)
+      });
     }
 
     const profileServices = document.querySelector(".app-screen--client .profile .service-list");
@@ -513,7 +581,7 @@
       popover.style.visibility = "";
     }
     if (providerCardMenuTrigger) {
-      providerCardMenuTrigger.classList.remove("provider-card__menu--open");
+      providerCardMenuTrigger.classList.remove("provider-card__menu--open", "provider-card__info--open");
       providerCardMenuTrigger.setAttribute("aria-expanded", "false");
       providerCardMenuTrigger = null;
     }
@@ -565,7 +633,7 @@
       </button>`;
 
     positionProviderCardPopover(popover, trigger);
-    trigger.classList.add("provider-card__menu--open");
+    trigger.classList.add(trigger.classList.contains("provider-card__info") ? "provider-card__info--open" : "provider-card__menu--open");
     trigger.setAttribute("aria-expanded", "true");
     providerCardMenuTrigger = trigger;
   }
@@ -585,7 +653,7 @@
       : `<button type="button" class="provider-card__name" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">${escapeHtml(p.name)}</button>`;
 
     const detailsInner = `
-            <span class="provider-card__cat">${escapeHtml(providerCategoryLine(p))}</span>
+            ${opts.bookingHeader ? "" : `<span class="provider-card__cat">${escapeHtml(providerCategoryLine(p))}</span>`}
             <span class="provider-card__meta">${escapeHtml(metaLine)}</span>
             ${p.address ? `<span class="provider-card__addr">${escapeHtml(p.address)}</span>` : ""}`;
 
@@ -593,18 +661,27 @@
       ? `<div class="provider-card__details">${detailsInner}</div>`
       : `<button type="button" class="provider-card__details" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">${detailsInner}</button>`;
 
+    const backHtml = opts.showBack
+      ? `<button type="button" class="provider-card__action provider-card__back" data-action="close-provider" aria-label="Wróć">‹</button>`
+      : "";
+
+    const favBtn = `<button type="button" class="provider-card__action provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__action-icon provider-card__fav-icon" aria-hidden="true"></span></button>`;
+    const infoBtn = `<button type="button" class="provider-card__action provider-card__info" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Informacje o ${escapeHtml(p.name)}" title="Informacje"><span class="provider-card__action-icon provider-card__info-icon" aria-hidden="true"></span></button>`;
+    const menuBtn = `<button type="button" class="provider-card__action provider-card__menu" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Więcej opcji dla ${escapeHtml(p.name)}" title="Więcej opcji"><span class="provider-card__action-icon provider-card__menu-icon" aria-hidden="true"></span></button>`;
+
     return `
-      <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}${opts.staticMain ? " provider-card--static" : ""}">
+      <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}${opts.staticMain ? " provider-card--static" : ""}${opts.showBack ? " provider-card--with-back" : ""}">
         <div class="provider-card__head">
+          ${backHtml}
           ${nameHtml}
           <div class="provider-card__toolbar">
-            <button type="button" class="provider-card__action provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__action-icon provider-card__fav-icon" aria-hidden="true"></span></button>
+            ${opts.bookingHeader ? infoBtn : favBtn}
           </div>
         </div>
         <span class="provider-card__avatar">${escapeHtml(p.avatarInitials)}</span>
         ${detailsBlock}
         <div class="provider-card__menu-slot">
-          <button type="button" class="provider-card__action provider-card__menu" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Więcej opcji dla ${escapeHtml(p.name)}" title="Więcej opcji"><span class="provider-card__action-icon provider-card__menu-icon" aria-hidden="true"></span></button>
+          ${opts.bookingHeader ? favBtn : menuBtn}
         </div>
       </div>`;
   }
@@ -820,20 +897,18 @@
 
   function bookingBottomNav(draft) {
     const hasSlot = !!(draft && draft.slotId);
+    if (!hasSlot) {
+      return bottomNav("search", { backOnSearch: true });
+    }
     return `
-      <nav class="bottom-nav bottom-nav--booking${hasSlot ? " bottom-nav--booking-confirm" : " bottom-nav--booking-back"}" aria-label="Menu rezerwacji">
-        <button type="button" class="bottom-nav__item${hasSlot ? "" : " bottom-nav__item--active"}"
-          data-action="close-provider" data-screen="search" aria-label="Wróć"${hasSlot ? "" : ' aria-current="page"'}>
+      <nav class="bottom-nav bottom-nav--booking bottom-nav--booking-confirm" aria-label="Potwierdź rezerwację">
+        <button type="button" class="bottom-nav__item" data-action="close-provider" data-screen="search" aria-label="Wróć">
           <span class="bottom-nav__icon bottom-nav__icon--back" aria-hidden="true"></span>
         </button>
-        ${
-          hasSlot
-            ? `<button type="button" class="bottom-nav__book" data-action="confirm-booking">Rezerwuj</button>
+        <button type="button" class="bottom-nav__book" data-action="confirm-booking">Rezerwuj</button>
         <button type="button" class="bottom-nav__clear" data-action="clear-slot" aria-label="Anuluj wybór godziny">
           <span class="bottom-nav__icon bottom-nav__icon--close" aria-hidden="true"></span>
-        </button>`
-            : ""
-        }
+        </button>
       </nav>`;
   }
 
@@ -1226,36 +1301,26 @@
     const ctx = buildBookingContext(p);
     if (!ctx) return renderSearch();
 
-    const dateStrip = ctx.availDates
-      .map(function (dateISO) {
-        const dt = new Date(dateISO + "T00:00:00");
-        const on = dateISO === ctx.activeDate;
-        const hol = isHoliday(dateISO);
-        return `
-        <button type="button" class="date-chip${on ? " date-chip--active" : ""}${hol ? " date-chip--holiday" : ""}"
-          data-action="pick-date" data-date="${escapeHtml(dateISO)}">
-          <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span>
-          <span class="date-chip__day">${dt.getDate()}</span>
-        </button>`;
-      })
-      .join("");
-
     return `
       <div class="app-screen app-screen--client app-screen--booking">
-        <div class="booking-mobile app-scroll">
-          <div class="booking">
-            <div class="booking__provider-card">
-              ${renderProviderCard(p, false, { staticMain: true, bookingHeader: true })}
+        <div class="booking-mobile">
+          <div class="booking booking--mobile-split">
+            <div class="booking__main">
+              <div class="booking__provider-card">
+                ${renderProviderCard(p, false, { staticMain: true, bookingHeader: true, showBack: true })}
+              </div>
+
+              <h3 class="booking__label booking__label--caps">Usługi</h3>
+              <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
             </div>
 
-            <h3 class="booking__label">Wybierz usługę${p.multiSelect ? ' <span class="booking__label-hint">(możesz wybrać kilka)</span>' : ""}</h3>
-            <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
+            <div class="booking__schedule" data-role="booking-mobile-schedule">
+              <h3 class="booking__label booking__label--caps">Dzień</h3>
+              <div class="date-strip">${renderDateStripHtml(ctx.availDates, ctx.activeDate)}</div>
 
-            <h3 class="booking__label">Wybierz dzień</h3>
-            <div class="date-strip">${dateStrip || `<p class="empty-note">Brak dostępnych terminów.</p>`}</div>
-
-            ${ctx.activeDate ? `<h3 class="booking__label">Wybierz godzinę · ${escapeHtml(formatDateLong(ctx.activeDate))}</h3>
-            <div class="time-list time-list--horizontal">${ctx.timeListMobile || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>`}</div>` : ""}
+              <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>Wolne terminy</h3>
+              <div class="time-list time-list--horizontal" data-role="booking-mobile-times"${ctx.activeDate ? "" : " hidden"}>${ctx.activeDate ? ctx.timeListMobile || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>` : ""}</div>
+            </div>
           </div>
         </div>
 
@@ -1866,14 +1931,14 @@
     if (!window.AppState.draft) return;
     window.AppState.draft.slotId = slotId;
     saveState();
-    renderAll();
+    if (!refreshBookingDraftUI()) renderAll();
   }
 
   function clearSlot() {
     if (!window.AppState.draft) return;
     window.AppState.draft.slotId = null;
     saveState();
-    renderAll();
+    if (!refreshBookingDraftUI()) renderAll();
   }
 
   function bookSlot(slotId) {
