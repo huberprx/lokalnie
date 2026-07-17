@@ -286,9 +286,13 @@
 
     const nav = screen.querySelector(".bottom-nav");
     if (nav) {
-      nav.outerHTML = bookingBottomNav(ctx.draft);
-      if (!(ctx.draft && ctx.draft.slotId)) {
-        syncBottomNavIndicators(null);
+      if (nav.classList.contains("bottom-nav--booking-dual")) {
+        updateBookingBottomNav(nav, ctx.draft);
+      } else {
+        nav.outerHTML = bookingBottomNav(ctx.draft);
+        if (!(ctx.draft && ctx.draft.serviceIds && ctx.draft.serviceIds.length)) {
+          syncBottomNavIndicators(null);
+        }
       }
     }
   }
@@ -349,8 +353,7 @@
   }
 
   function defaultServiceIds(p) {
-    if (p.bookingMode === "approval" || !p.services || !p.services.length) return [];
-    return [p.services[0].id];
+    return [];
   }
 
   function initDraftForProvider(p) {
@@ -361,6 +364,7 @@
       dateISO: null,
       slotId: null,
       calMonth: null,
+      multiSelectMode: false,
     };
   }
 
@@ -866,48 +870,121 @@
   // ─────────────────────────────────────────────────────────
   // KLIENT — ekrany
   // ─────────────────────────────────────────────────────────
-  function bottomNav(active, opts) {
+  function renderBottomNavMenuLayer(active, opts) {
     opts = opts || {};
     const backOnSearch = !!opts.backOnSearch;
+    const withHome = !!opts.withHome || backOnSearch;
     const items = [
       { tab: "search", label: "Szukaj", icon: "search" },
       { tab: "favorites", label: "Ulubione", icon: "heart" },
       { tab: "myCalendar", label: "Kalendarz", icon: "calendar" },
       { tab: "account", label: "Profil", icon: "profile" },
     ];
-    const backButton = backOnSearch
-      ? `<button type="button" class="bottom-nav__item bottom-nav__item--active"
-          data-action="close-provider" data-screen="search" aria-label="Wróć" aria-current="page">
+    const homeButton = withHome
+      ? `<button type="button" class="bottom-nav__item${backOnSearch || active === "search" ? " bottom-nav__item--active" : ""}"
+          data-action="${backOnSearch ? "close-provider" : "go-screen"}" data-screen="search" aria-label="${backOnSearch ? "Wróć" : "Strona główna"}" ${backOnSearch || active === "search" ? 'aria-current="page"' : ""}>
           <span class="bottom-nav__icon bottom-nav__icon--home" aria-hidden="true"></span>
         </button>`
       : "";
     return `
-      <nav class="bottom-nav${backOnSearch ? " bottom-nav--with-back" : ""}" aria-label="Menu klienta">
         <span class="bottom-nav__indicator" aria-hidden="true"></span>
-        ${backButton}${items
+        ${homeButton}${items
           .map(function (it) {
-            const isActive = !backOnSearch && active === it.tab;
+            const isActive = active === it.tab && !(withHome && it.tab === "search");
             return `
           <button type="button" class="bottom-nav__item${isActive ? " bottom-nav__item--active" : ""}"
             data-action="go-screen" data-screen="${it.tab}" aria-label="${it.label}" ${isActive ? 'aria-current="page"' : ""}>
             <span class="bottom-nav__icon bottom-nav__icon--${it.icon}" aria-hidden="true"></span>
           </button>`;
           })
-          .join("")}
+          .join("")}`;
+  }
+
+  function bottomNav(active, opts) {
+    opts = opts || {};
+    const withHome = !!opts.withHome || !!opts.backOnSearch;
+    return `
+      <nav class="bottom-nav${withHome ? " bottom-nav--with-back" : ""}" aria-label="Menu klienta">
+        ${renderBottomNavMenuLayer(active, opts)}
       </nav>`;
   }
 
-  function bookingBottomNav(draft) {
-    const hasSlot = !!(draft && draft.slotId);
-    if (!hasSlot) {
-      return bottomNav("search", { backOnSearch: true });
-    }
+  function renderBookingConfirmSummary(p, totals) {
+    if (!p || !totals || !totals.count) return "";
+    const priceText = totals.hasNullPrice ? "wycena indyw." : formatPrice(totals.price);
     return `
-      <nav class="bottom-nav bottom-nav--booking bottom-nav--booking-confirm" aria-label="Potwierdź rezerwację">
-        <button type="button" class="bottom-nav__book" data-action="confirm-booking">Rezerwuj</button>
-        <button type="button" class="bottom-nav__clear" data-action="clear-slot" aria-label="Anuluj wybór godziny">
-          <span class="bottom-nav__icon bottom-nav__icon--close" aria-hidden="true"></span>
+      <div class="bottom-nav__summary">
+        <div class="bottom-nav__summary-meta">
+          <span class="bottom-nav__summary-dur">${escapeHtml(formatDuration(totals.duration))}</span>
+          <span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>
+        </div>
+        <button type="button" class="bottom-nav__add" data-action="focus-booking-services" aria-label="Dodaj usługę">
+          <span class="bottom-nav__add-icon" aria-hidden="true">+</span>
         </button>
+      </div>`;
+  }
+
+  function renderBookingConfirmLayer(draft) {
+    const hasSlot = !!(draft && draft.slotId);
+    const p = draft && draft.slug ? getProviderBySlug(draft.slug) : null;
+    const totals = p ? draftTotals(p) : { count: 0 };
+    return `
+          ${renderBookingConfirmSummary(p, totals)}
+          <button type="button" class="bottom-nav__book" data-action="confirm-booking"${hasSlot ? "" : " disabled"}>Rezerwuj</button>
+          <button type="button" class="bottom-nav__clear" data-action="cancel-booking-selection" aria-label="Anuluj wybór usług">
+            <span class="bottom-nav__icon bottom-nav__icon--close" aria-hidden="true"></span>
+          </button>`;
+  }
+
+  function updateBookingBottomNav(nav, draft) {
+    if (!nav) return;
+    const hasServices = !!(draft && draft.serviceIds && draft.serviceIds.length);
+    const hasSlot = !!(draft && draft.slotId);
+    const p = draft && draft.slug ? getProviderBySlug(draft.slug) : null;
+    const totals = p ? draftTotals(p) : null;
+    nav.classList.toggle("bottom-nav--confirm-visible", hasServices);
+    nav.setAttribute("aria-label", hasServices ? "Potwierdź rezerwację" : "Menu klienta");
+
+    const menuLayer = nav.querySelector(".bottom-nav__layer--menu");
+    const confirmLayer = nav.querySelector(".bottom-nav__layer--confirm");
+    if (menuLayer) menuLayer.setAttribute("aria-hidden", hasServices ? "true" : "false");
+    if (confirmLayer) confirmLayer.setAttribute("aria-hidden", hasServices ? "false" : "true");
+
+    if (confirmLayer && hasServices && p && totals) {
+      const summary = confirmLayer.querySelector(".bottom-nav__summary");
+      if (summary) {
+        const durEl = summary.querySelector(".bottom-nav__summary-dur");
+        const priceEl = summary.querySelector(".bottom-nav__summary-price");
+        if (durEl) durEl.textContent = formatDuration(totals.duration);
+        if (priceEl) priceEl.textContent = totals.hasNullPrice ? "wycena indyw." : formatPrice(totals.price);
+      } else {
+        const bookBtn = confirmLayer.querySelector(".bottom-nav__book");
+        if (bookBtn) bookBtn.insertAdjacentHTML("beforebegin", renderBookingConfirmSummary(p, totals));
+      }
+    } else if (confirmLayer) {
+      const summary = confirmLayer.querySelector(".bottom-nav__summary");
+      if (summary) summary.remove();
+    }
+
+    const bookBtn = nav.querySelector(".bottom-nav__book");
+    if (bookBtn) {
+      if (hasSlot) bookBtn.removeAttribute("disabled");
+      else bookBtn.setAttribute("disabled", "");
+    }
+
+    if (!hasServices) syncBottomNavIndicators(null);
+  }
+
+  function bookingBottomNav(draft) {
+    const hasServices = !!(draft && draft.serviceIds && draft.serviceIds.length);
+    return `
+      <nav class="bottom-nav bottom-nav--booking bottom-nav--booking-dual bottom-nav--with-back${hasServices ? " bottom-nav--confirm-visible" : ""}" aria-label="${hasServices ? "Potwierdź rezerwację" : "Menu klienta"}">
+        <div class="bottom-nav__layer bottom-nav__layer--menu"${hasServices ? ' aria-hidden="true"' : ""}>
+          ${renderBottomNavMenuLayer("search", { backOnSearch: true })}
+        </div>
+        <div class="bottom-nav__layer bottom-nav__layer--confirm"${hasServices ? "" : ' aria-hidden="true"'}>
+          ${hasServices ? renderBookingConfirmLayer(draft) : renderBookingConfirmLayer({ slotId: null })}
+        </div>
       </nav>`;
   }
 
@@ -1043,7 +1120,7 @@
             ${providers.length ? providers.map(function (p) { return renderProviderListItem(p, p.slug === openSlug); }).join("") : `<p class="empty-note">Brak wyników dla wybranych filtrów.</p>`}
           </div>
         </div>
-        ${bottomNav("search")}
+        ${bottomNav("search", { withHome: true })}
       </div>`;
   }
 
@@ -1111,6 +1188,7 @@
   function renderServiceRows(p, selectedIds) {
     const draft = window.AppState.draft;
     const expandedIds = (draft && draft.expandedServiceIds) || [];
+    const pickMode = !!(draft && draft.multiSelectMode);
 
     return (p.services || [])
       .map((s) => {
@@ -1121,7 +1199,14 @@
         const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
 
         return `
-        <article class="service-row${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}" data-service-id="${escapeHtml(s.id)}">
+        <article class="service-row${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}${pickMode ? " service-row--pick" : ""}" data-service-id="${escapeHtml(s.id)}">
+          ${
+            pickMode
+              ? `<button type="button" class="service-row__select service-row__select--checkbox${on ? " service-row__select--on" : ""}" data-action="toggle-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
+                  <span class="service-row__select-mark" aria-hidden="true"></span>
+                </button>`
+              : ""
+          }
           <div class="service-row__content">
             <div class="service-row__head">
               <button type="button" class="service-row__main" data-action="toggle-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
@@ -1879,8 +1964,9 @@
 
     const ids = draft.serviceIds || [];
     const idx = ids.indexOf(serviceId);
+    const pickMode = !!draft.multiSelectMode;
 
-    if (!p.multiSelect) {
+    if (!pickMode) {
       draft.serviceIds = idx === -1 ? [serviceId] : [];
     } else {
       if (idx === -1) ids.push(serviceId);
@@ -1893,6 +1979,8 @@
       saveState();
       if (clientUsesDesktopBookingLayout()) {
         closeProvider();
+      } else if (window.AppState.screen.client === "booking") {
+        if (!refreshBookingDraftUI()) renderAll();
       } else {
         renderAll();
       }
@@ -1948,6 +2036,26 @@
     if (!refreshBookingDraftUI()) renderAll();
   }
 
+  function cancelBookingSelection() {
+    const draft = window.AppState.draft;
+    if (!draft) return;
+    draft.serviceIds = [];
+    draft.slotId = null;
+    draft.multiSelectMode = false;
+    saveState();
+    if (!refreshBookingDraftUI()) renderAll();
+  }
+
+  function enableMultiSelect() {
+    const draft = window.AppState.draft;
+    if (!draft) return;
+    draft.multiSelectMode = true;
+    saveState();
+    if (!refreshBookingDraftUI()) renderAll();
+    const list = document.querySelector(".app-screen--booking .booking__services-list");
+    if (list) list.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   function bookSlot(slotId) {
     if (!window.AppState.draft) return;
     window.AppState.draft.slotId = slotId;
@@ -1956,7 +2064,10 @@
 
   function confirmBooking() {
     const draft = window.AppState.draft;
-    if (!draft || !draft.slotId) return;
+    if (!draft || !draft.slotId) {
+      showToast("Wybierz godzinę.");
+      return;
+    }
     const p = getProviderBySlug(draft.slug);
     if (!p) return;
 
@@ -2363,6 +2474,8 @@
       case "pick-date": pickDate(d.date); break;
       case "pick-slot": pickSlot(d.slot); break;
       case "clear-slot": clearSlot(); break;
+      case "cancel-booking-selection": cancelBookingSelection(); break;
+      case "focus-booking-services": enableMultiSelect(); break;
       case "book-slot": bookSlot(d.slot); break;
       case "cal-prev": shiftCalMonth(-1); break;
       case "cal-next": shiftCalMonth(1); break;
