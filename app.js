@@ -218,10 +218,8 @@
 
     const summary = panel.querySelector(".selection-summary--inline");
     if (summary) summary.remove();
-    if (ctx.totals.count) {
-      const mode = p.bookingMode === "approval" ? "approval" : "auto";
-      panel.insertAdjacentHTML("beforeend", renderSelectionSummaryBar(p, ctx, mode));
-    }
+    const mode = p.bookingMode === "approval" ? "approval" : "auto";
+    panel.insertAdjacentHTML("beforeend", renderSelectionSummaryBar(p, ctx, mode));
   }
 
   function renderDateStripHtml(availDates, activeDate) {
@@ -421,24 +419,30 @@
 
   function renderSelectionSummaryBar(p, ctx, mode) {
     const totals = ctx.totals;
-    if (!totals.count && mode === "approval") return "";
+    const hasSelection = !!totals.count;
+    const durationText = hasSelection ? formatDuration(totals.duration) : "—";
+    const priceText = !hasSelection
+      ? "—"
+      : totals.hasNullPrice
+        ? "wycena indyw."
+        : totals.price + " zł";
 
     if (mode === "approval") {
       return `
-        <div class="selection-summary selection-summary--inline">
+        <div class="selection-summary selection-summary--inline${hasSelection ? "" : " selection-summary--empty"}">
           <div class="selection-summary__info">
-            <span class="selection-summary__duration">${escapeHtml(formatDuration(totals.duration))}</span>
-            <span class="selection-summary__price">${totals.hasNullPrice ? "wycena indyw." : escapeHtml(totals.price + " zł")}</span>
+            <span class="selection-summary__duration">${escapeHtml(durationText)}</span>
+            <span class="selection-summary__price">${escapeHtml(priceText)}</span>
           </div>
-          <button type="button" class="btn btn--primary selection-summary__cta" data-action="send-request" data-slug="${escapeHtml(p.slug)}">Wyślij prośbę o termin</button>
+          <button type="button" class="btn btn--primary selection-summary__cta" data-action="send-request" data-slug="${escapeHtml(p.slug)}"${hasSelection ? "" : " disabled"}>Wyślij prośbę o termin</button>
         </div>`;
     }
 
     return `
-      <div class="selection-summary selection-summary--inline selection-summary--info">
+      <div class="selection-summary selection-summary--inline selection-summary--info${hasSelection ? "" : " selection-summary--empty"}">
         <div class="selection-summary__info">
-          <span class="selection-summary__duration">${escapeHtml(formatDuration(totals.duration))}</span>
-          <span class="selection-summary__price">${totals.hasNullPrice ? "wycena indyw." : escapeHtml(totals.price + " zł")}</span>
+          <span class="selection-summary__duration">${escapeHtml(durationText)}</span>
+          <span class="selection-summary__price">${escapeHtml(priceText)}</span>
         </div>
       </div>`;
   }
@@ -475,7 +479,7 @@
       <div class="provider-booking-panel${isApproval ? " provider-booking-panel--approval" : ""}${window.AppState.bookingPanelEnterSlug === p.slug ? " provider-booking-panel--enter" : ""}">
         ${isApproval ? `<p class="profile__mode">Rezerwacja na akceptację — usługodawca zaproponuje termin.</p>` : ""}
         ${renderBookingLayoutBlock(p, ctx)}
-        ${ctx.totals.count ? renderSelectionSummaryBar(p, ctx, isApproval ? "approval" : "auto") : ""}
+        ${renderSelectionSummaryBar(p, ctx, isApproval ? "approval" : "auto")}
       </div>`;
   }
 
@@ -1305,6 +1309,7 @@
     const daysInMonth = new Date(year, month, 0).getDate();
     const startPad = (first.getDay() + 6) % 7;
 
+    const totalCells = 7 * 6;
     let cells = "";
     for (let i = 0; i < startPad; i++) {
       cells += `<span class="cal__day cal__day--pad" aria-hidden="true"></span>`;
@@ -1320,6 +1325,10 @@
           data-action="${available ? "pick-date" : ""}" data-date="${escapeHtml(dateISO)}" ${available ? "" : "disabled"}>
           ${day}
         </button>`;
+    }
+    const filled = startPad + daysInMonth;
+    for (let i = filled; i < totalCells; i++) {
+      cells += `<span class="cal__day cal__day--pad" aria-hidden="true"></span>`;
     }
 
     return `
