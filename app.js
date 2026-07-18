@@ -58,6 +58,8 @@
       searchOpenSlug: null,
       myCalMonth: null,
       myCalDate: null,
+      appMenuOpen: false,
+      clientAvatarUrl: null,
     };
   }
 
@@ -420,8 +422,25 @@
     return s.description || s.subtitle || "";
   }
 
+  function servicePhotos(s) {
+    return Array.isArray(s && s.photos) ? s.photos.filter(Boolean) : [];
+  }
+
   function serviceHasDetail(s) {
-    return !!serviceDetailText(s);
+    return !!serviceDetailText(s) || servicePhotos(s).length > 0;
+  }
+
+  function renderServicePhotoStrip(s) {
+    const photos = servicePhotos(s);
+    if (!photos.length) return "";
+    return `
+      <div class="service-row__photos">
+        ${photos
+          .map(function (url, i) {
+            return `<img class="service-row__photo" src="${escapeHtml(url)}" alt="${escapeHtml((s.name || "Usługa") + " — zdjęcie " + (i + 1))}" loading="lazy" />`;
+          })
+          .join("")}
+      </div>`;
   }
 
   function buildBookingContext(p) {
@@ -638,6 +657,64 @@
     }
   }
 
+  function renderAvatarFace(p, opts) {
+    opts = opts || {};
+    const initials = escapeHtml(p.avatarInitials || "?");
+    if (p.avatarUrl) {
+      return `<img class="avatar-preview__img${opts.large ? " avatar-preview__img--large" : ""}" src="${escapeHtml(p.avatarUrl)}" alt="${escapeHtml(p.name)}" />`;
+    }
+    return `<span class="avatar-preview__initials${opts.large ? " avatar-preview__initials--large" : ""}">${initials}</span>`;
+  }
+
+  function renderAvatarTrigger(p, className) {
+    return `<button type="button" class="${className} avatar-trigger" data-action="preview-avatar" data-slug="${escapeHtml(p.slug)}" aria-label="Podgląd zdjęcia profilu: ${escapeHtml(p.name)}" title="Podgląd zdjęcia">
+      ${renderAvatarFace(p)}
+    </button>`;
+  }
+
+  function ensureAvatarPreview() {
+    let el = document.getElementById("avatar-preview");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "avatar-preview";
+      el.className = "avatar-preview";
+      el.hidden = true;
+      el.setAttribute("role", "dialog");
+      el.setAttribute("aria-modal", "true");
+      el.setAttribute("aria-label", "Podgląd zdjęcia profilu");
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+
+  function closeAvatarPreview() {
+    const el = document.getElementById("avatar-preview");
+    if (!el || el.hidden) return;
+    el.hidden = true;
+    el.innerHTML = "";
+    document.body.classList.remove("avatar-preview-open");
+  }
+
+  function openAvatarPreview(slug) {
+    const p = getProviderBySlug(slug);
+    if (!p) return;
+    closeProviderCardMenu();
+    const el = ensureAvatarPreview();
+    el.innerHTML = `
+      <button type="button" class="avatar-preview__backdrop" data-action="close-avatar-preview" aria-label="Zamknij podgląd"></button>
+      <div class="avatar-preview__dialog">
+        <button type="button" class="avatar-preview__close" data-action="close-avatar-preview" aria-label="Zamknij">
+          <span class="avatar-preview__close-icon" aria-hidden="true"></span>
+        </button>
+        <div class="avatar-preview__frame">
+          ${renderAvatarFace(p, { large: true })}
+        </div>
+        <p class="avatar-preview__name">${escapeHtml(p.name)}</p>
+      </div>`;
+    el.hidden = false;
+    document.body.classList.add("avatar-preview-open");
+  }
+
   function renderProviderActionItems(p, opts) {
     opts = opts || {};
     const itemClass = opts.itemClass || "provider-card-popover__item";
@@ -775,7 +852,7 @@
             ${favBtn}
           </div>
         </div>
-        <span class="provider-card__avatar">${escapeHtml(p.avatarInitials)}</span>
+        ${renderAvatarTrigger(p, "provider-card__avatar")}
         ${detailsBlock}
         <div class="provider-card__menu-slot">
           ${opts.bookingHeader ? infoBtn : menuBtn}
@@ -897,6 +974,8 @@
         searchOpenSlug: typeof stored.searchOpenSlug === "string" ? stored.searchOpenSlug : base.searchOpenSlug,
         myCalMonth: typeof stored.myCalMonth === "string" ? stored.myCalMonth : base.myCalMonth,
         myCalDate: typeof stored.myCalDate === "string" ? stored.myCalDate : base.myCalDate,
+        appMenuOpen: !!stored.appMenuOpen,
+        clientAvatarUrl: typeof stored.clientAvatarUrl === "string" ? stored.clientAvatarUrl : base.clientAvatarUrl,
       };
     } else {
       window.AppState = base;
@@ -984,8 +1063,9 @@
       { tab: "search", label: "Szukaj", icon: "search" },
       { tab: "favorites", label: "Ulubione", icon: "heart" },
       { tab: "myCalendar", label: "Kalendarz", icon: "calendar" },
-      { tab: "account", label: "Profil", icon: "profile" },
+      { tab: "account", label: "Menu", icon: "profile", menu: true },
     ];
+    const menuOpen = !!window.AppState.appMenuOpen;
     const homeButton = withHome
       ? `<button type="button" class="bottom-nav__item${backOnSearch || active === "search" ? " bottom-nav__item--active" : ""}"
           data-action="${backOnSearch ? "close-provider" : "go-screen"}" data-screen="search" aria-label="${backOnSearch ? "Wróć" : "Strona główna"}" ${backOnSearch || active === "search" ? 'aria-current="page"' : ""}>
@@ -996,7 +1076,14 @@
         <span class="bottom-nav__indicator" aria-hidden="true"></span>
         ${homeButton}${items
           .map(function (it) {
-            const isActive = active === it.tab && !(withHome && it.tab === "search");
+            if (it.menu) {
+              return `
+          <button type="button" class="bottom-nav__item${menuOpen ? " bottom-nav__item--active" : ""}"
+            data-action="toggle-app-menu" aria-label="Menu" aria-expanded="${menuOpen ? "true" : "false"}" aria-controls="app-menu-panel">
+            <span class="bottom-nav__icon bottom-nav__icon--${it.icon}" aria-hidden="true"></span>
+          </button>`;
+            }
+            const isActive = active === it.tab && !(withHome && it.tab === "search") && !menuOpen;
             return `
           <button type="button" class="bottom-nav__item${isActive ? " bottom-nav__item--active" : ""}"
             data-action="go-screen" data-screen="${it.tab}" aria-label="${it.label}" ${isActive ? 'aria-current="page"' : ""}>
@@ -1006,6 +1093,104 @@
           .join("")}`;
   }
 
+  function renderClientMenuAvatar() {
+    const user = data().CURRENT_USER || {};
+    const url = window.AppState.clientAvatarUrl;
+    if (url) {
+      return `<img class="app-menu__avatar-img" src="${escapeHtml(url)}" alt="" />`;
+    }
+    return `<span class="app-menu__avatar-initials">${escapeHtml(accountInitials(user.name))}</span>`;
+  }
+
+  function renderAppMenu() {
+    const open = !!window.AppState.appMenuOpen;
+    const user = data().CURRENT_USER || {};
+    const activeRole = window.AppState.activeRole || "client";
+    const clientActive = activeRole === "client";
+    const providerActive = activeRole === "provider";
+    const hasProvider = !!(user.providerRole && user.providerRole.active);
+    const provider = hasProvider ? myProvider() : null;
+    const check = `<span class="app-menu__check" aria-hidden="true"></span>`;
+
+    const providerBlock = provider
+      ? `<button type="button" class="app-menu__profile app-menu__profile--provider${providerActive ? " app-menu__profile--active" : ""}" data-action="switch-role" data-role="provider" aria-pressed="${providerActive ? "true" : "false"}">
+           <span class="app-menu__avatar app-menu__avatar--provider">${
+             provider.avatarUrl
+               ? `<img class="app-menu__avatar-img" src="${escapeHtml(provider.avatarUrl)}" alt="" />`
+               : `<span class="app-menu__avatar-initials">${escapeHtml(provider.avatarInitials || "?")}</span>`
+           }</span>
+           <span class="app-menu__profile-text">
+             <span class="app-menu__profile-label">Usługodawca</span>
+             <span class="app-menu__profile-name">${escapeHtml(provider.name)}</span>
+           </span>
+           ${providerActive ? check : ""}
+         </button>`
+      : `<button type="button" class="app-menu__profile app-menu__profile--add" data-action="add-provider-profile">
+           <span class="app-menu__avatar app-menu__avatar--add" aria-hidden="true">+</span>
+           <span class="app-menu__profile-text">
+             <span class="app-menu__profile-label">Usługodawca</span>
+             <span class="app-menu__profile-name">Dodaj profil</span>
+           </span>
+         </button>`;
+
+    return `
+      <div class="app-menu${open ? " app-menu--open" : ""}" aria-hidden="${open ? "false" : "true"}">
+        <button type="button" class="app-menu__backdrop" data-action="close-app-menu" tabindex="${open ? "0" : "-1"}" aria-label="Zamknij menu"></button>
+        <aside class="app-menu__panel" id="app-menu-panel" role="dialog" aria-modal="true" aria-label="Menu konta">
+          <div class="app-menu__head">
+            <h2 class="app-menu__title">Profile</h2>
+            <button type="button" class="app-menu__close" data-action="close-app-menu" aria-label="Zamknij">
+              <span class="app-menu__close-icon" aria-hidden="true"></span>
+            </button>
+          </div>
+
+          <div class="app-menu__profiles" role="group" aria-label="Przełącz profil">
+            <button type="button" class="app-menu__profile app-menu__profile--client${clientActive ? " app-menu__profile--active" : ""}" data-action="switch-role" data-role="client" aria-pressed="${clientActive ? "true" : "false"}">
+              <span class="app-menu__avatar app-menu__avatar--client">${renderClientMenuAvatar()}</span>
+              <span class="app-menu__profile-text">
+                <span class="app-menu__profile-label">Klient</span>
+                <span class="app-menu__profile-name">${escapeHtml(user.name || "Użytkownik")}</span>
+              </span>
+              ${clientActive ? check : ""}
+            </button>
+            <label class="app-menu__photo-btn">
+              <span class="app-menu__photo-btn-label">Zmień zdjęcie profilu klienta</span>
+              <input type="file" class="app-menu__file" accept="image/*" data-action="change-client-avatar" tabindex="-1" />
+            </label>
+            ${providerBlock}
+          </div>
+
+          <nav class="app-menu__links" aria-label="Informacje">
+            <button type="button" class="app-menu__link" data-action="open-legal" data-doc="privacy">Polityka prywatności</button>
+            <button type="button" class="app-menu__link" data-action="open-legal" data-doc="terms">Regulamin</button>
+            <button type="button" class="app-menu__link" data-action="open-legal" data-doc="contact">Kontakt</button>
+          </nav>
+
+          <div class="app-menu__footer">
+            <button type="button" class="app-menu__link app-menu__link--logout" data-action="logout">Wyloguj</button>
+          </div>
+        </aside>
+      </div>`;
+  }
+
+  function openAppMenu() {
+    window.AppState.appMenuOpen = true;
+    saveState();
+    renderAll();
+  }
+
+  function closeAppMenu() {
+    if (!window.AppState.appMenuOpen) return;
+    window.AppState.appMenuOpen = false;
+    saveState();
+    renderAll();
+  }
+
+  function toggleAppMenu() {
+    if (window.AppState.appMenuOpen) closeAppMenu();
+    else openAppMenu();
+  }
+
   function bottomNav(active, opts) {
     opts = opts || {};
     const withHome = !!opts.withHome || !!opts.backOnSearch;
@@ -1013,6 +1198,15 @@
       <nav class="bottom-nav${withHome ? " bottom-nav--with-back" : ""}" aria-label="Menu klienta">
         ${renderBottomNavMenuLayer(active, opts)}
       </nav>`;
+  }
+
+  function syncAppMenus() {
+    document.querySelectorAll(".app-screen--client, .app-screen--provider").forEach(function (screen) {
+      const existing = screen.querySelector(":scope > .app-menu");
+      const html = renderAppMenu();
+      if (existing) existing.outerHTML = html;
+      else screen.insertAdjacentHTML("beforeend", html);
+    });
   }
 
   function renderBookingConfirmSummary(p, totals, draft) {
@@ -1187,7 +1381,11 @@
             <p class="screen-head__sub">Twoje konto w Lokalnie.</p>
           </header>
           <div class="account-card">
-            <span class="account-card__avatar">${escapeHtml(accountInitials(user.name))}</span>
+            <span class="account-card__avatar">${
+              window.AppState.clientAvatarUrl
+                ? `<img class="account-card__avatar-img" src="${escapeHtml(window.AppState.clientAvatarUrl)}" alt="" />`
+                : escapeHtml(accountInitials(user.name))
+            }</span>
             <p class="account-card__name">${escapeHtml(user.name || "Użytkownik")}</p>
           </div>
           <div class="account-actions">
@@ -1479,7 +1677,14 @@
                   </div>`
                 : ""
             }
-            ${hasDetail ? `<div class="service-row__detail"${expanded ? "" : " hidden"}>${escapeHtml(detail)}</div>` : ""}
+            ${
+              hasDetail
+                ? `<div class="service-row__detail"${expanded ? "" : " hidden"}>
+                    ${detail ? `<p class="service-row__detail-text">${escapeHtml(detail)}</p>` : ""}
+                    ${renderServicePhotoStrip(s)}
+                  </div>`
+                : ""
+            }
           </div>
         </article>`;
       })
@@ -1611,7 +1816,7 @@
 
           <div class="profile">
             <div class="profile__header">
-              <span class="profile__avatar">${escapeHtml(p.avatarInitials)}</span>
+              ${renderAvatarTrigger(p, "profile__avatar")}
               <div class="profile__info">
                 <h2 class="profile__name">${escapeHtml(p.name)}</h2>
                 <p class="profile__cat">${escapeHtml(providerCategoryLine(p))}</p>
@@ -1700,23 +1905,32 @@
   // ─────────────────────────────────────────────────────────
   // USŁUGODAWCA — ekrany
   // ─────────────────────────────────────────────────────────
-  function providerTabs(active) {
+  function providerBottomNav(active) {
+    const menuOpen = !!window.AppState.appMenuOpen;
     const tabs = [
-      { tab: "dashboard", label: "Pulpit" },
-      { tab: "requests", label: "Prośby" },
-      { tab: "services", label: "Usługi" },
-      { tab: "availability", label: "Dostępność" },
-      { tab: "settings", label: "Ustawienia" },
+      { tab: "dashboard", label: "Pulpit", icon: "home" },
+      { tab: "requests", label: "Prośby", icon: "requests" },
+      { tab: "services", label: "Usługi", icon: "services" },
+      { tab: "availability", label: "Dostępność", icon: "calendar" },
+      { tab: "settings", label: "Ustawienia", icon: "settings" },
     ];
     return `
-      <nav class="provider-tabs" aria-label="Menu usługodawcy">
+      <nav class="bottom-nav bottom-nav--provider bottom-nav--with-back" aria-label="Menu usługodawcy">
+        <span class="bottom-nav__indicator" aria-hidden="true"></span>
         ${tabs
-          .map(
-            (t) => `
-          <button type="button" class="provider-tabs__item${active === t.tab ? " provider-tabs__item--active" : ""}"
-            data-action="provider-tab" data-tab="${t.tab}" ${active === t.tab ? 'aria-current="page"' : ""}>${t.label}</button>`
-          )
+          .map(function (t) {
+            const isActive = !menuOpen && active === t.tab;
+            return `
+          <button type="button" class="bottom-nav__item${isActive ? " bottom-nav__item--active" : ""}"
+            data-action="provider-tab" data-tab="${t.tab}" data-screen="${t.tab}" aria-label="${t.label}" ${isActive ? 'aria-current="page"' : ""}>
+            <span class="bottom-nav__icon bottom-nav__icon--${t.icon}" aria-hidden="true"></span>
+          </button>`;
+          })
           .join("")}
+        <button type="button" class="bottom-nav__item${menuOpen ? " bottom-nav__item--active" : ""}"
+          data-action="toggle-app-menu" aria-label="Menu" aria-expanded="${menuOpen ? "true" : "false"}" aria-controls="app-menu-panel">
+          <span class="bottom-nav__icon bottom-nav__icon--profile" aria-hidden="true"></span>
+        </button>
       </nav>`;
   }
 
@@ -1733,7 +1947,6 @@
 
     return `
       <div class="app-screen app-screen--provider">
-        ${providerTabs("dashboard")}
         <div class="app-scroll">
           <header class="screen-head">
             <h2 class="screen-head__title">Pulpit</h2>
@@ -1752,6 +1965,7 @@
             }
           </div>
         </div>
+        ${providerBottomNav("dashboard")}
       </div>`;
   }
 
@@ -1778,7 +1992,6 @@
     const reqs = (window.AppState.requests || []).filter((r) => r.providerId === MY_PROVIDER_ID && r.status === "pending");
     return `
       <div class="app-screen app-screen--provider">
-        ${providerTabs("requests")}
         <div class="app-scroll">
           <header class="screen-head">
             <h2 class="screen-head__title">Prośby o termin</h2>
@@ -1806,6 +2019,7 @@
             }
           </div>
         </div>
+        ${providerBottomNav("requests")}
       </div>`;
   }
 
@@ -1841,7 +2055,6 @@
 
     return `
       <div class="app-screen app-screen--provider">
-        ${providerTabs("requests")}
         <div class="app-scroll">
           <div class="topbar">
             <button type="button" class="topbar__back" data-action="provider-tab" data-tab="requests" aria-label="Wróć">‹</button>
@@ -1861,34 +2074,343 @@
           <div class="selection-summary__info"><span class="selection-summary__duration">${escapeHtml(formatDuration(totalDur))}</span></div>
           <button type="button" class="btn btn--primary selection-summary__cta" data-action="propose-confirm" data-request-id="${escapeHtml(req.id)}" ${req._proposeSlot ? "" : "disabled"}>Wyślij propozycję</button>
         </div>
+        ${providerBottomNav("requests")}
       </div>`;
+  }
+
+  function getProviderService(serviceId) {
+    const p = myProvider();
+    if (!p || !serviceId) return null;
+    return (p.services || []).find(function (s) {
+      return s.id === serviceId;
+    }) || null;
+  }
+
+  function newServiceDraft() {
+    return {
+      id: "__new__",
+      name: "",
+      subtitle: "",
+      description: "",
+      durationMin: 30,
+      price: null,
+      photos: [],
+    };
+  }
+
+  function getEditServicePhotos() {
+    const params = window.AppState.params.provider || {};
+    return Array.isArray(params.editServicePhotos) ? params.editServicePhotos.slice() : [];
+  }
+
+  function setEditServicePhotos(photos) {
+    window.AppState.params.provider = Object.assign({}, window.AppState.params.provider || {}, {
+      editServicePhotos: photos.slice(),
+    });
+  }
+
+  function captureServiceEditDraft() {
+    const form = document.querySelector("form.service-edit");
+    if (!form) return;
+    window.AppState.params.provider = Object.assign({}, window.AppState.params.provider || {}, {
+      editServiceDraft: {
+        name: String(form.elements.name && form.elements.name.value || ""),
+        subtitle: String(form.elements.subtitle && form.elements.subtitle.value || ""),
+        description: String(form.elements.description && form.elements.description.value || ""),
+        durationMin: Number(form.elements.durationMin && form.elements.durationMin.value) || 30,
+        price:
+          form.elements.price && form.elements.price.value === ""
+            ? null
+            : Number(form.elements.price && form.elements.price.value),
+      },
+    });
+  }
+
+  function applyServiceEditDraft(s) {
+    const draft = window.AppState.params.provider && window.AppState.params.provider.editServiceDraft;
+    if (!draft || !s) return s;
+    return Object.assign({}, s, draft);
+  }
+
+  function renderServiceEditPhotos(photos) {
+    const items = (photos || [])
+      .map(function (url, index) {
+        return `
+        <div class="service-edit__photo">
+          <img class="service-edit__photo-img" src="${escapeHtml(url)}" alt="Zdjęcie ${index + 1}" />
+          <button type="button" class="service-edit__photo-remove" data-action="remove-service-photo" data-index="${index}" aria-label="Usuń zdjęcie ${index + 1}">×</button>
+        </div>`;
+      })
+      .join("");
+    const canAdd = (photos || []).length < 6;
+    return `
+      <div class="service-edit__field">
+        <span class="service-edit__label">Zdjęcia usługi</span>
+        <div class="service-edit__photos">
+          ${items}
+          ${
+            canAdd
+              ? `<label class="service-edit__photo-add">
+                   <span class="service-edit__photo-add-icon" aria-hidden="true">+</span>
+                   <span class="service-edit__photo-add-text">Dodaj</span>
+                   <input type="file" class="service-edit__photo-file" accept="image/*" multiple data-action="add-service-photos" tabindex="-1" />
+                 </label>`
+              : ""
+          }
+        </div>
+        <span class="service-edit__hint">Do 6 zdjęć · JPG/PNG</span>
+      </div>`;
+  }
+
+  function renderServiceEditForm(s, isNew) {
+    const priceVal = s.price == null ? "" : String(s.price);
+    const serviceId = isNew ? "__new__" : s.id;
+    const photos = getEditServicePhotos();
+    return `
+      <form class="service-edit" data-service-id="${escapeHtml(serviceId)}" data-new="${isNew ? "true" : "false"}" onsubmit="return false;">
+        <header class="screen-head screen-head--with-back">
+          <button type="button" class="screen-head__back" data-action="cancel-edit-service" aria-label="Wróć">
+            <span class="screen-head__back-icon" aria-hidden="true"></span>
+          </button>
+          <h2 class="screen-head__title">${isNew ? "Nowa usługa" : "Edytuj usługę"}</h2>
+        </header>
+        <label class="service-edit__field">
+          <span class="service-edit__label">Nazwa</span>
+          <input class="service-edit__input" name="name" type="text" required maxlength="80" value="${escapeHtml(s.name || "")}" />
+        </label>
+        <label class="service-edit__field">
+          <span class="service-edit__label">Krótki opis</span>
+          <input class="service-edit__input" name="subtitle" type="text" maxlength="120" value="${escapeHtml(s.subtitle || "")}" />
+        </label>
+        <label class="service-edit__field">
+          <span class="service-edit__label">Opis szczegółowy</span>
+          <textarea class="service-edit__input service-edit__textarea" name="description" rows="6" maxlength="500">${escapeHtml(s.description || "")}</textarea>
+        </label>
+        ${renderServiceEditPhotos(photos)}
+        <div class="service-edit__row">
+          <label class="service-edit__field">
+            <span class="service-edit__label">Czas (min)</span>
+            <input class="service-edit__input" name="durationMin" type="number" required min="5" max="480" step="5" value="${escapeHtml(String(s.durationMin || 30))}" />
+          </label>
+          <label class="service-edit__field">
+            <span class="service-edit__label">Cena (zł)</span>
+            <input class="service-edit__input" name="price" type="number" min="0" max="99999" step="1" value="${escapeHtml(priceVal)}" placeholder="Indywidualna" />
+          </label>
+        </div>
+        <div class="service-edit__actions">
+          <button type="button" class="btn btn--primary" data-action="save-service" data-service-id="${escapeHtml(serviceId)}">${isNew ? "Dodaj" : "Zapisz"}</button>
+          <button type="button" class="btn btn--ghost" data-action="cancel-edit-service">Anuluj</button>
+        </div>
+      </form>`;
   }
 
   function renderServices() {
     const p = myProvider();
+    const editId = window.AppState.params.provider && window.AppState.params.provider.editServiceId;
+    const isNew = editId === "__new__";
+    const base = isNew ? newServiceDraft() : editId ? getProviderService(editId) : null;
+    const editing = base ? applyServiceEditDraft(base) : null;
+
+    if (editing) {
+      return `
+      <div class="app-screen app-screen--provider">
+        <div class="app-scroll">
+          ${renderServiceEditForm(editing, isNew)}
+        </div>
+        ${providerBottomNav("services")}
+      </div>`;
+    }
+
     const list = (p ? p.services : [])
-      .map(
-        (s) => `
+      .map(function (s) {
+        const thumb = servicePhotos(s)[0];
+        return `
       <div class="service-row service-row--static">
-        <span class="service-row__body">
-          <span class="service-row__name">${escapeHtml(s.name)}</span>
-          <span class="service-row__sub">${escapeHtml(s.subtitle)}</span>
-        </span>
-        <span class="service-row__meta">
-          <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
-          <span class="service-row__price">${escapeHtml(formatPrice(s.price))}</span>
-        </span>
-      </div>`
-      )
+        ${
+          thumb
+            ? `<img class="service-row__thumb" src="${escapeHtml(thumb)}" alt="" loading="lazy" />`
+            : `<span class="service-row__thumb service-row__thumb--empty" aria-hidden="true"></span>`
+        }
+        <div class="service-row__static-main">
+          <span class="service-row__body">
+            <span class="service-row__name">${escapeHtml(s.name)}</span>
+            <span class="service-row__sub">${escapeHtml(s.subtitle || "")}</span>
+          </span>
+          <span class="service-row__meta">
+            <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
+            <span class="service-row__price">${escapeHtml(formatPrice(s.price))}</span>
+          </span>
+        </div>
+        <button type="button" class="service-row__edit" data-action="edit-service" data-service-id="${escapeHtml(s.id)}" aria-label="Edytuj ${escapeHtml(s.name)}" title="Edytuj">
+          <span class="service-row__edit-icon" aria-hidden="true"></span>
+        </button>
+      </div>`;
+      })
       .join("");
     return `
       <div class="app-screen app-screen--provider">
-        ${providerTabs("services")}
         <div class="app-scroll">
           <header class="screen-head"><h2 class="screen-head__title">Usługi</h2><p class="screen-head__sub">Oferta widoczna dla klientów.</p></header>
-          <div class="service-list">${list}</div>
+          <div class="service-list">${list || `<p class="empty-note">Brak usług w ofercie.</p>`}</div>
+          <button type="button" class="btn btn--primary service-list__add" data-action="add-service">Dodaj usługę</button>
         </div>
+        ${providerBottomNav("services")}
       </div>`;
+  }
+
+  function openEditService(serviceId) {
+    const s = getProviderService(serviceId);
+    if (!s) return;
+    window.AppState.params.provider = Object.assign({}, window.AppState.params.provider || {}, {
+      editServiceId: serviceId,
+      editServicePhotos: Array.isArray(s.photos) ? s.photos.slice() : [],
+      editServiceDraft: null,
+    });
+    window.AppState.screen.provider = "services";
+    saveState();
+    renderAll();
+  }
+
+  function openAddService() {
+    window.AppState.params.provider = Object.assign({}, window.AppState.params.provider || {}, {
+      editServiceId: "__new__",
+      editServicePhotos: [],
+      editServiceDraft: null,
+    });
+    window.AppState.screen.provider = "services";
+    saveState();
+    renderAll();
+  }
+
+  function cancelEditService() {
+    if (window.AppState.params.provider) {
+      delete window.AppState.params.provider.editServiceId;
+      delete window.AppState.params.provider.editServicePhotos;
+      delete window.AppState.params.provider.editServiceDraft;
+    }
+    saveState();
+    renderAll();
+  }
+
+  function removeServicePhoto(index) {
+    captureServiceEditDraft();
+    const photos = getEditServicePhotos();
+    const i = Number(index);
+    if (!Number.isFinite(i) || i < 0 || i >= photos.length) return;
+    photos.splice(i, 1);
+    setEditServicePhotos(photos);
+    saveState();
+    renderAll();
+  }
+
+  function addServicePhotosFromFiles(fileList) {
+    captureServiceEditDraft();
+    const files = Array.prototype.slice.call(fileList || []).filter(function (f) {
+      return f && /^image\//.test(f.type);
+    });
+    if (!files.length) {
+      showToast("Wybierz pliki graficzne.");
+      return;
+    }
+    const photos = getEditServicePhotos();
+    const room = 6 - photos.length;
+    if (room <= 0) {
+      showToast("Możesz dodać maksymalnie 6 zdjęć.");
+      return;
+    }
+    const toRead = files.slice(0, room);
+    let pending = toRead.length;
+    toRead.forEach(function (file) {
+      if (file.size > 2.5 * 1024 * 1024) {
+        showToast("Jedno ze zdjęć jest za duże (max 2,5 MB).");
+        pending -= 1;
+        if (pending === 0) {
+          setEditServicePhotos(photos);
+          saveState();
+          renderAll();
+        }
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = function () {
+        photos.push(String(reader.result || ""));
+        pending -= 1;
+        if (pending === 0) {
+          setEditServicePhotos(photos);
+          saveState();
+          renderAll();
+          showToast(toRead.length === 1 ? "Zdjęcie dodane." : "Zdjęcia dodane.");
+        }
+      };
+      reader.onerror = function () {
+        pending -= 1;
+        if (pending === 0) {
+          setEditServicePhotos(photos);
+          saveState();
+          renderAll();
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function saveService(serviceId, form) {
+    const p = myProvider();
+    if (!p || !form) return;
+    const isNew = serviceId === "__new__";
+    let s = isNew ? null : getProviderService(serviceId);
+    if (!isNew && !s) return;
+
+    const name = String(form.elements.name && form.elements.name.value || "").trim();
+    const subtitle = String(form.elements.subtitle && form.elements.subtitle.value || "").trim();
+    const description = String(form.elements.description && form.elements.description.value || "").trim();
+    const durationMin = Number(form.elements.durationMin && form.elements.durationMin.value);
+    const priceRaw = form.elements.price && form.elements.price.value;
+    const price = priceRaw === "" || priceRaw == null ? null : Number(priceRaw);
+    const photos = getEditServicePhotos();
+
+    if (!name) {
+      showToast("Podaj nazwę usługi.");
+      return;
+    }
+    if (!Number.isFinite(durationMin) || durationMin < 5) {
+      showToast("Podaj poprawny czas trwania.");
+      return;
+    }
+    if (price != null && (!Number.isFinite(price) || price < 0)) {
+      showToast("Podaj poprawną cenę.");
+      return;
+    }
+
+    if (isNew) {
+      if (!Array.isArray(p.services)) p.services = [];
+      s = {
+        id: "svc-" + Date.now().toString(36),
+        name: name,
+        subtitle: subtitle,
+        durationMin: Math.round(durationMin),
+        price: price,
+        photos: photos,
+      };
+      if (description) s.description = description;
+      p.services.push(s);
+    } else {
+      s.name = name;
+      s.subtitle = subtitle;
+      s.description = description || undefined;
+      s.durationMin = Math.round(durationMin);
+      s.price = price;
+      s.photos = photos;
+    }
+
+    if (window.AppState.params.provider) {
+      delete window.AppState.params.provider.editServiceId;
+      delete window.AppState.params.provider.editServicePhotos;
+      delete window.AppState.params.provider.editServiceDraft;
+    }
+    saveState();
+    renderAll();
+    showToast(isNew ? "Usługa dodana." : "Usługa zapisana.");
   }
 
   function renderAvailability() {
@@ -1913,11 +2435,11 @@
       .join("");
     return `
       <div class="app-screen app-screen--provider">
-        ${providerTabs("availability")}
         <div class="app-scroll">
           <header class="screen-head"><h2 class="screen-head__title">Dostępność</h2><p class="screen-head__sub">Godziny pracy na najbliższe dni.</p></header>
           <div class="avail-list">${list || `<p class="empty-note">Brak zdefiniowanej dostępności.</p>`}</div>
         </div>
+        ${providerBottomNav("availability")}
       </div>`;
   }
 
@@ -1934,7 +2456,6 @@
     ];
     return `
       <div class="app-screen app-screen--provider">
-        ${providerTabs("settings")}
         <div class="app-scroll">
           <header class="screen-head"><h2 class="screen-head__title">Ustawienia</h2><p class="screen-head__sub">Dane profilu usługodawcy.</p></header>
           <div class="settings">
@@ -1945,6 +2466,7 @@
               .join("")}
           </div>
         </div>
+        ${providerBottomNav("settings")}
       </div>`;
   }
 
@@ -1990,6 +2512,7 @@
     const prevBottomNavTab = captureBottomNavTab();
     INSTANCES.forEach(render);
     renderFullscreen();
+    syncAppMenus();
     syncBottomNavIndicators(prevBottomNavTab);
   }
 
@@ -2068,6 +2591,7 @@
   }
 
   function goScreen(screen) {
+    window.AppState.appMenuOpen = false;
     if (screen !== "search" && screen !== "favorites") {
       window.AppState.searchOpenSlug = null;
     }
@@ -2642,10 +3166,35 @@
 
   function switchRole(role) {
     if (INSTANCES.indexOf(role) === -1) return;
+    const keepMenu = !!window.AppState.appMenuOpen;
+    window.AppState.appMenuOpen = keepMenu;
     window.AppState.activeRole = role;
     saveState();
     updateAppHeader(role);
     renderAll();
+  }
+
+  function setClientAvatarFromFile(file) {
+    if (!file || !/^image\//.test(file.type)) {
+      showToast("Wybierz plik graficzny.");
+      return;
+    }
+    if (file.size > 2.5 * 1024 * 1024) {
+      showToast("Zdjęcie jest za duże (max 2,5 MB).");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = function () {
+      window.AppState.clientAvatarUrl = String(reader.result || "");
+      window.AppState.appMenuOpen = true;
+      saveState();
+      renderAll();
+      showToast("Zdjęcie profilu zaktualizowane.");
+    };
+    reader.onerror = function () {
+      showToast("Nie udało się wczytać zdjęcia.");
+    };
+    reader.readAsDataURL(file);
   }
 
   window.App = {
@@ -2668,6 +3217,35 @@
   // ─────────────────────────────────────────────────────────
   // Delegacja zdarzeń
   // ─────────────────────────────────────────────────────────
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") {
+      const preview = document.getElementById("avatar-preview");
+      if (preview && !preview.hidden) {
+        event.preventDefault();
+        closeAvatarPreview();
+        return;
+      }
+      if (window.AppState.appMenuOpen) {
+        event.preventDefault();
+        closeAppMenu();
+      }
+    }
+  });
+
+  document.addEventListener("change", function (event) {
+    const clientAvatar = event.target.closest("[data-action=change-client-avatar]");
+    if (clientAvatar && clientAvatar.files && clientAvatar.files[0]) {
+      setClientAvatarFromFile(clientAvatar.files[0]);
+      clientAvatar.value = "";
+      return;
+    }
+    const servicePhotos = event.target.closest("[data-action=add-service-photos]");
+    if (servicePhotos && servicePhotos.files && servicePhotos.files.length) {
+      addServicePhotosFromFiles(servicePhotos.files);
+      servicePhotos.value = "";
+    }
+  });
+
   document.addEventListener("click", function (event) {
     const popover = document.getElementById("provider-card-popover");
     const insidePopover = event.target.closest("#provider-card-popover");
@@ -2708,8 +3286,42 @@
       case "switch-role": switchRole(d.role); break;
 
       case "go-screen": goScreen(d.screen); break;
+      case "toggle-app-menu":
+        event.preventDefault();
+        toggleAppMenu();
+        break;
+      case "close-app-menu":
+        event.preventDefault();
+        closeAppMenu();
+        break;
+      case "add-provider-profile":
+        event.preventDefault();
+        closeAppMenu();
+        showToast("Wkrótce: dodawanie profilu usługodawcy.");
+        break;
+      case "open-legal":
+        event.preventDefault();
+        {
+          const labels = {
+            privacy: "Polityka prywatności",
+            terms: "Regulamin",
+            contact: "Kontakt: hello@lokalnie.app",
+          };
+          showToast(labels[d.doc] || "Informacja");
+        }
+        break;
       case "open-provider": openProvider(d.slug); break;
       case "open-profile": openProvider(d.slug); break;
+      case "preview-avatar":
+        event.preventDefault();
+        event.stopPropagation();
+        openAvatarPreview(d.slug);
+        break;
+      case "close-avatar-preview":
+        event.preventDefault();
+        event.stopPropagation();
+        closeAvatarPreview();
+        break;
       case "open-provider-info":
         event.preventDefault();
         event.stopPropagation();
@@ -2781,6 +3393,29 @@
       case "propose-date": proposeDate(d.requestId, d.date); break;
       case "propose-slot": proposeSlot(d.requestId, d.slot, d.date); break;
       case "propose-confirm": proposeConfirm(d.requestId); break;
+      case "edit-service":
+        event.preventDefault();
+        openEditService(d.serviceId);
+        break;
+      case "add-service":
+        event.preventDefault();
+        openAddService();
+        break;
+      case "remove-service-photo":
+        event.preventDefault();
+        removeServicePhoto(d.index);
+        break;
+      case "cancel-edit-service":
+        event.preventDefault();
+        cancelEditService();
+        break;
+      case "save-service":
+        event.preventDefault();
+        {
+          const form = btn.closest("form.service-edit");
+          saveService(d.serviceId, form);
+        }
+        break;
       case "cancel-visit": cancelVisit(d.bookingId); break;
       case "filter-category":
         window.AppState.searchCategory = d.category || "";
