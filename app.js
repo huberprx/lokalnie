@@ -199,15 +199,14 @@
   function renderServicesPanelHead(p, draft, opts) {
     opts = opts || {};
     const mobile = !!opts.mobile;
-    const pickOn = !!(draft && draft.multiSelectMode);
-    const multiBtn = p.multiSelect
-      ? `<button type="button" class="booking__multi-btn${pickOn ? " booking__multi-btn--active" : ""}" data-action="focus-booking-services" aria-pressed="${pickOn ? "true" : "false"}" aria-label="${pickOn ? "Zakończ wybór usług" : "Wybierz kilka usług"}">${pickOn ? "Gotowe" : "Wybierz kilka"}</button>`
+    const multiHint = p.multiSelect
+      ? `<span class="booking__multi-hint">Możesz wybrać kilka</span>`
       : "";
     const labelClass = mobile ? "booking__label booking__label--caps" : "booking__panel-label";
     return `
       <div class="booking__panel-head${mobile ? " booking__panel-head--mobile" : ""}">
         <h3 class="${labelClass}">Usługi</h3>
-        ${multiBtn}
+        ${multiHint}
       </div>`;
   }
 
@@ -276,22 +275,7 @@
     if (layoutList) layoutList.innerHTML = html;
   }
 
-  function clearBookingPickModeUI() {
-    document
-      .querySelectorAll(".app-screen--booking .service-row--pick, .provider-booking-panel .service-row--pick")
-      .forEach(function (row) {
-        row.classList.remove("service-row--pick");
-        row.querySelectorAll(".service-row__select--checkbox").forEach(function (btn) {
-          btn.remove();
-        });
-      });
-    document.querySelectorAll(".booking__multi-btn").forEach(function (btn) {
-      btn.classList.remove("booking__multi-btn--active");
-      btn.setAttribute("aria-pressed", "false");
-      btn.setAttribute("aria-label", "Wybierz kilka usług");
-      btn.textContent = "Wybierz kilka";
-    });
-  }
+  function clearBookingPickModeUI() {}
 
   function refreshMobileBookingScreen(screen, p, ctx) {
     const mobileMain = screen.querySelector(".booking-mobile .booking__main");
@@ -730,13 +714,13 @@
           ${backHtml}
           ${nameHtml}
           <div class="provider-card__toolbar">
-            ${opts.bookingHeader ? infoBtn : favBtn}
+            ${favBtn}
           </div>
         </div>
         <span class="provider-card__avatar">${escapeHtml(p.avatarInitials)}</span>
         ${detailsBlock}
         <div class="provider-card__menu-slot">
-          ${opts.bookingHeader ? favBtn : menuBtn}
+          ${opts.bookingHeader ? infoBtn : menuBtn}
         </div>
       </div>`;
   }
@@ -974,16 +958,13 @@
   function renderBookingConfirmSummary(p, totals, draft) {
     if (!p || !totals || !totals.count) return "";
     const priceText = totals.hasNullPrice ? "wycena indyw." : formatPrice(totals.price);
-    const pickOn = !!(draft && draft.multiSelectMode);
     return `
       <div class="bottom-nav__summary">
+        <span class="bottom-nav__summary-label">Suma:</span>
         <div class="bottom-nav__summary-meta">
           <span class="bottom-nav__summary-dur">${escapeHtml(formatDuration(totals.duration))}</span>
           <span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>
         </div>
-        <button type="button" class="bottom-nav__add${pickOn ? " bottom-nav__add--active" : ""}" data-action="focus-booking-services" aria-label="${pickOn ? "Zakończ dodawanie usług" : "Dodaj usługę"}" aria-pressed="${pickOn ? "true" : "false"}">
-          <span class="bottom-nav__add-icon" aria-hidden="true">+</span>
-        </button>
       </div>`;
   }
 
@@ -1038,13 +1019,6 @@
         const priceEl = summary.querySelector(".bottom-nav__summary-price");
         if (durEl) durEl.textContent = formatDuration(totals.duration);
         if (priceEl) priceEl.textContent = totals.hasNullPrice ? "wycena indyw." : formatPrice(totals.price);
-        const addBtn = summary.querySelector(".bottom-nav__add");
-        if (addBtn) {
-          const pickOn = !!draft.multiSelectMode;
-          addBtn.classList.toggle("bottom-nav__add--active", pickOn);
-          addBtn.setAttribute("aria-pressed", pickOn ? "true" : "false");
-          addBtn.setAttribute("aria-label", pickOn ? "Zakończ dodawanie usług" : "Dodaj usługę");
-        }
       } else {
         const bookBtn = confirmLayer.querySelector(".bottom-nav__book");
         if (bookBtn) bookBtn.insertAdjacentHTML("beforebegin", renderBookingConfirmSummary(p, totals, draft));
@@ -1264,7 +1238,6 @@
         <div class="app-scroll">
           <header class="screen-head">
             <h2 class="screen-head__title">Mój kalendarz</h2>
-            <p class="screen-head__sub">Twoje rezerwacje i prośby.</p>
           </header>
           <div class="visit-list">
             ${
@@ -1297,7 +1270,6 @@
   function renderServiceRows(p, selectedIds) {
     const draft = window.AppState.draft;
     const expandedIds = (draft && draft.expandedServiceIds) || [];
-    const pickMode = !!(draft && draft.multiSelectMode);
 
     return (p.services || [])
       .map((s) => {
@@ -1308,14 +1280,7 @@
         const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
 
         return `
-        <article class="service-row${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}${pickMode ? " service-row--pick" : ""}" data-service-id="${escapeHtml(s.id)}">
-          ${
-            pickMode
-              ? `<button type="button" class="service-row__select service-row__select--checkbox${on ? " service-row__select--on" : ""}" data-action="toggle-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
-                  <span class="service-row__select-mark" aria-hidden="true"></span>
-                </button>`
-              : ""
-          }
+        <article class="service-row${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}" data-service-id="${escapeHtml(s.id)}">
           <div class="service-row__content${p.multiSelect ? " service-row__content--with-check" : ""}">
             <button type="button" class="service-row__main" data-action="toggle-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
               <span class="service-row__name">${escapeHtml(s.name)}</span>
@@ -2088,7 +2053,8 @@
 
     const ids = draft.serviceIds || [];
     const idx = ids.indexOf(serviceId);
-    const multi = mode === "multi" || (!!draft.multiSelectMode && mode !== "single");
+    const multi =
+      mode === "multi" || (mode !== "single" && (!!p.multiSelect || !!draft.multiSelectMode));
 
     if (!multi) {
       draft.serviceIds = idx === -1 ? [serviceId] : [];

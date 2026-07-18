@@ -57,6 +57,7 @@
   --bottom-nav-float-gap: 0px;
   --bottom-nav-h: var(--bottom-nav-pill-h);
   --bottom-nav-clearance: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom, 0px));
+  --app-pad-x: 0.75rem;
   --frame-h: 700px;
   --frame-mobile-w: 320px;
   --frame-desktop-w: 760px;
@@ -1933,7 +1934,7 @@ body:has(#page-app:not([hidden])) {
   max-width: 100%;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 1rem 1rem 1.25rem;
+  padding: 1rem var(--app-pad-x) 1.25rem;
 }
 
 .screen-head {
@@ -3477,7 +3478,7 @@ body:has(#page-app:not([hidden])) {
   }
 
   .app-screen--booking .booking__provider-card {
-    margin: 0 -1rem 0.2rem;
+    margin: 0 calc(-1 * var(--app-pad-x)) 0.2rem;
   }
 
   .app-screen--booking .provider-card--booking-header {
@@ -3487,8 +3488,7 @@ body:has(#page-app:not([hidden])) {
     border-top: none;
     margin-bottom: 0;
     row-gap: 0.08rem;
-    padding-top: 0.4rem;
-    padding-bottom: 0.08rem;
+    padding: 0.4rem var(--app-pad-x) 0.08rem;
   }
 
   .app-screen--booking .provider-card--booking-header .provider-card__avatar {
@@ -3501,9 +3501,13 @@ body:has(#page-app:not([hidden])) {
     align-self: center;
   }
 
+  .app-screen--booking .provider-card--booking-header .provider-card__back {
+    margin-left: -0.2rem;
+  }
+
   .device-frame .app-screen--booking .booking__provider-card {
-    margin-left: -0.85rem;
-    margin-right: -0.85rem;
+    margin-left: calc(-1 * var(--app-pad-x));
+    margin-right: calc(-1 * var(--app-pad-x));
   }
 }
 
@@ -3512,7 +3516,7 @@ body:has(#page-app:not([hidden])) {
 }
 
 .device-frame[data-view="mobile"] .app-screen--booking .booking__provider-card {
-  margin: 0 -0.85rem 0.2rem;
+  margin: 0 calc(-1 * var(--app-pad-x)) 0.2rem;
 }
 
 .device-frame[data-view="mobile"] .app-screen--booking .provider-card--booking-header {
@@ -3522,8 +3526,7 @@ body:has(#page-app:not([hidden])) {
   border-top: none;
   margin-bottom: 0;
   row-gap: 0.08rem;
-  padding-top: 0.4rem;
-  padding-bottom: 0.08rem;
+  padding: 0.4rem var(--app-pad-x) 0.08rem;
 }
 
 .device-frame[data-view="mobile"] .app-screen--booking .provider-card--booking-header .provider-card__avatar {
@@ -3595,14 +3598,14 @@ body:has(#page-app:not([hidden])) {
 .app-screen--booking .booking-mobile {
   flex: 1 1 0;
   min-height: 0;
-  padding: 0 1rem;
+  padding: 0 var(--app-pad-x);
   padding-bottom: 0;
   box-sizing: border-box;
 }
 
 .device-frame .app-screen--booking .booking-mobile {
-  padding-left: 0.85rem;
-  padding-right: 0.85rem;
+  padding-left: var(--app-pad-x);
+  padding-right: var(--app-pad-x);
 }
 
 /* Na ekranie rezerwacji menu jest w flow — nie zasłania kalendarza */
@@ -3748,36 +3751,20 @@ body:has(#page-app:not([hidden])) {
   color: var(--accent-client);
 }
 
-.booking__multi-btn {
-  appearance: none;
+.booking__multi-hint {
   flex-shrink: 0;
   margin: 0;
-  padding: 0.28rem 0.65rem;
-  border: 1px solid var(--accent-client);
-  border-radius: 999px;
-  background: var(--accent-client-soft);
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--accent-client);
   font-family: inherit;
   font-size: 0.72rem;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.2;
   letter-spacing: 0;
   text-transform: none;
   white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-}
-
-.booking__multi-btn:hover {
-  background: var(--accent-client);
-  border-color: var(--accent-client);
-  color: #fff;
-}
-
-.booking__multi-btn--active {
-  background: var(--accent-client);
-  border-color: var(--accent-client);
-  color: #fff;
 }
 
 .booking__services-list {
@@ -4340,8 +4327,8 @@ body:has(#page-app:not([hidden])) {
   z-index: 2;
   justify-content: flex-start;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0 0.55rem;
+  gap: 0.6rem;
+  padding: 0 0.75rem;
   opacity: 0;
   pointer-events: none;
 }
@@ -4350,10 +4337,18 @@ body:has(#page-app:not([hidden])) {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
   flex-shrink: 0;
   min-width: 0;
-  margin-right: 0.15rem;
+}
+
+.bottom-nav__summary-label {
+  flex-shrink: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  line-height: 1.1;
 }
 
 .bottom-nav__summary-meta {
@@ -4363,17 +4358,19 @@ body:has(#page-app:not([hidden])) {
   gap: 0;
   line-height: 1.1;
   min-width: 0;
+  margin-left: 0.35rem;
+  margin-right: 0.45rem;
 }
 
 .bottom-nav__summary-dur {
-  font-size: 0.68rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
   white-space: nowrap;
 }
 
 .bottom-nav__summary-price {
   font-weight: 700;
-  font-size: 0.78rem;
+  font-size: 0.95rem;
   white-space: nowrap;
 }
 
@@ -4465,9 +4462,10 @@ body:has(#page-app:not([hidden])) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: auto;
   height: var(--bottom-nav-item-h);
   margin: 0;
-  padding: 0 1rem;
+  padding: 0 1.1rem;
   border: none;
   border-radius: 999px;
   background: var(--accent-client);
@@ -4480,11 +4478,11 @@ body:has(#page-app:not([hidden])) {
   flex: 1 1 auto;
   min-width: 0;
   white-space: nowrap;
+  text-align: center;
 }
 
 .bottom-nav__layer--confirm .bottom-nav__clear {
   flex-shrink: 0;
-  margin-left: 0.15rem;
 }
 
 .bottom-nav__book:active:not(:disabled) {
@@ -4504,21 +4502,22 @@ body:has(#page-app:not([hidden])) {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: var(--bottom-nav-item-w);
-  height: var(--bottom-nav-item-h);
+  width: 2rem;
+  height: 2rem;
   margin: 0;
   padding: 0;
-  border: none;
-  border-radius: 999px;
-  background: transparent;
-  color: rgba(28, 35, 51, 0.5);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  color: rgba(28, 35, 51, 0.55);
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .bottom-nav__clear:hover {
   color: var(--text);
-  background: rgba(28, 35, 51, 0.06);
+  background: var(--surface-2);
+  border-color: color-mix(in srgb, var(--text) 22%, var(--border));
 }
 
 .bottom-nav__clear:active {
