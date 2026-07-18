@@ -695,21 +695,89 @@
     document.body.classList.remove("avatar-preview-open");
   }
 
+  function renderAvatarPreviewServiceCard(s) {
+    const photos = servicePhotos(s);
+    const thumb = photos[0] || "";
+    return `
+      <article class="avatar-preview__card">
+        ${
+          thumb
+            ? `<img class="avatar-preview__card-img" src="${escapeHtml(thumb)}" alt="" loading="lazy" />`
+            : `<span class="avatar-preview__card-img avatar-preview__card-img--empty" aria-hidden="true"></span>`
+        }
+        <span class="avatar-preview__card-meta">
+          <span class="avatar-preview__card-dur">${escapeHtml(formatDuration(s.durationMin))}</span>
+          <span class="avatar-preview__card-price">${escapeHtml(formatPrice(s.price))}</span>
+        </span>
+      </article>`;
+  }
+
+  function renderAvatarPreviewCarousel(itemsHtml) {
+    if (!itemsHtml) return `<p class="avatar-preview__empty">Brak usług</p>`;
+    return `
+      <div class="avatar-preview__carousel" role="list">
+        ${itemsHtml}
+      </div>`;
+  }
+
+  function renderAvatarPreviewServices(p) {
+    const services = p.services || [];
+    if (!services.length) {
+      return `<p class="avatar-preview__empty">Brak usług w ofercie.</p>`;
+    }
+
+    // Każda usługa: nazwa + pozioma karuzela (zdjęcia usługi; gdy brak — karta meta).
+    return services
+      .map(function (s) {
+        const photos = servicePhotos(s);
+        let slides;
+        if (photos.length) {
+          slides = photos
+            .map(function (url, i) {
+              return `
+              <article class="avatar-preview__card" role="listitem">
+                <img class="avatar-preview__card-img" src="${escapeHtml(url)}" alt="${escapeHtml(s.name + " — zdjęcie " + (i + 1))}" loading="lazy" />
+                <span class="avatar-preview__card-meta">
+                  <span class="avatar-preview__card-dur">${escapeHtml(formatDuration(s.durationMin))}</span>
+                  <span class="avatar-preview__card-price">${escapeHtml(formatPrice(s.price))}</span>
+                </span>
+              </article>`;
+            })
+            .join("");
+        } else {
+          slides = `<div role="listitem">${renderAvatarPreviewServiceCard(s)}</div>`;
+        }
+        return `
+        <section class="avatar-preview__section">
+          <h3 class="avatar-preview__section-title">${escapeHtml(s.name)}</h3>
+          ${renderAvatarPreviewCarousel(slides)}
+        </section>`;
+      })
+      .join("");
+  }
+
   function openAvatarPreview(slug) {
     const p = getProviderBySlug(slug);
     if (!p) return;
     closeProviderCardMenu();
     const el = ensureAvatarPreview();
+    el.setAttribute("aria-label", "Profil: " + (p.name || ""));
     el.innerHTML = `
       <button type="button" class="avatar-preview__backdrop" data-action="close-avatar-preview" aria-label="Zamknij podgląd"></button>
       <div class="avatar-preview__dialog">
         <button type="button" class="avatar-preview__close" data-action="close-avatar-preview" aria-label="Zamknij">
           <span class="avatar-preview__close-icon" aria-hidden="true"></span>
         </button>
-        <div class="avatar-preview__frame">
-          ${renderAvatarFace(p, { large: true })}
+        <div class="avatar-preview__hero">
+          <div class="avatar-preview__frame">
+            ${renderAvatarFace(p, { large: true })}
+          </div>
+          <p class="avatar-preview__name">${escapeHtml(p.name)}</p>
+          <p class="avatar-preview__cat">${escapeHtml(providerCategoryLine(p))}</p>
         </div>
-        <p class="avatar-preview__name">${escapeHtml(p.name)}</p>
+        <div class="avatar-preview__body">
+          ${renderAvatarPreviewServices(p)}
+        </div>
       </div>`;
     el.hidden = false;
     document.body.classList.add("avatar-preview-open");
