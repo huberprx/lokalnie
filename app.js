@@ -196,7 +196,27 @@
     });
   }
 
+  function renderServicesPanelHead(p, draft) {
+    const pickOn = !!(draft && draft.multiSelectMode);
+    const multiBtn = p.multiSelect
+      ? `<button type="button" class="booking__multi-btn${pickOn ? " booking__multi-btn--active" : ""}" data-action="focus-booking-services" aria-pressed="${pickOn ? "true" : "false"}" aria-label="${pickOn ? "Zakończ wybór usług" : "Wybierz kilka usług"}">${pickOn ? "Gotowe" : "Wybierz kilka"}</button>`
+      : "";
+    return `
+      <div class="booking__panel-head">
+        <h3 class="booking__panel-label">Usługi</h3>
+        ${multiBtn}
+      </div>`;
+  }
+
   function refreshBookingPanelElement(panel, p, ctx) {
+    const servicesAside = panel.querySelector(".booking__services");
+    if (servicesAside) {
+      const head = servicesAside.querySelector(".booking__panel-head");
+      const headHtml = renderServicesPanelHead(p, ctx.draft);
+      if (head) head.outerHTML = headHtml;
+      else servicesAside.insertAdjacentHTML("afterbegin", headHtml);
+    }
+
     const servicesList = panel.querySelector(".booking__services-list");
     if (servicesList) servicesList.innerHTML = ctx.services;
 
@@ -254,11 +274,19 @@
   }
 
   function clearBookingPickModeUI() {
-    document.querySelectorAll(".app-screen--booking .service-row--pick").forEach(function (row) {
-      row.classList.remove("service-row--pick");
-      row.querySelectorAll(".service-row__select--checkbox").forEach(function (btn) {
-        btn.remove();
+    document
+      .querySelectorAll(".app-screen--booking .service-row--pick, .provider-booking-panel .service-row--pick")
+      .forEach(function (row) {
+        row.classList.remove("service-row--pick");
+        row.querySelectorAll(".service-row__select--checkbox").forEach(function (btn) {
+          btn.remove();
+        });
       });
+    document.querySelectorAll(".booking__multi-btn").forEach(function (btn) {
+      btn.classList.remove("booking__multi-btn--active");
+      btn.setAttribute("aria-pressed", "false");
+      btn.setAttribute("aria-label", "Wybierz kilka usług");
+      btn.textContent = "Wybierz kilka";
     });
   }
 
@@ -452,7 +480,7 @@
     return `
       <div class="booking-layout">
         <aside class="booking__services">
-          <h3 class="booking__panel-label">Usługi${p.multiSelect ? '<span class="booking__panel-hint"> · kilka naraz</span>' : ""}</h3>
+          ${renderServicesPanelHead(p, ctx.draft)}
           <div class="booking__services-list service-list">${ctx.services}</div>
         </aside>
 
@@ -1472,7 +1500,7 @@
 
               ${p.bookingMode === "approval" ? `<p class="profile__mode">Rezerwacja na akceptację — usługodawca zaproponuje termin.</p>` : ""}
 
-              <h3 class="booking__label booking__label--caps">Usługi</h3>
+              <h3 class="booking__label booking__label--caps">Usługi${p.multiSelect ? '<span class="booking__label-hint"> (przesuń w lewo by wybrać kilka)</span>' : ""}</h3>
               <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
             </div>
 
@@ -2129,7 +2157,8 @@
       const list =
         document.querySelector('.app-screen--booking [data-role="booking-mobile-services"]') ||
         document.querySelector(".app-screen--booking .booking-mobile .booking__services-list") ||
-        document.querySelector(".app-screen--booking .booking__services-list");
+        document.querySelector(".app-screen--booking .booking__services-list") ||
+        document.querySelector(".provider-item--open .booking__services-list");
       if (list) list.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
