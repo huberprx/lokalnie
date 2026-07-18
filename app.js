@@ -56,6 +56,8 @@
       searchUseCurrentLocation: true,
       searchRadiusKm: 15,
       searchOpenSlug: null,
+      myCalMonth: null,
+      myCalDate: null,
     };
   }
 
@@ -278,6 +280,15 @@
   function clearBookingPickModeUI() {}
 
   function refreshMobileBookingScreen(screen, p, ctx) {
+    const providerWrap = screen.querySelector(".booking__provider-card");
+    if (providerWrap) {
+      const infoOpen = !!ctx.draft.providerInfoOpen;
+      providerWrap.classList.toggle("booking__provider-card--info-open", infoOpen);
+      providerWrap.innerHTML =
+        renderProviderCard(p, false, { staticMain: true, bookingHeader: true, showBack: true }) +
+        (infoOpen ? renderBookingProviderInfoPanel(p) : "");
+    }
+
     const mobileMain = screen.querySelector(".booking-mobile .booking__main");
     if (mobileMain) {
       const head = mobileMain.querySelector(".booking__panel-head");
@@ -401,6 +412,7 @@
       slotId: null,
       calMonth: null,
       multiSelectMode: false,
+      providerInfoOpen: false,
     };
   }
 
@@ -626,6 +638,81 @@
     }
   }
 
+  function renderProviderActionItems(p, opts) {
+    opts = opts || {};
+    const itemClass = opts.itemClass || "provider-card-popover__item";
+    const iconClass = opts.iconClass || "provider-card-popover__item-icon";
+    const role = opts.role || "menuitem";
+
+    const navItem = p.address
+      ? `<a href="${escapeHtml(mapsSearchUrl(p.address))}" class="${itemClass}" role="${role}" target="_blank" rel="noopener noreferrer">
+          <span class="${iconClass} ${iconClass}--nav" aria-hidden="true"></span>
+          Nawiguj
+        </a>`
+      : "";
+
+    const callItem = p.phone
+      ? `<a href="tel:${escapeHtml(String(p.phone).replace(/\s/g, ""))}" class="${itemClass}" role="${role}">
+          <span class="${iconClass} ${iconClass}--call" aria-hidden="true"></span>
+          Zadzwoń
+        </a>`
+      : `<button type="button" class="${itemClass}" role="${role}" data-action="call-provider" data-slug="${escapeHtml(p.slug)}">
+          <span class="${iconClass} ${iconClass}--call" aria-hidden="true"></span>
+          Zadzwoń
+        </button>`;
+
+    return `
+      <button type="button" class="${itemClass}" role="${role}" data-action="open-provider-info" data-slug="${escapeHtml(p.slug)}">
+        <span class="${iconClass} ${iconClass}--info" aria-hidden="true"></span>
+        Więcej informacji
+      </button>
+      ${callItem}
+      <button type="button" class="${itemClass}" role="${role}" data-action="share-provider" data-slug="${escapeHtml(p.slug)}">
+        <span class="${iconClass} ${iconClass}--share" aria-hidden="true"></span>
+        Udostępnij
+      </button>
+      ${navItem}
+      <button type="button" class="${itemClass} ${itemClass}--report" role="${role}" data-action="report-provider" data-slug="${escapeHtml(p.slug)}">
+        <span class="${iconClass} ${iconClass}--report" aria-hidden="true"></span>
+        Zgłoś
+      </button>`;
+  }
+
+  function renderBookingProviderInfoPanel(p) {
+    return `
+      <div class="provider-card__info-panel" id="booking-provider-info" role="region" aria-label="Informacje o ${escapeHtml(p.name)}">
+        <div class="provider-card__info-panel-actions">
+          ${renderProviderActionItems(p, {
+            itemClass: "provider-card__info-action",
+            iconClass: "provider-card-popover__item-icon",
+            role: "button",
+          })}
+        </div>
+      </div>`;
+  }
+
+  function closeBookingProviderInfo(opts) {
+    opts = opts || {};
+    const draft = window.AppState.draft;
+    if (!draft || !draft.providerInfoOpen) return false;
+    draft.providerInfoOpen = false;
+    saveState();
+    if (opts.render) {
+      if (!refreshBookingDraftUI()) renderAll();
+    }
+    return true;
+  }
+
+  function toggleBookingProviderInfo(slug) {
+    const draft = window.AppState.draft;
+    const p = getProviderBySlug(slug);
+    if (!draft || !p || draft.slug !== p.slug) return;
+    closeProviderCardMenu();
+    draft.providerInfoOpen = !draft.providerInfoOpen;
+    saveState();
+    if (!refreshBookingDraftUI()) renderAll();
+  }
+
   function openProviderCardMenu(slug, trigger) {
     const p = getProviderBySlug(slug);
     if (!p || !trigger) return;
@@ -637,39 +724,9 @@
     }
 
     closeProviderCardMenu();
+    closeBookingProviderInfo();
 
-    const navItem = p.address
-      ? `<a href="${escapeHtml(mapsSearchUrl(p.address))}" class="provider-card-popover__item" role="menuitem" target="_blank" rel="noopener noreferrer">
-          <span class="provider-card-popover__item-icon provider-card-popover__item-icon--nav" aria-hidden="true"></span>
-          Nawiguj
-        </a>`
-      : "";
-
-    const callItem = p.phone
-      ? `<a href="tel:${escapeHtml(String(p.phone).replace(/\s/g, ""))}" class="provider-card-popover__item" role="menuitem">
-          <span class="provider-card-popover__item-icon provider-card-popover__item-icon--call" aria-hidden="true"></span>
-          Zadzwoń
-        </a>`
-      : `<button type="button" class="provider-card-popover__item" role="menuitem" data-action="call-provider" data-slug="${escapeHtml(p.slug)}">
-          <span class="provider-card-popover__item-icon provider-card-popover__item-icon--call" aria-hidden="true"></span>
-          Zadzwoń
-        </button>`;
-
-    popover.innerHTML = `
-      <button type="button" class="provider-card-popover__item" role="menuitem" data-action="open-provider-info" data-slug="${escapeHtml(p.slug)}">
-        <span class="provider-card-popover__item-icon provider-card-popover__item-icon--info" aria-hidden="true"></span>
-        Więcej informacji
-      </button>
-      ${callItem}
-      <button type="button" class="provider-card-popover__item" role="menuitem" data-action="share-provider" data-slug="${escapeHtml(p.slug)}">
-        <span class="provider-card-popover__item-icon provider-card-popover__item-icon--share" aria-hidden="true"></span>
-        Udostępnij
-      </button>
-      ${navItem}
-      <button type="button" class="provider-card-popover__item provider-card-popover__item--report" role="menuitem" data-action="report-provider" data-slug="${escapeHtml(p.slug)}">
-        <span class="provider-card-popover__item-icon provider-card-popover__item-icon--report" aria-hidden="true"></span>
-        Zgłoś
-      </button>`;
+    popover.innerHTML = renderProviderActionItems(p);
 
     positionProviderCardPopover(popover, trigger);
     trigger.classList.add(trigger.classList.contains("provider-card__info") ? "provider-card__info--open" : "provider-card__menu--open");
@@ -704,12 +761,13 @@
       ? `<button type="button" class="provider-card__back" data-action="close-provider" aria-label="Wróć"><span class="provider-card__back-icon" aria-hidden="true"></span></button>`
       : "";
 
+    const infoOpen = !!(opts.bookingHeader && window.AppState.draft && window.AppState.draft.providerInfoOpen);
     const favBtn = `<button type="button" class="provider-card__action provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__action-icon provider-card__fav-icon" aria-hidden="true"></span></button>`;
-    const infoBtn = `<button type="button" class="provider-card__action provider-card__info" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Informacje o ${escapeHtml(p.name)}" title="Informacje"><span class="provider-card__action-icon provider-card__info-icon" aria-hidden="true"></span></button>`;
+    const infoBtn = `<button type="button" class="provider-card__action provider-card__info${infoOpen ? " provider-card__info--open" : ""}" data-action="toggle-booking-provider-info" data-slug="${escapeHtml(p.slug)}" aria-expanded="${infoOpen ? "true" : "false"}" aria-controls="booking-provider-info" aria-label="Informacje o ${escapeHtml(p.name)}" title="Informacje"><span class="provider-card__action-icon provider-card__info-icon" aria-hidden="true"></span></button>`;
     const menuBtn = `<button type="button" class="provider-card__action provider-card__menu" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Więcej opcji dla ${escapeHtml(p.name)}" title="Więcej opcji"><span class="provider-card__action-icon provider-card__menu-icon" aria-hidden="true"></span></button>`;
 
     return `
-      <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}${opts.staticMain ? " provider-card--static" : ""}${opts.showBack ? " provider-card--with-back" : ""}">
+      <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}${opts.staticMain ? " provider-card--static" : ""}${opts.showBack ? " provider-card--with-back" : ""}${infoOpen ? " provider-card--info-open" : ""}">
         <div class="provider-card__head">
           ${backHtml}
           ${nameHtml}
@@ -837,6 +895,8 @@
             ? stored.searchRadiusKm
             : base.searchRadiusKm,
         searchOpenSlug: typeof stored.searchOpenSlug === "string" ? stored.searchOpenSlug : base.searchOpenSlug,
+        myCalMonth: typeof stored.myCalMonth === "string" ? stored.myCalMonth : base.myCalMonth,
+        myCalDate: typeof stored.myCalDate === "string" ? stored.myCalDate : base.myCalDate,
       };
     } else {
       window.AppState = base;
@@ -1227,28 +1287,136 @@
       </div>`;
   }
 
-  function renderMyCalendar() {
-    const list = (window.AppState.bookings || [])
-      .filter((b) => b.side === "client")
+  function clientVisits() {
+    return (window.AppState.bookings || [])
+      .filter(function (b) {
+        return b.side === "client" && b.dateISO;
+      })
       .slice()
-      .sort((a, b) => (a.dateISO + a.from).localeCompare(b.dateISO + b.from));
+      .sort(function (a, b) {
+        return (a.dateISO + a.from).localeCompare(b.dateISO + b.from);
+      });
+  }
+
+  function ensureMyCalMonth(visits) {
+    if (window.AppState.myCalMonth) return window.AppState.myCalMonth;
+    const next = visits.find(function (b) {
+      return b.dateISO >= new Date().toISOString().slice(0, 10);
+    });
+    const ref = (next && next.dateISO) || (visits[0] && visits[0].dateISO) || new Date().toISOString().slice(0, 10);
+    window.AppState.myCalMonth = ref.slice(0, 7);
+    return window.AppState.myCalMonth;
+  }
+
+  function renderMyVisitCalendar(calMonth, visitDates, selectedDate) {
+    const visitSet = new Set(visitDates);
+    const parts = String(calMonth || "").split("-");
+    const year = Number(parts[0]) || new Date().getFullYear();
+    const month = Number(parts[1]) || new Date().getMonth() + 1;
+    const first = new Date(year, month - 1, 1);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const startPad = (first.getDay() + 6) % 7;
+    const todayISO = new Date().toISOString().slice(0, 10);
+
+    const totalCells = 7 * 6;
+    let cells = "";
+    for (let i = 0; i < startPad; i++) {
+      cells += `<span class="cal__day cal__day--pad" aria-hidden="true"></span>`;
+    }
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateISO = `${year}-${pad(month)}-${pad(day)}`;
+      const hasVisit = visitSet.has(dateISO);
+      const selected = dateISO === selectedDate;
+      const isToday = dateISO === todayISO;
+      const hol = isHoliday(dateISO);
+      cells += `
+        <button type="button"
+          class="cal__day cal__day--selectable${hasVisit ? " cal__day--visit" : ""}${selected ? " cal__day--selected" : ""}${isToday && !selected ? " cal__day--today" : ""}${hol ? " cal__day--holiday" : ""}"
+          data-action="my-cal-pick-date" data-date="${escapeHtml(dateISO)}"
+          aria-pressed="${selected ? "true" : "false"}"
+          aria-label="${day}${hasVisit ? ", wizyty" : ""}">
+          <span class="cal__day-num">${day}</span>
+          ${hasVisit ? `<span class="cal__day-dot" aria-hidden="true"></span>` : ""}
+        </button>`;
+    }
+    const filled = startPad + daysInMonth;
+    for (let i = filled; i < totalCells; i++) {
+      cells += `<span class="cal__day cal__day--pad" aria-hidden="true"></span>`;
+    }
+
+    return `
+      <div class="cal my-cal">
+        <div class="cal__nav">
+          <button type="button" class="cal__nav-btn" data-action="my-cal-prev" aria-label="Poprzedni miesiąc">‹</button>
+          <span class="cal__title">${escapeHtml(MONTHS[month - 1])} ${year}</span>
+          <button type="button" class="cal__nav-btn" data-action="my-cal-next" aria-label="Następny miesiąc">›</button>
+        </div>
+        <div class="cal__weekdays">${CAL_WEEKDAYS.map((w) => `<span>${w}</span>`).join("")}</div>
+        <div class="cal__grid">${cells}</div>
+      </div>`;
+  }
+
+  function renderMyCalendar() {
+    const list = clientVisits();
+    const visitDates = list.map(function (b) {
+      return b.dateISO;
+    });
+    const calMonth = ensureMyCalMonth(list);
+    const selectedDate = window.AppState.myCalDate || null;
+    const filtered = selectedDate
+      ? list.filter(function (b) {
+          return b.dateISO === selectedDate;
+        })
+      : list;
+
+    const listTitle = selectedDate
+      ? `Wizyty · ${formatDateLong(selectedDate)}`
+      : "Wizyty";
 
     return `
       <div class="app-screen app-screen--client">
         <div class="app-scroll">
-          <header class="screen-head">
+          <header class="screen-head screen-head--with-back">
+            <button type="button" class="screen-head__back" data-action="go-screen" data-screen="search" aria-label="Wróć">
+              <span class="screen-head__back-icon" aria-hidden="true"></span>
+            </button>
             <h2 class="screen-head__title">Mój kalendarz</h2>
           </header>
-          <div class="visit-list">
-            ${
-              list.length
-                ? list.map(renderClientVisitCard).join("")
-                : `<p class="empty-note">Brak rezerwacji. Zarezerwuj usługę w zakładce „Szukaj”.</p>`
-            }
-          </div>
+          <section class="my-cal-section" aria-label="Kalendarz wizyt">
+            ${renderMyVisitCalendar(calMonth, visitDates, selectedDate)}
+          </section>
+          <section class="my-cal-visits" aria-label="${escapeHtml(listTitle)}">
+            <h3 class="booking__label booking__label--caps">${escapeHtml(listTitle)}</h3>
+            <div class="visit-list">
+              ${
+                filtered.length
+                  ? filtered.map(renderClientVisitCard).join("")
+                  : selectedDate
+                    ? `<p class="empty-note">Brak wizyt w tym dniu.</p>`
+                    : `<p class="empty-note">Brak rezerwacji. Zarezerwuj usługę w zakładce „Szukaj”.</p>`
+              }
+            </div>
+          </section>
         </div>
         ${bottomNav("myCalendar")}
       </div>`;
+  }
+
+  function shiftMyCalMonth(delta) {
+    const ref = window.AppState.myCalMonth || new Date().toISOString().slice(0, 7);
+    const parts = ref.split("-").map(Number);
+    const d = new Date(parts[0], parts[1] - 1 + delta, 1);
+    window.AppState.myCalMonth = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+    saveState();
+    renderAll();
+  }
+
+  function pickMyCalDate(dateISO) {
+    if (!dateISO) return;
+    window.AppState.myCalDate = window.AppState.myCalDate === dateISO ? null : dateISO;
+    window.AppState.myCalMonth = dateISO.slice(0, 7);
+    saveState();
+    renderAll();
   }
 
   function resolveAvailDates(p, durationMin) {
@@ -1484,8 +1652,9 @@
         <div class="booking-mobile">
           <div class="booking booking--mobile-split">
             <div class="booking__main">
-              <div class="booking__provider-card">
+              <div class="booking__provider-card${ctx.draft.providerInfoOpen ? " booking__provider-card--info-open" : ""}">
                 ${renderProviderCard(p, false, { staticMain: true, bookingHeader: true, showBack: true })}
+                ${ctx.draft.providerInfoOpen ? renderBookingProviderInfoPanel(p) : ""}
               </div>
 
               ${p.bookingMode === "approval" ? `<p class="profile__mode">Rezerwacja na akceptację — usługodawca zaproponuje termin.</p>` : ""}
@@ -2545,12 +2714,14 @@
         event.preventDefault();
         event.stopPropagation();
         closeProviderCardMenu();
+        closeBookingProviderInfo({ render: true });
         openProviderInfo(d.slug);
         break;
       case "call-provider":
         event.preventDefault();
         event.stopPropagation();
         closeProviderCardMenu();
+        closeBookingProviderInfo({ render: true });
         callProvider(d.slug);
         break;
       case "close-provider": closeProvider(); break;
@@ -2564,6 +2735,11 @@
         event.stopPropagation();
         openProviderCardMenu(d.slug, btn);
         break;
+      case "toggle-booking-provider-info":
+        event.preventDefault();
+        event.stopPropagation();
+        toggleBookingProviderInfo(d.slug);
+        break;
       case "close-provider-menu":
         event.preventDefault();
         closeProviderCardMenu();
@@ -2572,11 +2748,13 @@
         event.preventDefault();
         shareProvider(d.slug);
         closeProviderCardMenu();
+        closeBookingProviderInfo({ render: true });
         break;
       case "report-provider":
         event.preventDefault();
         reportProvider(d.slug);
         closeProviderCardMenu();
+        closeBookingProviderInfo({ render: true });
         break;
       case "toggle-service": toggleService(d.serviceId); break;
       case "toggle-service-check": toggleServiceCheck(d.serviceId); break;
@@ -2591,6 +2769,9 @@
       case "book-slot": bookSlot(d.slot); break;
       case "cal-prev": shiftCalMonth(-1); break;
       case "cal-next": shiftCalMonth(1); break;
+      case "my-cal-prev": shiftMyCalMonth(-1); break;
+      case "my-cal-next": shiftMyCalMonth(1); break;
+      case "my-cal-pick-date": pickMyCalDate(d.date); break;
       case "confirm-booking": confirmBooking(); break;
       case "accept-proposal": acceptProposal(d.bookingId); break;
       case "reject-proposal": rejectProposal(d.bookingId); break;
