@@ -196,14 +196,17 @@
     });
   }
 
-  function renderServicesPanelHead(p, draft) {
+  function renderServicesPanelHead(p, draft, opts) {
+    opts = opts || {};
+    const mobile = !!opts.mobile;
     const pickOn = !!(draft && draft.multiSelectMode);
     const multiBtn = p.multiSelect
       ? `<button type="button" class="booking__multi-btn${pickOn ? " booking__multi-btn--active" : ""}" data-action="focus-booking-services" aria-pressed="${pickOn ? "true" : "false"}" aria-label="${pickOn ? "Zakończ wybór usług" : "Wybierz kilka usług"}">${pickOn ? "Gotowe" : "Wybierz kilka"}</button>`
       : "";
+    const labelClass = mobile ? "booking__label booking__label--caps" : "booking__panel-label";
     return `
-      <div class="booking__panel-head">
-        <h3 class="booking__panel-label">Usługi</h3>
+      <div class="booking__panel-head${mobile ? " booking__panel-head--mobile" : ""}">
+        <h3 class="${labelClass}">Usługi</h3>
         ${multiBtn}
       </div>`;
   }
@@ -291,6 +294,17 @@
   }
 
   function refreshMobileBookingScreen(screen, p, ctx) {
+    const mobileMain = screen.querySelector(".booking-mobile .booking__main");
+    if (mobileMain) {
+      const head = mobileMain.querySelector(".booking__panel-head");
+      const headHtml = renderServicesPanelHead(p, ctx.draft, { mobile: true });
+      if (head) head.outerHTML = headHtml;
+      else {
+        const list = mobileMain.querySelector('[data-role="booking-mobile-services"]');
+        if (list) list.insertAdjacentHTML("beforebegin", headHtml);
+      }
+    }
+
     refreshBookingServiceLists(screen, ctx);
     const dateStripEl = screen.querySelector(".booking-mobile .date-strip");
     const dateScrollLeft = dateStripEl ? dateStripEl.scrollLeft : 0;
@@ -1302,26 +1316,37 @@
                 </button>`
               : ""
           }
-          <div class="service-row__content">
-            <div class="service-row__head">
-              <button type="button" class="service-row__main" data-action="toggle-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
-                <span class="service-row__name">${escapeHtml(s.name)}</span>
-                ${s.subtitle ? `<span class="service-row__sub">${escapeHtml(s.subtitle)}</span>` : ""}
-              </button>
-              <div class="service-row__meta">
-                <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
-                <span class="service-row__price">${escapeHtml(formatPrice(s.price))}</span>
-              </div>
+          <div class="service-row__content${p.multiSelect ? " service-row__content--with-check" : ""}">
+            <button type="button" class="service-row__main" data-action="toggle-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
+              <span class="service-row__name">${escapeHtml(s.name)}</span>
+              ${s.subtitle ? `<span class="service-row__sub">${escapeHtml(s.subtitle)}</span>` : ""}
+            </button>
+            <div class="service-row__meta">
+              <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
+              <span class="service-row__price">${escapeHtml(formatPrice(s.price))}</span>
             </div>
             ${
-              hasDetail
-                ? `<button type="button" class="service-row__more" data-action="toggle-service-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}">
-                    <span class="service-row__more-label">${expanded ? "Mniej" : "Więcej"}</span>
-                    <span class="service-row__chev" aria-hidden="true"></span>
-                  </button>
-                  <div class="service-row__detail"${expanded ? "" : " hidden"}>${escapeHtml(detail)}</div>`
+              hasDetail || p.multiSelect
+                ? `<div class="service-row__foot">
+                    ${
+                      hasDetail
+                        ? `<button type="button" class="service-row__more" data-action="toggle-service-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}">
+                            <span class="service-row__more-label">${expanded ? "Mniej" : "Więcej"}</span>
+                            <span class="service-row__chev" aria-hidden="true"></span>
+                          </button>`
+                        : `<span class="service-row__foot-spacer" aria-hidden="true"></span>`
+                    }
+                    ${
+                      p.multiSelect
+                        ? `<button type="button" class="service-row__check${on ? " service-row__check--on" : ""}" data-action="toggle-service-check" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
+                            <span class="service-row__check-visual" aria-hidden="true"></span>
+                          </button>`
+                        : ""
+                    }
+                  </div>`
                 : ""
             }
+            ${hasDetail ? `<div class="service-row__detail"${expanded ? "" : " hidden"}>${escapeHtml(detail)}</div>` : ""}
           </div>
         </article>`;
       })
@@ -1500,7 +1525,7 @@
 
               ${p.bookingMode === "approval" ? `<p class="profile__mode">Rezerwacja na akceptację — usługodawca zaproponuje termin.</p>` : ""}
 
-              <h3 class="booking__label booking__label--caps">Usługi${p.multiSelect ? '<span class="booking__label-hint"> (przesuń w lewo by wybrać kilka)</span>' : ""}</h3>
+              ${renderServicesPanelHead(p, ctx.draft, { mobile: true })}
               <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
             </div>
 
@@ -2055,7 +2080,7 @@
     applyServiceRowExpanded(serviceId, expanded);
   }
 
-  function toggleService(serviceId) {
+  function applyServiceSelection(serviceId, mode) {
     const draft = window.AppState.draft;
     if (!draft) return;
     const p = getProviderBySlug(draft.slug);
@@ -2063,9 +2088,9 @@
 
     const ids = draft.serviceIds || [];
     const idx = ids.indexOf(serviceId);
-    const pickMode = !!draft.multiSelectMode;
+    const multi = mode === "multi" || (!!draft.multiSelectMode && mode !== "single");
 
-    if (!pickMode) {
+    if (!multi) {
       draft.serviceIds = idx === -1 ? [serviceId] : [];
     } else {
       if (idx === -1) ids.push(serviceId);
@@ -2087,6 +2112,16 @@
     }
     saveState();
     if (!refreshBookingDraftUI()) renderAll();
+  }
+
+  function toggleService(serviceId) {
+    applyServiceSelection(serviceId, "auto");
+  }
+
+  function toggleServiceCheck(serviceId) {
+    const draft = window.AppState.draft;
+    const p = draft && draft.slug ? getProviderBySlug(draft.slug) : null;
+    applyServiceSelection(serviceId, p && p.multiSelect ? "multi" : "single");
   }
 
   function startBooking(slug) {
@@ -2578,6 +2613,7 @@
         closeProviderCardMenu();
         break;
       case "toggle-service": toggleService(d.serviceId); break;
+      case "toggle-service-check": toggleServiceCheck(d.serviceId); break;
       case "toggle-service-desc": toggleServiceDesc(d.serviceId); break;
       case "start-booking": startBooking(d.slug); break;
       case "send-request": sendRequest(d.slug); break;
