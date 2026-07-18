@@ -6,9 +6,9 @@
   "use strict";
 
   // Dzisiejsza data w prototypie: 16 lipca 2026 (czwartek).
-  // Availability generujemy na ~2 tygodnie od dziś.
+  // Availability generujemy na ~3 miesiące — mobilny strip dat da się przewijać dalej.
   const WINDOW_START = Date.UTC(2026, 6, 16); // 2026-07-16
-  const WINDOW_DAYS = 14;
+  const WINDOW_DAYS = 90;
 
   function pad(n) {
     return String(n).padStart(2, "0");

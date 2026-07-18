@@ -23,6 +23,10 @@
     "stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca",
     "lipca", "sierpnia", "września", "października", "listopada", "grudnia",
   ];
+  const MONTHS_NOM = [
+    "Styczeń", "Luty", "Marzec", "Kwiecień", "Maj", "Czerwiec",
+    "Lipiec", "Sierpień", "Wrzesień", "Październik", "Listopad", "Grudzień",
+  ];
 
   const STATUS_LABEL = {
     confirmed: "Potwierdzona",
@@ -52,6 +56,9 @@
       searchQuery: "",
       searchCategory: "",
       searchSubcategory: "",
+      searchFiltersOpen: false,
+      searchFilterDates: [],
+      searchFilterPeriods: [],
       searchLocation: "",
       searchUseCurrentLocation: true,
       searchRadiusKm: 15,
@@ -106,6 +113,36 @@
 
   function minFromISO(iso) {
     return timeToMin(String(iso).slice(11, 16));
+  }
+
+  function monthLabelFromISO(dateISO) {
+    if (!dateISO) return "";
+    const d = new Date(dateISO + "T00:00:00");
+    if (isNaN(d.getTime())) return "";
+    return MONTHS_NOM[d.getMonth()];
+  }
+
+  // Aktualizuje nazwę miesiąca w wierszu „Dzień" na podstawie
+  // najbardziej wysuniętego w lewo widocznego kafelka daty.
+  function updateBookingMonthLabel(strip) {
+    if (!strip) return;
+    const schedule = strip.closest(".booking__schedule");
+    const label = schedule && schedule.querySelector('[data-role="booking-mobile-month"]');
+    if (!label) return;
+    const chips = strip.querySelectorAll(".date-chip[data-date]");
+    if (!chips.length) return;
+    const stripRect = strip.getBoundingClientRect();
+    let chosen = chips[0];
+    for (let i = 0; i < chips.length; i++) {
+      const r = chips[i].getBoundingClientRect();
+      if (r.right >= stripRect.left + 4) {
+        chosen = chips[i];
+        break;
+      }
+    }
+    const iso = chosen.getAttribute("data-date");
+    const text = monthLabelFromISO(iso);
+    if (text && label.textContent !== text) label.textContent = text;
   }
 
   function formatDateLong(dateISO) {
@@ -164,6 +201,63 @@
     return inPlace && p.distanceKm <= radius;
   }
 
+  const SEARCH_PERIODS = [
+    { id: "morning", label: "Przedpołudnie", from: "06:00", to: "12:00" },
+    { id: "afternoon", label: "Popołudnie", from: "12:00", to: "17:00" },
+    { id: "evening", label: "Wieczór", from: "17:00", to: "22:00" },
+  ];
+
+  function demoTodayISO() {
+    return (data().DEMO_TODAY_ISO || "2026-07-16");
+  }
+
+  function timeToMinutes(hhmm) {
+    const parts = String(hhmm || "0:0").split(":");
+    return Number(parts[0]) * 60 + Number(parts[1] || 0);
+  }
+
+  function rangesOverlap(aFrom, aTo, bFrom, bTo) {
+    return timeToMinutes(aFrom) < timeToMinutes(bTo) && timeToMinutes(bFrom) < timeToMinutes(aTo);
+  }
+
+  function searchFilterDateOptions() {
+    const start = demoTodayISO();
+    const parts = start.split("-").map(Number);
+    let t = Date.UTC(parts[0], parts[1] - 1, parts[2]);
+    const out = [];
+    for (let i = 0; i < 14; i++) {
+      const d = new Date(t + i * 86400000);
+      out.push(d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate()));
+    }
+    return out;
+  }
+
+  function providerMatchesScheduleFilters(p) {
+    const dates = window.AppState.searchFilterDates || [];
+    const periods = window.AppState.searchFilterPeriods || [];
+    if (!dates.length && !periods.length) return true;
+
+    const avail = p.availability || [];
+    const days = dates.length
+      ? avail.filter(function (d) {
+          return dates.indexOf(d.dateISO) !== -1;
+        })
+      : avail;
+    if (!days.length) return false;
+    if (!periods.length) return true;
+
+    return days.some(function (day) {
+      return (day.blocks || []).some(function (block) {
+        return periods.some(function (periodId) {
+          const period = SEARCH_PERIODS.find(function (x) {
+            return x.id === periodId;
+          });
+          return period && rangesOverlap(block.from, block.to, period.from, period.to);
+        });
+      });
+    });
+  }
+
   function filterProviders() {
     const q = (window.AppState.searchQuery || "").toLowerCase();
     const cat = window.AppState.searchCategory || "";
@@ -173,6 +267,7 @@
       if (cat && p.category !== cat) return false;
       if (sub && p.subcategory !== sub) return false;
       if (!matchesSearchLocation(p)) return false;
+      if (!providerMatchesScheduleFilters(p)) return false;
       if (
         q &&
         p.name.toLowerCase().indexOf(q) === -1 &&
@@ -248,16 +343,35 @@
     panel.insertAdjacentHTML("beforeend", renderSelectionSummaryBar(p, ctx, mode));
   }
 
+  // Ciągły zakres dat (włącznie) — bez „dziur” między dostępnymi dniami.
+  function eachDateISO(fromISO, toISO) {
+    const out = [];
+    if (!fromISO || !toISO) return out;
+    const from = fromISO.split("-").map(Number);
+    const to = toISO.split("-").map(Number);
+    let t = Date.UTC(from[0], from[1] - 1, from[2]);
+    const end = Date.UTC(to[0], to[1] - 1, to[2]);
+    while (t <= end) {
+      const d = new Date(t);
+      out.push(d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate()));
+      t += 86400000;
+    }
+    return out;
+  }
+
   function renderDateStripHtml(availDates, activeDate) {
     if (!availDates.length) return `<p class="empty-note">Brak dostępnych terminów.</p>`;
-    return availDates
+    const availSet = new Set(availDates);
+    const stripDates = eachDateISO(availDates[0], availDates[availDates.length - 1]);
+    return stripDates
       .map(function (dateISO) {
-        const dt = new Date(dateISO + "T00:00:00");
+        const dt = new Date(dateISO + "T12:00:00");
         const on = dateISO === activeDate;
         const hol = isHoliday(dateISO);
+        const open = availSet.has(dateISO);
         return `
-        <button type="button" class="date-chip${on ? " date-chip--active" : ""}${hol ? " date-chip--holiday" : ""}"
-          data-action="pick-date" data-date="${escapeHtml(dateISO)}">
+        <button type="button" class="date-chip${on ? " date-chip--active" : ""}${hol ? " date-chip--holiday" : ""}${open ? "" : " date-chip--closed"}"
+          data-date="${escapeHtml(dateISO)}"${open ? ` data-action="pick-date"` : " disabled aria-disabled=\"true\""}>
           <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span>
           <span class="date-chip__day">${dt.getDate()}</span>
         </button>`;
@@ -311,6 +425,7 @@
     if (dateStripEl) {
       dateStripEl.innerHTML = renderDateStripHtml(ctx.availDates, ctx.activeDate);
       dateStripEl.scrollLeft = dateScrollLeft;
+      updateBookingMonthLabel(dateStripEl);
     }
 
     const timeLabel = screen.querySelector('[data-role="booking-mobile-time-label"]');
@@ -334,16 +449,7 @@
     }
 
     const nav = screen.querySelector(".bottom-nav");
-    if (nav) {
-      if (nav.classList.contains("bottom-nav--booking-dual")) {
-        updateBookingBottomNav(nav, ctx.draft);
-      } else {
-        nav.outerHTML = bookingBottomNav(ctx.draft);
-        if (!(ctx.draft && ctx.draft.serviceIds && ctx.draft.serviceIds.length)) {
-          syncBottomNavIndicators(null);
-        }
-      }
-    }
+    if (nav) updateBookingBottomNav(nav, ctx.draft);
   }
 
   function refreshBookingDraftUI() {
@@ -1030,6 +1136,13 @@
         searchQuery: typeof stored.searchQuery === "string" ? stored.searchQuery : base.searchQuery,
         searchCategory: typeof stored.searchCategory === "string" ? stored.searchCategory : base.searchCategory,
         searchSubcategory: typeof stored.searchSubcategory === "string" ? stored.searchSubcategory : base.searchSubcategory,
+        searchFiltersOpen: !!stored.searchFiltersOpen,
+        searchFilterDates: Array.isArray(stored.searchFilterDates) ? stored.searchFilterDates.filter(Boolean) : base.searchFilterDates,
+        searchFilterPeriods: Array.isArray(stored.searchFilterPeriods)
+          ? stored.searchFilterPeriods.filter(function (p) {
+              return p === "morning" || p === "afternoon" || p === "evening";
+            })
+          : base.searchFilterPeriods,
         searchLocation: typeof stored.searchLocation === "string" ? stored.searchLocation : base.searchLocation,
         searchUseCurrentLocation:
           typeof stored.searchUseCurrentLocation === "boolean"
@@ -1171,7 +1284,6 @@
   }
 
   function renderAppMenu() {
-    const open = !!window.AppState.appMenuOpen;
     const user = data().CURRENT_USER || {};
     const activeRole = window.AppState.activeRole || "client";
     const clientActive = activeRole === "client";
@@ -1201,9 +1313,11 @@
            </span>
          </button>`;
 
+    // Markup zawsze w stanie „zamknięty” — klasę --open dokładamy w JS,
+    // żeby zadziałała animacja wysuwania z boku.
     return `
-      <div class="app-menu${open ? " app-menu--open" : ""}" aria-hidden="${open ? "false" : "true"}">
-        <button type="button" class="app-menu__backdrop" data-action="close-app-menu" tabindex="${open ? "0" : "-1"}" aria-label="Zamknij menu"></button>
+      <div class="app-menu" aria-hidden="true">
+        <button type="button" class="app-menu__backdrop" data-action="close-app-menu" tabindex="-1" aria-label="Zamknij menu"></button>
         <aside class="app-menu__panel" id="app-menu-panel" role="dialog" aria-modal="true" aria-label="Menu konta">
           <div class="app-menu__head">
             <h2 class="app-menu__title">Profile</h2>
@@ -1241,17 +1355,36 @@
       </div>`;
   }
 
+  function syncAppMenuNavButtons(open) {
+    document.querySelectorAll('[data-action="toggle-app-menu"]').forEach(function (btn) {
+      btn.classList.toggle("bottom-nav__item--active", !!open);
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    syncBottomNavIndicators(null);
+  }
+
+  function setAppMenuOpenClass(open) {
+    document.querySelectorAll(".app-menu").forEach(function (menu) {
+      menu.classList.toggle("app-menu--open", !!open);
+      menu.setAttribute("aria-hidden", open ? "false" : "true");
+      const backdrop = menu.querySelector(".app-menu__backdrop");
+      if (backdrop) backdrop.tabIndex = open ? 0 : -1;
+    });
+  }
+
   function openAppMenu() {
     window.AppState.appMenuOpen = true;
     saveState();
-    renderAll();
+    syncAppMenus({ animateOpen: true });
+    syncAppMenuNavButtons(true);
   }
 
   function closeAppMenu() {
-    if (!window.AppState.appMenuOpen) return;
+    if (!window.AppState.appMenuOpen && !document.querySelector(".app-menu--open")) return;
     window.AppState.appMenuOpen = false;
     saveState();
-    renderAll();
+    setAppMenuOpenClass(false);
+    syncAppMenuNavButtons(false);
   }
 
   function toggleAppMenu() {
@@ -1268,12 +1401,33 @@
       </nav>`;
   }
 
-  function syncAppMenus() {
+  function syncAppMenus(opts) {
+    opts = opts || {};
+    const wantOpen = !!window.AppState.appMenuOpen;
+    const animateOpen = !!opts.animateOpen;
     document.querySelectorAll(".app-screen--client, .app-screen--provider").forEach(function (screen) {
       const existing = screen.querySelector(":scope > .app-menu");
       const html = renderAppMenu();
       if (existing) existing.outerHTML = html;
       else screen.insertAdjacentHTML("beforeend", html);
+      if (!wantOpen) return;
+      const menu = screen.querySelector(":scope > .app-menu");
+      if (!menu) return;
+      function applyOpen() {
+        if (!window.AppState.appMenuOpen) return;
+        menu.classList.add("app-menu--open");
+        menu.setAttribute("aria-hidden", "false");
+        const backdrop = menu.querySelector(".app-menu__backdrop");
+        if (backdrop) backdrop.tabIndex = 0;
+      }
+      if (animateOpen) {
+        // Dwa razy rAF: paint w stanie zamkniętym, potem --open → slide-in.
+        requestAnimationFrame(function () {
+          requestAnimationFrame(applyOpen);
+        });
+      } else {
+        applyOpen();
+      }
     });
   }
 
@@ -1308,80 +1462,44 @@
     };
   }
 
-  function renderBookingConfirmLayer(draft) {
-    const p = draft && draft.slug ? getProviderBySlug(draft.slug) : null;
+  function renderBookingConfirmBar(draft) {
+    const hasServices = !!(draft && draft.serviceIds && draft.serviceIds.length);
+    if (!hasServices) return "";
+    const p = draft.slug ? getProviderBySlug(draft.slug) : null;
     const totals = p ? draftTotals(p) : { count: 0 };
     const cta = bookingConfirmCTA(p, draft, totals);
     return `
-          ${renderBookingConfirmSummary(p, totals, draft)}
-          <button type="button" class="bottom-nav__book" data-action="${cta.action}"${cta.slugAttr}${cta.enabled ? "" : " disabled"}>${cta.label}</button>
-          <button type="button" class="bottom-nav__clear" data-action="cancel-booking-selection" aria-label="Anuluj wybór usług">
-            <span class="bottom-nav__icon bottom-nav__icon--close" aria-hidden="true"></span>
-          </button>`;
+      <div class="booking-confirm-bar" data-role="booking-confirm-bar">
+        ${renderBookingConfirmSummary(p, totals, draft)}
+        <button type="button" class="bottom-nav__book" data-action="${cta.action}"${cta.slugAttr}${cta.enabled ? "" : " disabled"}>${cta.label}</button>
+      </div>`;
   }
 
   function updateBookingBottomNav(nav, draft) {
     if (!nav) return;
+    const screen = nav.closest(".app-screen--booking");
     const hasServices = !!(draft && draft.serviceIds && draft.serviceIds.length);
-    const hasSlot = !!(draft && draft.slotId);
     const p = draft && draft.slug ? getProviderBySlug(draft.slug) : null;
     const totals = p ? draftTotals(p) : null;
-    nav.classList.toggle("bottom-nav--confirm-visible", hasServices);
-    nav.setAttribute("aria-label", hasServices ? "Potwierdź rezerwację" : "Menu klienta");
 
-    const menuLayer = nav.querySelector(".bottom-nav__layer--menu");
-    const confirmLayer = nav.querySelector(".bottom-nav__layer--confirm");
-    if (menuLayer) menuLayer.setAttribute("aria-hidden", hasServices ? "true" : "false");
-    if (confirmLayer) confirmLayer.setAttribute("aria-hidden", hasServices ? "false" : "true");
-
-    if (confirmLayer && hasServices && p && totals) {
-      const summary = confirmLayer.querySelector(".bottom-nav__summary");
-      if (summary) {
-        const durEl = summary.querySelector(".bottom-nav__summary-dur");
-        const priceEl = summary.querySelector(".bottom-nav__summary-price");
-        if (durEl) durEl.textContent = formatDuration(totals.duration);
-        if (priceEl) priceEl.textContent = totals.hasNullPrice ? "wycena indyw." : formatPrice(totals.price);
-      } else {
-        const bookBtn = confirmLayer.querySelector(".bottom-nav__book");
-        if (bookBtn) bookBtn.insertAdjacentHTML("beforebegin", renderBookingConfirmSummary(p, totals, draft));
-      }
-    } else if (confirmLayer) {
-      const summary = confirmLayer.querySelector(".bottom-nav__summary");
-      if (summary) summary.remove();
+    let bar = screen && screen.querySelector('[data-role="booking-confirm-bar"]');
+    if (hasServices && p && totals) {
+      const html = renderBookingConfirmBar(draft);
+      if (bar) bar.outerHTML = html;
+      else nav.insertAdjacentHTML("beforebegin", html);
+      bar = screen.querySelector('[data-role="booking-confirm-bar"]');
+    } else if (bar) {
+      bar.remove();
     }
 
-    const bookBtn = nav.querySelector(".bottom-nav__book");
-    if (bookBtn && p && totals) {
-      const cta = bookingConfirmCTA(p, draft, totals);
-      bookBtn.setAttribute("data-action", cta.action);
-      if (cta.slugAttr) {
-        const slugMatch = cta.slugAttr.match(/data-slug="([^"]+)"/);
-        if (slugMatch) bookBtn.setAttribute("data-slug", slugMatch[1]);
-        else bookBtn.removeAttribute("data-slug");
-      } else {
-        bookBtn.removeAttribute("data-slug");
-      }
-      bookBtn.textContent = cta.label;
-      if (cta.enabled) bookBtn.removeAttribute("disabled");
-      else bookBtn.setAttribute("disabled", "");
-    } else if (bookBtn) {
-      if (hasSlot) bookBtn.removeAttribute("disabled");
-      else bookBtn.setAttribute("disabled", "");
-    }
-
-    if (!hasServices) syncBottomNavIndicators(null);
+    syncBottomNavIndicators(null);
   }
 
   function bookingBottomNav(draft) {
-    const hasServices = !!(draft && draft.serviceIds && draft.serviceIds.length);
     return `
-      <nav class="bottom-nav bottom-nav--booking bottom-nav--booking-dual bottom-nav--with-back${hasServices ? " bottom-nav--confirm-visible" : ""}" aria-label="${hasServices ? "Potwierdź rezerwację" : "Menu klienta"}">
-        <div class="bottom-nav__layer bottom-nav__layer--menu"${hasServices ? ' aria-hidden="true"' : ""}>
-          ${renderBottomNavMenuLayer("search", { backOnSearch: true })}
-        </div>
-        <div class="bottom-nav__layer bottom-nav__layer--confirm"${hasServices ? "" : ' aria-hidden="true"'}>
-          ${hasServices ? renderBookingConfirmLayer(draft) : renderBookingConfirmLayer({ slotId: null })}
-        </div>
+      ${renderBookingConfirmBar(draft)}
+      <nav class="bottom-nav bottom-nav--booking bottom-nav--with-back" aria-label="Menu klienta">
+        ${renderBottomNavMenuLayer("search", { backOnSearch: true })}
       </nav>`;
   }
 
@@ -1399,6 +1517,10 @@
       });
       if (!indicator || activeIndex === -1) return;
 
+      // Ukryte menu (desktop / display:none) — nie mierz, zostaw w spokoju.
+      const navRect = nav.getBoundingClientRect();
+      if (navRect.width < 1 || getComputedStyle(nav).display === "none") return;
+
       const prevIndex = prevTab
         ? items.findIndex(function (item) {
             return item.getAttribute("data-screen") === prevTab;
@@ -1407,17 +1529,23 @@
 
       const indicatorSize = 44;
 
+      // Pozycja względem nav (padding edge), nie offsetLeft — przy flex/width:0
+      // offsetWidth bywa 0 i wychodzi translateX(-22px) poza lewą krawędź.
       function indicatorLeft(item) {
+        const itemRect = item.getBoundingClientRect();
+        if (itemRect.width < 1) return null;
         indicator.style.width = indicatorSize + "px";
         indicator.style.height = indicatorSize + "px";
-        return item.offsetLeft + (item.offsetWidth - indicatorSize) / 2;
+        return itemRect.left - navRect.left - nav.clientLeft + (itemRect.width - indicatorSize) / 2;
       }
 
       const fromItem = items[prevIndex >= 0 ? prevIndex : activeIndex];
       const toItem = items[activeIndex];
       const fromLeft = indicatorLeft(fromItem);
       const toLeft = indicatorLeft(toItem);
-      const shouldAnimate = prevTab && prevIndex >= 0 && prevIndex !== activeIndex;
+      if (toLeft == null) return;
+      const shouldAnimate =
+        prevTab && prevIndex >= 0 && prevIndex !== activeIndex && fromLeft != null;
 
       indicator.style.transition = "none";
       indicator.style.transform = "translateX(" + (shouldAnimate ? fromLeft : toLeft) + "px)";
@@ -1469,11 +1597,96 @@
       </div>`;
   }
 
-  function renderSearch() {
+  function searchFiltersActive() {
+    return (
+      !!(window.AppState.searchSubcategory || "") ||
+      !!(window.AppState.searchFilterDates || []).length ||
+      !!(window.AppState.searchFilterPeriods || []).length
+    );
+  }
+
+  function renderSearchExtraFilters() {
     const cat = window.AppState.searchCategory || "";
     const sub = window.AppState.searchSubcategory || "";
+    const open = !!window.AppState.searchFiltersOpen;
+    const selectedDates = window.AppState.searchFilterDates || [];
+    const selectedPeriods = window.AppState.searchFilterPeriods || [];
+
+    const subs = cat
+      ? subcategoriesFor(cat)
+      : (data().CATEGORIES || []).reduce(function (acc, c) {
+          (c.subcategories || []).forEach(function (s) {
+            if (!acc.some(function (x) { return x.id === s.id; })) acc.push(s);
+          });
+          return acc;
+        }, []);
+
+    const subRow = subs.length
+      ? `
+        <div class="search-filters__section">
+          <div class="filter-scroll filter-scroll--sub" data-filter-scroll>
+            <div class="filter-scroll__track subcategory-chips">
+              <button type="button" class="subcategory-chip${sub === "" ? " subcategory-chip--active" : ""}"
+                data-action="filter-subcategory" data-subcategory="">Wszystkie</button>
+              ${subs
+                .map(function (s) {
+                  return `
+              <button type="button" class="subcategory-chip${sub === s.id ? " subcategory-chip--active" : ""}"
+                data-action="filter-subcategory" data-subcategory="${escapeHtml(s.id)}">${escapeHtml(s.label)}</button>`;
+                })
+                .join("")}
+            </div>
+          </div>
+        </div>`
+      : `
+        <div class="search-filters__section">
+          <p class="search-filters__empty">Wybierz kategorię z podkategoriami (np. Uroda).</p>
+        </div>`;
+
+    const dateChips = searchFilterDateOptions()
+      .map(function (dateISO) {
+        const dt = new Date(dateISO + "T12:00:00");
+        const on = selectedDates.indexOf(dateISO) !== -1;
+        return `
+          <button type="button" class="date-chip${on ? " date-chip--active" : ""}"
+            data-action="toggle-filter-date" data-date="${escapeHtml(dateISO)}" aria-pressed="${on ? "true" : "false"}">
+            <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span>
+            <span class="date-chip__day">${dt.getDate()}</span>
+          </button>`;
+      })
+      .join("");
+
+    const periodChips = SEARCH_PERIODS.map(function (period) {
+      const on = selectedPeriods.indexOf(period.id) !== -1;
+      return `
+        <button type="button" class="period-chip${on ? " period-chip--active" : ""}"
+          data-action="toggle-filter-period" data-period="${escapeHtml(period.id)}" aria-pressed="${on ? "true" : "false"}">
+          ${escapeHtml(period.label)}
+        </button>`;
+    }).join("");
+
+    return `
+      <div class="search-filters${open ? " search-filters--open" : ""}" id="search-filters-panel" data-role="search-filters"${open ? "" : " hidden"}>
+        ${subRow}
+        <div class="search-filters__section">
+          <p class="search-filters__label">Dzień</p>
+          <div class="filter-scroll filter-scroll--dates" data-filter-scroll>
+            <div class="filter-scroll__track date-strip date-strip--filters">${dateChips}</div>
+          </div>
+        </div>
+        <div class="search-filters__section">
+          <p class="search-filters__label">Pora dnia</p>
+          <div class="period-chips">${periodChips}</div>
+        </div>
+      </div>`;
+  }
+
+  function renderSearch() {
+    const cat = window.AppState.searchCategory || "";
     const providers = filterProviders();
     const openSlug = window.AppState.searchOpenSlug;
+    const filtersOpen = !!window.AppState.searchFiltersOpen;
+    const filtersOn = searchFiltersActive();
 
     const chips = (data().CATEGORIES || [])
       .map(
@@ -1488,24 +1701,6 @@
               data-action="filter-category" data-category="">Wszystkie</button>
             ${chips}`;
 
-    const subs = subcategoriesFor(cat);
-    const subChips = subs.length
-      ? `
-          <div class="filter-scroll filter-scroll--sub" data-filter-scroll>
-            <div class="filter-scroll__track subcategory-chips">
-              <button type="button" class="subcategory-chip${sub === "" ? " subcategory-chip--active" : ""}"
-                data-action="filter-subcategory" data-subcategory="">Wszystkie</button>
-              ${subs
-                .map(
-                  (s) => `
-              <button type="button" class="subcategory-chip${sub === s.id ? " subcategory-chip--active" : ""}"
-                data-action="filter-subcategory" data-subcategory="${escapeHtml(s.id)}">${escapeHtml(s.label)}</button>`
-                )
-                .join("")}
-            </div>
-          </div>`
-      : "";
-
     return `
       <div class="app-screen app-screen--client">
         <div class="app-scroll">
@@ -1518,12 +1713,13 @@
               <div class="filter-scroll filter-scroll--main" data-filter-scroll>
                 <div class="filter-scroll__track category-chips">${mainChipsHtml}</div>
               </div>
-              <button type="button" class="filter-toggle" aria-label="Filtry">
-                <span class="filter-toggle__label">Filtry</span>
+              <button type="button" class="filter-toggle${filtersOpen ? " filter-toggle--open" : ""}${filtersOn ? " filter-toggle--active" : ""}"
+                data-action="toggle-search-filters" aria-label="Filtry" title="Filtry"
+                aria-expanded="${filtersOpen ? "true" : "false"}" aria-controls="search-filters-panel">
                 <span class="filter-toggle__icon" aria-hidden="true"></span>
               </button>
             </div>
-            ${subChips}
+            ${renderSearchExtraFilters()}
           </div>
           <div class="provider-list">
             ${providers.length ? providers.map(function (p) { return renderProviderListItem(p, p.slug === openSlug); }).join("") : `<p class="empty-note">Brak wyników dla wybranych filtrów.</p>`}
@@ -1937,8 +2133,11 @@
             </div>
 
             <div class="booking__schedule" data-role="booking-mobile-schedule">
-              <h3 class="booking__label booking__label--caps">Dzień</h3>
-              <div class="date-strip">${renderDateStripHtml(ctx.availDates, ctx.activeDate)}</div>
+              <div class="booking__label-row">
+                <h3 class="booking__label booking__label--caps">Wybierz datę</h3>
+                <span class="booking__month" data-role="booking-mobile-month">${escapeHtml(monthLabelFromISO(ctx.activeDate || ctx.availDates[0]))}</span>
+              </div>
+              <div class="date-strip" data-role="booking-date-strip">${renderDateStripHtml(ctx.availDates, ctx.activeDate)}</div>
 
               <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>Wolne terminy</h3>
               <div class="time-list time-list--horizontal" data-role="booking-mobile-times"${ctx.activeDate ? "" : " hidden"}>${ctx.activeDate ? ctx.timeListMobile || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>` : ""}</div>
@@ -2581,7 +2780,11 @@
     INSTANCES.forEach(render);
     renderFullscreen();
     syncAppMenus();
-    syncBottomNavIndicators(prevBottomNavTab);
+    // Po layoutcie — inaczej przy flex itemach szerokość bywa jeszcze 0.
+    requestAnimationFrame(function () {
+      syncBottomNavIndicators(prevBottomNavTab);
+    });
+    document.querySelectorAll('[data-role="booking-date-strip"]').forEach(updateBookingMonthLabel);
   }
 
   // Poziome przewijanie wierszy filtrów — delegacja (przetrwa re-render).
@@ -3496,6 +3699,38 @@
         saveState();
         renderAll();
         break;
+      case "toggle-search-filters":
+        window.AppState.searchFiltersOpen = !window.AppState.searchFiltersOpen;
+        saveState();
+        renderAll();
+        break;
+      case "toggle-filter-date":
+        {
+          const dateISO = d.date || "";
+          if (!dateISO) break;
+          const dates = (window.AppState.searchFilterDates || []).slice();
+          const idx = dates.indexOf(dateISO);
+          if (idx === -1) dates.push(dateISO);
+          else dates.splice(idx, 1);
+          dates.sort();
+          window.AppState.searchFilterDates = dates;
+          saveState();
+          renderAll();
+        }
+        break;
+      case "toggle-filter-period":
+        {
+          const period = d.period || "";
+          if (period !== "morning" && period !== "afternoon" && period !== "evening") break;
+          const periods = (window.AppState.searchFilterPeriods || []).slice();
+          const idx = periods.indexOf(period);
+          if (idx === -1) periods.push(period);
+          else periods.splice(idx, 1);
+          window.AppState.searchFilterPeriods = periods;
+          saveState();
+          renderAll();
+        }
+        break;
       case "clear-location":
         window.AppState.searchUseCurrentLocation = true;
         window.AppState.searchLocation = "";
@@ -3542,6 +3777,18 @@
     saveState();
     updateProviderLists();
   });
+
+  document.addEventListener(
+    "scroll",
+    function (event) {
+      const strip =
+        event.target && event.target.closest
+          ? event.target.closest('[data-role="booking-date-strip"]')
+          : null;
+      if (strip) updateBookingMonthLabel(strip);
+    },
+    true
+  );
 
   document.addEventListener("DOMContentLoaded", function () {
     bindFilterScroll();
