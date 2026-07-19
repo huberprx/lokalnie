@@ -79,6 +79,7 @@
       availListOnlySet: true,
       availEditDate: null,
       availEditDraft: null,
+      availEditDrafts: {},
       appMenuOpen: false,
       clientAvatarUrl: null,
     };
@@ -1221,6 +1222,10 @@
           stored.availEditDraft && typeof stored.availEditDraft === "object"
             ? stored.availEditDraft
             : base.availEditDraft,
+        availEditDrafts:
+          stored.availEditDrafts && typeof stored.availEditDrafts === "object"
+            ? stored.availEditDrafts
+            : base.availEditDrafts,
         appMenuOpen: !!stored.appMenuOpen,
         clientAvatarUrl: typeof stored.clientAvatarUrl === "string" ? stored.clientAvatarUrl : base.clientAvatarUrl,
       };
@@ -3059,49 +3064,111 @@
     if (iso) window.AppState.availWeekStart = mondayISOFrom(iso);
   }
 
+  const AVAIL_REPEAT_OPTIONS = [
+    { id: "none", label: "Nie powtarzaj" },
+    { id: "daily", label: "Codziennie" },
+    { id: "weekly", label: "Co tydzień" },
+    { id: "biweekly", label: "Co drugi tydzień" },
+  ];
+
+  function normalizeAvailRepeat(block) {
+    if (!block) return "none";
+    const id = block.repeat;
+    if (id === "none" || id === "daily" || id === "weekly" || id === "biweekly") return id;
+    return block.recurring ? "weekly" : "none";
+  }
+
+  function availRepeatLabel(repeatId) {
+    const opt = AVAIL_REPEAT_OPTIONS.find(function (o) {
+      return o.id === repeatId;
+    });
+    return opt ? opt.label : "Nie powtarzaj";
+  }
+
   function defaultAvailBlock(p) {
     const locId = p && p.locations && p.locations[0] ? p.locations[0].id : "";
-    return { from: "09:00", to: "17:00", locationId: locId, recurring: true };
+    return {
+      from: "09:00",
+      to: "17:00",
+      locationId: locId,
+      repeat: "weekly",
+      recurring: true,
+    };
   }
 
-  function toggleAvailDayEdit(dateISO) {
-    if (!dateISO) return;
+  function buildAvailDraftFromProvider(p, dateISO) {
+    const day = (p.availability || []).find(function (d) {
+      return d.dateISO === dateISO;
+    });
+    const blocks = (day && day.blocks ? day.blocks : []).map(function (b) {
+      const repeat = normalizeAvailRepeat(b);
+      return {
+        from: b.from || "09:00",
+        to: b.to || "17:00",
+        locationId: b.locationId || defaultAvailBlock(p).locationId,
+        repeat: repeat,
+        recurring: repeat !== "none",
+      };
+    });
+    if (!blocks.length) blocks.push(defaultAvailBlock(p));
+    return { dateISO: dateISO, blocks: blocks };
+  }
+
+  function ensureAvailDraft(dateISO) {
+    if (!dateISO) return null;
     const p = myProvider();
-    if (!p) return;
-    if (window.AppState.availEditDate === dateISO) {
-      window.AppState.availEditDate = null;
-      window.AppState.availEditDraft = null;
-    } else {
-      const day = (p.availability || []).find(function (d) {
-        return d.dateISO === dateISO;
-      });
-      const blocks = (day && day.blocks ? day.blocks : []).map(function (b) {
-        return {
-          from: b.from || "09:00",
-          to: b.to || "17:00",
-          locationId: b.locationId || defaultAvailBlock(p).locationId,
-          recurring: !!b.recurring,
-        };
-      });
-      if (!blocks.length) blocks.push(defaultAvailBlock(p));
-      window.AppState.availEditDate = dateISO;
-      window.AppState.availEditDraft = { dateISO: dateISO, blocks: blocks };
+    if (!p) return null;
+    if (!window.AppState.availEditDrafts || typeof window.AppState.availEditDrafts !== "object") {
+      window.AppState.availEditDrafts = {};
     }
-    saveState();
-    renderAll();
+    if (!window.AppState.availEditDrafts[dateISO]) {
+      window.AppState.availEditDrafts[dateISO] = buildAvailDraftFromProvider(p, dateISO);
+    }
+    window.AppState.availEditDate = dateISO;
+    window.AppState.availEditDraft = window.AppState.availEditDrafts[dateISO];
+    return window.AppState.availEditDrafts[dateISO];
   }
 
-  function addAvailEditBlock() {
-    const draft = window.AppState.availEditDraft;
+  function syncAvailDraftFromForm(dateISO) {
+    const draft = ensureAvailDraft(dateISO);
+    if (!draft) return null;
+    const form = document.querySelector('[data-role="avail-edit-form"][data-date="' + dateISO + '"]');
+    if (!form) return draft;
+    const rows = form.querySelectorAll("[data-avail-block]");
+    const blocks = [];
+    rows.forEach(function (row) {
+      const fromEl = row.querySelector('[name="from"]');
+      const toEl = row.querySelector('[name="to"]');
+      const locEl = row.querySelector('[name="locationId"]');
+      const repeatEl = row.querySelector('[name="repeat"]');
+      const from = fromEl ? fromEl.value : draft.blocks[blocks.length] && draft.blocks[blocks.length].from;
+      const to = toEl ? toEl.value : draft.blocks[blocks.length] && draft.blocks[blocks.length].to;
+      if (!from || !to) return;
+      const repeat = normalizeAvailRepeat({ repeat: repeatEl ? repeatEl.value : "none" });
+      blocks.push({
+        from: from,
+        to: to,
+        locationId: locEl ? locEl.value : defaultAvailBlock(myProvider()).locationId,
+        repeat: repeat,
+        recurring: repeat !== "none",
+      });
+    });
+    if (blocks.length) draft.blocks = blocks;
+    return draft;
+  }
+
+  function addAvailEditBlock(dateISO) {
     const p = myProvider();
-    if (!draft || !p) return;
+    if (!p || !dateISO) return;
+    const draft = syncAvailDraftFromForm(dateISO) || ensureAvailDraft(dateISO);
+    if (!draft) return;
     draft.blocks.push(defaultAvailBlock(p));
     saveState();
     renderAll();
   }
 
-  function removeAvailEditBlock(index) {
-    const draft = window.AppState.availEditDraft;
+  function removeAvailEditBlock(dateISO, index) {
+    const draft = syncAvailDraftFromForm(dateISO) || ensureAvailDraft(dateISO);
     if (!draft || !draft.blocks) return;
     const i = Number(index);
     if (isNaN(i) || i < 0 || i >= draft.blocks.length) return;
@@ -3113,8 +3180,8 @@
 
   function saveAvailDayEdit(dateISO) {
     const p = myProvider();
-    const draft = window.AppState.availEditDraft;
-    if (!p || !draft || draft.dateISO !== dateISO) return;
+    if (!p || !dateISO) return;
+    ensureAvailDraft(dateISO);
 
     const form = document.querySelector('[data-role="avail-edit-form"][data-date="' + dateISO + '"]');
     if (!form) return;
@@ -3125,17 +3192,19 @@
       const fromEl = row.querySelector('[name="from"]');
       const toEl = row.querySelector('[name="to"]');
       const locEl = row.querySelector('[name="locationId"]');
-      const recEl = row.querySelector('[name="recurring"]');
+      const repeatEl = row.querySelector('[name="repeat"]');
       const from = fromEl ? fromEl.value : "";
       const to = toEl ? toEl.value : "";
       if (!from || !to) return;
       if (timeToMinutes(from) >= timeToMinutes(to)) return;
+      const repeat = normalizeAvailRepeat({ repeat: repeatEl ? repeatEl.value : "none" });
       blocks.push({
         id: "blk-" + p.id + "-" + dateISO + "-" + idx,
         from: from,
         to: to,
         locationId: locEl ? locEl.value : defaultAvailBlock(p).locationId,
-        recurring: !!(recEl && recEl.checked),
+        repeat: repeat,
+        recurring: repeat !== "none",
       });
     });
 
@@ -3154,8 +3223,13 @@
       });
     }
 
-    window.AppState.availEditDate = null;
-    window.AppState.availEditDraft = null;
+    if (window.AppState.availEditDrafts) {
+      window.AppState.availEditDrafts[dateISO] = buildAvailDraftFromProvider(p, dateISO);
+    }
+    window.AppState.availEditDraft = window.AppState.availEditDrafts
+      ? window.AppState.availEditDrafts[dateISO]
+      : null;
+    window.AppState.availEditDate = dateISO;
     saveState();
     renderAll();
     showToast(blocks.length ? "Dostępność zapisana." : "Dzień oznaczony jako zamknięty.");
@@ -3167,8 +3241,13 @@
     p.availability = p.availability.filter(function (d) {
       return d.dateISO !== dateISO;
     });
-    window.AppState.availEditDate = null;
-    window.AppState.availEditDraft = null;
+    if (window.AppState.availEditDrafts) {
+      window.AppState.availEditDrafts[dateISO] = buildAvailDraftFromProvider(p, dateISO);
+    }
+    window.AppState.availEditDraft = window.AppState.availEditDrafts
+      ? window.AppState.availEditDrafts[dateISO]
+      : null;
+    window.AppState.availEditDate = dateISO;
     saveState();
     renderAll();
     showToast("Usunięto dostępność w tym dniu.");
@@ -3188,38 +3267,76 @@
             return `<option value="${escapeHtml(l.id)}"${l.id === b.locationId ? " selected" : ""}>${escapeHtml(l.label)}</option>`;
           })
           .join("");
+        const locTone = locationToneClass(p, b.locationId);
         return `
         <div class="avail-edit__row" data-avail-block data-index="${i}">
-          <div class="avail-edit__times">
-            <label class="avail-edit__field">
-              <span>Od</span>
-              <input type="time" name="from" value="${escapeHtml(b.from)}" required />
+          <div class="avail-edit__group avail-edit__group--times">
+            <span class="avail-edit__clock" aria-hidden="true"></span>
+            <label class="avail-edit__line">
+              <span class="avail-edit__key">Od</span>
+              <span class="avail-edit__val">
+                <input class="avail-edit__pill" type="time" name="from" value="${escapeHtml(b.from)}" required step="300" />
+              </span>
             </label>
-            <label class="avail-edit__field">
-              <span>Do</span>
-              <input type="time" name="to" value="${escapeHtml(b.to)}" required />
+            <label class="avail-edit__line">
+              <span class="avail-edit__key">Do</span>
+              <span class="avail-edit__val">
+                <input class="avail-edit__pill" type="time" name="to" value="${escapeHtml(b.to)}" required step="300" />
+              </span>
             </label>
           </div>
-          <label class="avail-edit__field avail-edit__field--grow">
-            <span>Miejsce</span>
-            <select name="locationId">${opts || locOptions || '<option value="">—</option>'}</select>
-          </label>
-          <label class="avail-edit__check">
-            <input type="checkbox" name="recurring"${b.recurring ? " checked" : ""} />
-            <span>Powtarzalne</span>
-          </label>
-          <button type="button" class="avail-edit__remove" data-action="remove-avail-block" data-index="${i}" aria-label="Usuń blok">×</button>
+          <div class="avail-edit__group">
+            <label class="avail-edit__line">
+              <span class="avail-edit__pin" aria-hidden="true"></span>
+              <span class="avail-edit__key">Miejsce</span>
+              <span class="avail-edit__val avail-edit__val--menu avail-edit__val--loc">
+                <span class="avail-edit__loc-dot ${locTone}" data-role="avail-loc-dot" aria-hidden="true"></span>
+                <select name="locationId">${opts || locOptions || '<option value="">—</option>'}</select>
+              </span>
+            </label>
+            <label class="avail-edit__line">
+              <span class="avail-edit__repeat-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 12a9 9 0 0 0-15.4-6.4" />
+                  <path d="M3 4.5v5h5" />
+                  <path d="M3 12a9 9 0 0 0 15.4 6.4" />
+                  <path d="M21 19.5v-5h-5" />
+                </svg>
+              </span>
+              <span class="avail-edit__key">Powtarzaj</span>
+              <span class="avail-edit__val avail-edit__val--menu">
+                <select name="repeat">
+                  ${AVAIL_REPEAT_OPTIONS.map(function (opt) {
+                    const selected = normalizeAvailRepeat(b) === opt.id ? " selected" : "";
+                    return `<option value="${escapeHtml(opt.id)}"${selected}>${escapeHtml(opt.label)}</option>`;
+                  }).join("")}
+                </select>
+              </span>
+            </label>
+          </div>
+          ${
+            i === (draft.blocks || []).length - 1
+              ? ""
+              : `<button type="button" class="avail-edit__remove" data-action="remove-avail-block" data-date="${escapeHtml(
+                  dateISO
+                )}" data-index="${i}" aria-label="Usuń blok">Usuń blok</button>`
+          }
         </div>`;
       })
       .join("");
 
+    const lastIdx = Math.max(0, (draft.blocks || []).length - 1);
+
     return `
       <form class="avail-edit" data-role="avail-edit-form" data-date="${escapeHtml(dateISO)}" data-action-submit="save-avail-day">
-        <p class="avail-edit__hint">Ustaw godziny pracy w tym dniu.</p>
         ${rows}
-        <div class="avail-edit__actions">
-          <button type="button" class="btn btn--ghost avail-edit__btn" data-action="add-avail-block">+ Blok godzin</button>
-          <button type="button" class="btn btn--ghost avail-edit__btn avail-edit__btn--danger" data-action="clear-avail-day" data-date="${escapeHtml(dateISO)}">Zamknij dzień</button>
+        <div class="avail-edit__actions avail-edit__actions--bar">
+          <button type="button" class="btn btn--ghost avail-edit__btn avail-edit__btn--add" data-action="add-avail-block" data-date="${escapeHtml(
+            dateISO
+          )}">+ Blok</button>
+          <button type="button" class="avail-edit__remove avail-edit__remove--inline" data-action="remove-avail-block" data-date="${escapeHtml(
+            dateISO
+          )}" data-index="${lastIdx}" aria-label="Usuń blok">Usuń</button>
           <button type="button" class="btn btn--primary avail-edit__btn avail-edit__btn--save" data-action="save-avail-day" data-date="${escapeHtml(dateISO)}">Zapisz</button>
         </div>
       </form>`;
@@ -3238,15 +3355,12 @@
     const monthLabel = monthLabelFromISO(weekDates[0] || stripDates[0]);
     // Indeks jak w Date#getDay(): 0=Nd … 6=Sb
     const AVAIL_DOW = ["Nd", "Pn", "Wt", "Śr", "Cz", "Pt", "Sb"];
-    const editDate = window.AppState.availEditDate || null;
-    const editDraft = window.AppState.availEditDraft;
 
     const weekCols = stripDates
       .map(function (dateISO) {
         const dt = new Date(dateISO + "T12:00:00");
         const blocks = availByDate[dateISO] || [];
-        const red = isRedCalendarDay(dateISO);
-        const hol = isHoliday(dateISO);
+        const sunday = isSunday(dateISO);
         const has = blocks.length > 0;
         const monthStart = dt.getDate() === 1;
         const body = has
@@ -3255,9 +3369,7 @@
                 const tone = locationToneClass(p, b.locationId);
                 return `
               <div class="avail-week__slot ${tone}">
-                <span class="avail-week__slot-label">od</span>
                 <span class="avail-week__slot-time">${escapeHtml(b.from)}</span>
-                <span class="avail-week__slot-label">do</span>
                 <span class="avail-week__slot-time">${escapeHtml(b.to)}</span>
               </div>`;
               })
@@ -3266,12 +3378,11 @@
         const cardTone =
           has && blocks.length === 1 ? " " + locationToneClass(p, blocks[0].locationId) : has ? " avail-week__card--mixed" : "";
         return `
-        <div class="avail-week__col${has ? " avail-week__col--open" : " avail-week__col--closed"}${red ? " avail-week__col--sunday" : ""}${monthStart ? " avail-week__col--month-start" : ""}" data-date="${escapeHtml(dateISO)}">
-          <span class="avail-week__dow${red ? " avail-week__dow--red" : ""}">${AVAIL_DOW[dt.getDay()]}</span>
-          <span class="avail-week__day${red ? " avail-week__day--red" : ""}">${dt.getDate()}</span>
+        <div class="avail-week__col${has ? " avail-week__col--open" : " avail-week__col--closed"}${sunday ? " avail-week__col--sunday" : ""}${monthStart ? " avail-week__col--month-start" : ""}" data-date="${escapeHtml(dateISO)}">
+          <span class="avail-week__dow${sunday ? " avail-week__dow--red" : ""}">${AVAIL_DOW[dt.getDay()]}</span>
+          <span class="avail-week__day${sunday ? " avail-week__day--red" : ""}">${dt.getDate()}</span>
           <div class="avail-week__card${cardTone}" aria-label="${has ? "Dostępność" : "Brak dostępności"}">
             ${body}
-            ${hol ? `<span class="avail-week__hol">święto</span>` : ""}
           </div>
         </div>`;
       })
@@ -3281,7 +3392,7 @@
     // „Ustawione” = wszystkie terminy z paska (kilka miesięcy); „Wszystkie” = bieżący tydzień.
     const listDates = onlySet
       ? stripDates.filter(function (dateISO) {
-          return (availByDate[dateISO] || []).length > 0 || dateISO === editDate;
+          return (availByDate[dateISO] || []).length > 0;
         })
       : weekDates;
 
@@ -3291,52 +3402,17 @@
       .map(function (dateISO) {
         const dt = new Date(dateISO + "T12:00:00");
         const blocks = availByDate[dateISO] || [];
-        const red = isRedCalendarDay(dateISO);
-        const hol = isHoliday(dateISO);
-        const expanded = editDate === dateISO && editDraft && editDraft.dateISO === dateISO;
+        const red = isSunday(dateISO);
         const has = blocks.length > 0;
-        const hoursHtml = has
-          ? blocks
-              .map(function (b) {
-                const tone = locationToneClass(p, b.locationId);
-                return `
-                <div class="avail-day__hours-block ${tone}">
-                  <span class="avail-day__hours-row"><span class="avail-day__hours-label">od</span> ${escapeHtml(b.from)}</span>
-                  <span class="avail-day__hours-row"><span class="avail-day__hours-label">do</span> ${escapeHtml(b.to)}</span>
-                </div>`;
-              })
-              .join("")
-          : "";
-        const blockHtml = has
-          ? blocks
-              .map(function (b) {
-                const tone = locationToneClass(p, b.locationId);
-                return `<span class="avail-block ${tone}">${escapeHtml(locationLabel(p, b.locationId))}${b.recurring ? " ↻" : ""}</span>`;
-              })
-              .join("")
-          : "";
+        const draft = ensureAvailDraft(dateISO);
         return `
-        <div class="avail-day-group${has ? "" : " avail-day-group--closed"}${red ? " avail-day-group--holiday" : ""}">
+        <div class="avail-day-group${has ? "" : " avail-day-group--closed"}">
           <div class="avail-day__sep">
-            <span class="avail-day__date${red ? " avail-day__date--red" : ""}">${AVAIL_DOW_PRINT[dt.getDay()]} ${dt.getDate()} ${MONTHS[dt.getMonth()]}</span>
+            <span class="avail-day__dow${red ? " avail-day__dow--red" : ""}">${AVAIL_DOW_PRINT[dt.getDay()]}</span>
+            <span class="avail-day__date${red ? " avail-day__date--red" : ""}">${dt.getDate()} ${MONTHS[dt.getMonth()]}</span>
           </div>
-          <div class="avail-day${has ? "" : " avail-day--closed"}${expanded ? " avail-day--editing" : ""}">
-            <button type="button" class="avail-day__summary" data-action="toggle-avail-day" data-date="${escapeHtml(dateISO)}" aria-expanded="${expanded ? "true" : "false"}">
-              <div class="avail-day__head">
-                <div class="avail-day__main">
-                  ${
-                    has
-                      ? `<div class="avail-day__hours">${hoursHtml}</div>`
-                      : hol
-                        ? `<span class="avail-day__holiday">święto</span>`
-                        : `<span class="avail-day__off">zamknięte</span>`
-                  }
-                </div>
-                <span class="avail-day__chevron" aria-hidden="true"></span>
-              </div>
-              ${has ? `<div class="avail-day__blocks">${blockHtml}</div>` : ""}
-            </button>
-            ${expanded ? renderAvailDayEditor(p, dateISO, editDraft) : ""}
+          <div class="avail-day avail-day--editing${has ? "" : " avail-day--closed"}">
+            ${draft ? renderAvailDayEditor(p, dateISO, draft) : ""}
           </div>
         </div>`;
       })
@@ -4367,17 +4443,13 @@
         saveState();
         renderAll();
         break;
-      case "toggle-avail-day":
-        event.preventDefault();
-        toggleAvailDayEdit(d.date);
-        break;
       case "add-avail-block":
         event.preventDefault();
-        addAvailEditBlock();
+        addAvailEditBlock(d.date);
         break;
       case "remove-avail-block":
         event.preventDefault();
-        removeAvailEditBlock(d.index);
+        removeAvailEditBlock(d.date, d.index);
         break;
       case "save-avail-day":
         event.preventDefault();
@@ -4504,10 +4576,32 @@
 
   document.addEventListener("change", function (event) {
     const radiusSel = event.target.closest('[data-role="search-radius"]');
-    if (!radiusSel) return;
-    window.AppState.searchRadiusKm = Number(radiusSel.value) || 15;
-    saveState();
-    updateProviderLists();
+    if (radiusSel) {
+      window.AppState.searchRadiusKm = Number(radiusSel.value) || 15;
+      saveState();
+      updateProviderLists();
+      return;
+    }
+
+    const locSel = event.target.closest('.avail-edit select[name="locationId"]');
+    if (locSel) {
+      const wrap = locSel.closest(".avail-edit__val--loc");
+      const dot = wrap && wrap.querySelector('[data-role="avail-loc-dot"]');
+      if (dot) {
+        const tone = locationToneClass(myProvider(), locSel.value);
+        dot.className = "avail-edit__loc-dot " + tone;
+      }
+      const form = locSel.closest('[data-role="avail-edit-form"]');
+      const dateISO = form && form.getAttribute("data-date");
+      const draft = dateISO ? ensureAvailDraft(dateISO) : null;
+      const row = locSel.closest("[data-avail-block]");
+      if (draft && row) {
+        const idx = Number(row.getAttribute("data-index"));
+        if (!isNaN(idx) && draft.blocks && draft.blocks[idx]) {
+          draft.blocks[idx].locationId = locSel.value;
+        }
+      }
+    }
   });
 
   document.addEventListener(

@@ -28,13 +28,17 @@
       const templates = weekly[dow];
       if (!templates || !templates.length) continue;
       const iso = isoFromDate(d);
-      const blocks = templates.map((t, idx) => ({
-        id: `blk-${providerId}-${iso}-${idx}`,
-        from: t.from,
-        to: t.to,
-        locationId: t.locationId,
-        recurring: !!t.recurring,
-      }));
+      const blocks = templates.map((t, idx) => {
+        const repeat = t.repeat || (t.recurring ? "weekly" : "none");
+        return {
+          id: `blk-${providerId}-${iso}-${idx}`,
+          from: t.from,
+          to: t.to,
+          locationId: t.locationId,
+          repeat: repeat,
+          recurring: repeat !== "none",
+        };
+      });
       out.push({ dateISO: iso, blocks });
     }
     return out;
