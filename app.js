@@ -74,8 +74,11 @@
       searchOpenSlug: null,
       myCalMonth: null,
       myCalDate: null,
+      provCalDate: null,
       availWeekStart: null,
       availStripScrollLeft: null,
+      availListOnlySet: true,
+      availFocusDate: null,
       availEditDate: null,
       availEditDraft: null,
       availEditDrafts: {},
@@ -1211,9 +1214,13 @@
         searchOpenSlug: typeof stored.searchOpenSlug === "string" ? stored.searchOpenSlug : base.searchOpenSlug,
         myCalMonth: typeof stored.myCalMonth === "string" ? stored.myCalMonth : base.myCalMonth,
         myCalDate: typeof stored.myCalDate === "string" ? stored.myCalDate : base.myCalDate,
+        provCalDate: typeof stored.provCalDate === "string" ? stored.provCalDate : base.provCalDate,
         availWeekStart: typeof stored.availWeekStart === "string" ? stored.availWeekStart : base.availWeekStart,
         availStripScrollLeft:
           typeof stored.availStripScrollLeft === "number" ? stored.availStripScrollLeft : base.availStripScrollLeft,
+        availListOnlySet:
+          typeof stored.availListOnlySet === "boolean" ? stored.availListOnlySet : base.availListOnlySet,
+        availFocusDate: typeof stored.availFocusDate === "string" ? stored.availFocusDate : base.availFocusDate,
         availEditDate: typeof stored.availEditDate === "string" ? stored.availEditDate : base.availEditDate,
         availEditDraft:
           stored.availEditDraft && typeof stored.availEditDraft === "object"
@@ -2492,8 +2499,9 @@
     const tabs = [
       { tab: "dashboard", label: "Pulpit", icon: "home" },
       { tab: "requests", label: "Prośby", icon: "requests" },
+      { tab: "calendar", label: "Kalendarz", icon: "calendar" },
       { tab: "services", label: "Usługi", icon: "services" },
-      { tab: "availability", label: "Dostępność", icon: "calendar" },
+      { tab: "availability", label: "Dostępność", icon: "slots" },
       { tab: "settings", label: "Ustawienia", icon: "settings" },
     ];
     return `
@@ -2558,7 +2566,7 @@
           <span class="visit-card__name">${escapeHtml(b.clientName || "Klient")}</span>
           <span class="status-badge" data-status="${escapeHtml(b.status)}">${escapeHtml(STATUS_LABEL[b.status] || b.status)}</span>
         </div>
-        <div class="visit-card__svc">${escapeHtml(b.serviceNames.join(", "))}</div>
+        <div class="visit-card__svc">${escapeHtml((b.serviceNames || []).join(", "))}</div>
         <div class="visit-card__when">${escapeHtml(formatDateLong(b.dateISO))} · ${escapeHtml(b.from)}→${escapeHtml(b.to)}${b.locationLabel ? " · " + escapeHtml(b.locationLabel) : ""}</div>
         ${
           b.status === "confirmed"
@@ -2567,6 +2575,176 @@
                </div>`
             : ""
         }
+      </div>`;
+  }
+
+  function providerVisits() {
+    return (window.AppState.bookings || [])
+      .filter(function (b) {
+        return (
+          b.providerId === MY_PROVIDER_ID &&
+          b.dateISO &&
+          b.from &&
+          b.to &&
+          (b.status === "confirmed" || b.status === "proposed")
+        );
+      })
+      .slice()
+      .sort(function (a, b) {
+        return (a.dateISO + a.from).localeCompare(b.dateISO + b.from);
+      });
+  }
+
+  function ensureProvCalDate() {
+    if (window.AppState.provCalDate) return window.AppState.provCalDate;
+    const today = demoTodayISO();
+    const next = providerVisits().find(function (b) {
+      return b.dateISO >= today;
+    });
+    window.AppState.provCalDate = (next && next.dateISO) || today;
+    return window.AppState.provCalDate;
+  }
+
+  function shiftProvCalDays(delta) {
+    const cur = ensureProvCalDate();
+    const d = new Date(cur + "T12:00:00");
+    d.setDate(d.getDate() + delta);
+    window.AppState.provCalDate =
+      d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+    saveState();
+    renderAll();
+  }
+
+  function pickProvCalDate(dateISO) {
+    if (!dateISO) return;
+    window.AppState.provCalDate = dateISO;
+    saveState();
+    renderAll();
+  }
+
+  function renderProvCalDayStrip(selectedISO, visits) {
+    const DOW = ["Nd", "Pn", "Wt", "Śr", "Cz", "Pt", "Sb"];
+    const today = demoTodayISO();
+    const visitDays = new Set(
+      (visits || []).map(function (b) {
+        return b.dateISO;
+      })
+    );
+    const monday = mondayISOFrom(selectedISO);
+    const start = new Date(monday + "T12:00:00");
+    start.setDate(start.getDate() - 7);
+    let cols = "";
+    for (let i = 0; i < 21; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      const iso = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+      const on = iso === selectedISO;
+      const isToday = iso === today;
+      const red = isSunday(iso);
+      const hasVisit = visitDays.has(iso);
+      cols += `
+        <button type="button" class="prov-cal__chip${on ? " prov-cal__chip--on" : ""}${isToday ? " prov-cal__chip--today" : ""}${hasVisit ? " prov-cal__chip--busy" : ""}"
+          data-action="prov-cal-pick-date" data-date="${escapeHtml(iso)}" aria-pressed="${on ? "true" : "false"}">
+          <span class="prov-cal__chip-dow${red ? " prov-cal__chip-dow--red" : ""}">${DOW[d.getDay()]}</span>
+          <span class="prov-cal__chip-day${red ? " prov-cal__chip-day--red" : ""}">${d.getDate()}</span>
+          ${hasVisit ? `<span class="prov-cal__chip-dot" aria-hidden="true"></span>` : ""}
+        </button>`;
+    }
+    return `<div class="prov-cal__strip" data-role="prov-cal-strip" data-filter-scroll>${cols}</div>`;
+  }
+
+  function renderProvCalTimeline(dateISO, dayVisits) {
+    const hourStart = 8;
+    const hourEnd = 20;
+    const hourH = 56;
+    const dayStartMin = hourStart * 60;
+    const dayEndMin = hourEnd * 60;
+    const totalH = (hourEnd - hourStart) * hourH;
+
+    let hours = "";
+    for (let h = hourStart; h < hourEnd; h++) {
+      hours += `
+        <div class="prov-cal__hour" style="height:${hourH}px">
+          <span class="prov-cal__hour-label">${pad(h)}:00</span>
+          <span class="prov-cal__hour-line" aria-hidden="true"></span>
+        </div>`;
+    }
+
+    const events = dayVisits
+      .map(function (b, idx) {
+        const fromM = timeToMinutes(b.from);
+        const toM = timeToMinutes(b.to);
+        if (isNaN(fromM) || isNaN(toM) || toM <= fromM) return "";
+        const top = Math.max(0, ((fromM - dayStartMin) / 60) * hourH);
+        const height = Math.max(28, ((toM - fromM) / 60) * hourH - 4);
+        const tone = idx % 3;
+        return `
+          <article class="prov-cal__event prov-cal__event--tone-${tone} prov-cal__event--${escapeHtml(b.status)}"
+            style="top:${top}px;height:${height}px" data-booking-id="${escapeHtml(b.id)}">
+            <span class="prov-cal__event-time">${escapeHtml(b.from)}–${escapeHtml(b.to)}</span>
+            <span class="prov-cal__event-name">${escapeHtml(b.clientName || "Klient")}</span>
+            <span class="prov-cal__event-svc">${escapeHtml((b.serviceNames || []).join(", "))}</span>
+          </article>`;
+      })
+      .join("");
+
+    const now = new Date();
+    const today = demoTodayISO();
+    let nowLine = "";
+    if (dateISO === today) {
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+      if (nowMin >= dayStartMin && nowMin <= dayEndMin) {
+        const y = ((nowMin - dayStartMin) / 60) * hourH;
+        nowLine = `<div class="prov-cal__now" style="top:${y}px" aria-hidden="true"><span></span></div>`;
+      }
+    }
+
+    return `
+      <div class="prov-cal__timeline" style="height:${totalH}px">
+        <div class="prov-cal__hours">${hours}</div>
+        <div class="prov-cal__track">
+          ${nowLine}
+          ${events || `<p class="prov-cal__empty">Brak wizyt w tym dniu</p>`}
+        </div>
+      </div>`;
+  }
+
+  function renderProviderCalendar() {
+    const selected = ensureProvCalDate();
+    const visits = providerVisits();
+    const dayVisits = visits.filter(function (b) {
+      return b.dateISO === selected;
+    });
+    const monthLabel = formatDateLong(selected);
+
+    return `
+      <div class="app-screen app-screen--provider app-screen--prov-cal">
+        <div class="prov-cal-top">
+          <header class="screen-head screen-head--prov-cal">
+            <div class="prov-cal-head">
+              <h2 class="screen-head__title">Kalendarz</h2>
+              <button type="button" class="prov-cal__today-btn" data-action="prov-cal-today">Dziś</button>
+            </div>
+            <p class="screen-head__sub">${escapeHtml(monthLabel)}</p>
+          </header>
+          <div class="prov-cal__nav">
+            <button type="button" class="prov-cal__nav-btn" data-action="prov-cal-prev" aria-label="Poprzedni dzień">‹</button>
+            <button type="button" class="prov-cal__nav-btn" data-action="prov-cal-next" aria-label="Następny dzień">›</button>
+          </div>
+          ${renderProvCalDayStrip(selected, visits)}
+        </div>
+        <div class="prov-cal-body" data-role="prov-cal-body">
+          ${renderProvCalTimeline(selected, dayVisits)}
+          ${
+            dayVisits.length
+              ? `<section class="prov-cal-list" aria-label="Wizyty dnia">
+                   <h3 class="prov-section">Wizyty · ${escapeHtml(formatDateLong(selected))}</h3>
+                   <div class="visit-list">${dayVisits.map(renderProviderVisitCard).join("")}</div>
+                 </section>`
+              : ""
+          }
+        </div>
+        ${providerBottomNav("calendar")}
       </div>`;
   }
 
@@ -3011,6 +3189,37 @@
     return window.AppState.availWeekStart;
   }
 
+  /** Aktualnie ustawiony dzień: najbliższy (od dziś) z dostępnością, inaczej „dziś”. */
+  function firstUpcomingAvailDate() {
+    const p = myProvider();
+    const today = demoTodayISO();
+    const isos = ((p && p.availability) || [])
+      .map(function (d) {
+        return d.dateISO;
+      })
+      .filter(function (iso) {
+        return iso >= today;
+      })
+      .sort();
+    return isos[0] || today;
+  }
+
+  function ensureAvailFocusDate() {
+    if (!window.AppState.availFocusDate) {
+      window.AppState.availFocusDate = firstUpcomingAvailDate();
+    }
+    return window.AppState.availFocusDate;
+  }
+
+  /** Wejście na ekran dostępności: wyśrodkuj kalendarz na aktualnie ustawionym dniu. */
+  function openAvailability() {
+    const focus = firstUpcomingAvailDate();
+    window.AppState.availFocusDate = focus;
+    window.AppState.availWeekStart = mondayISOFrom(focus);
+    window.AppState.availStripScrollLeft = null;
+    navigate("provider", "availability", {});
+  }
+
   /** Pasek kalendarza: poprzedni miesiąc → +2 miesiące względem „dziś” (kilka miesięcy naraz). */
   function availStripDays() {
     const today = demoTodayISO();
@@ -3047,9 +3256,11 @@
     if (typeof window.AppState.availStripScrollLeft === "number") {
       grid.scrollLeft = window.AppState.availStripScrollLeft;
     } else {
-      const focusISO = ensureAvailWeekStart() || demoTodayISO();
-      const col = grid.querySelector('.avail-week__col[data-date="' + focusISO + '"]');
-      if (col) grid.scrollLeft = Math.max(0, col.offsetLeft - 8);
+      const focusISO = ensureAvailFocusDate() || demoTodayISO();
+      const col =
+        grid.querySelector('.avail-week__col[data-date="' + focusISO + '"]') ||
+        grid.querySelector('.avail-week__col[data-date="' + (ensureAvailWeekStart() || focusISO) + '"]');
+      if (col) grid.scrollLeft = Math.max(0, col.offsetLeft - grid.clientWidth / 2 + col.offsetWidth / 2);
     }
     updateAvailMonthLabel(grid);
   }
@@ -3061,88 +3272,90 @@
     if (iso) window.AppState.availWeekStart = mondayISOFrom(iso);
   }
 
-  /** Nad kalendarzem: gest pionowy → lista; poziomy → pasek dni. */
+  function prepareAvailListForDate(dateISO) {
+    if (!dateISO) return false;
+    ensureAvailDraft(dateISO);
+    if (document.querySelector('.avail-day-group[data-date="' + dateISO + '"]')) return false;
+    let changed = false;
+    const weekStart = mondayISOFrom(dateISO);
+    if (window.AppState.availWeekStart !== weekStart) {
+      window.AppState.availWeekStart = weekStart;
+      changed = true;
+    }
+    if (window.AppState.availListOnlySet) {
+      window.AppState.availListOnlySet = false;
+      changed = true;
+    }
+    if (changed) {
+      saveState();
+      renderAll();
+    }
+    return changed;
+  }
+
+  function scrollAvailListToDate(dateISO) {
+    if (!dateISO) return;
+    window.AppState.availFocusDate = dateISO;
+    prepareAvailListForDate(dateISO);
+
+    function runScroll() {
+      const body = document.querySelector('[data-role="avail-body"]');
+      const group = document.querySelector('.avail-day-group[data-date="' + dateISO + '"]');
+      if (!body || !group) return;
+
+      document.querySelectorAll(".avail-week__col--target, .avail-week__col--current").forEach(function (el) {
+        el.classList.remove("avail-week__col--target");
+        el.classList.remove("avail-week__col--current");
+      });
+      const col = document.querySelector('.avail-week__col[data-date="' + dateISO + '"]');
+      if (col) {
+        col.classList.add("avail-week__col--target");
+        col.classList.add("avail-week__col--current");
+      }
+
+      const bodyRect = body.getBoundingClientRect();
+      const groupRect = group.getBoundingClientRect();
+      const nextTop = body.scrollTop + (groupRect.top - bodyRect.top) - 10;
+      body.scrollTo({ top: Math.max(0, nextTop), behavior: "smooth" });
+
+      group.classList.remove("avail-day-group--flash");
+      void group.offsetWidth;
+      group.classList.add("avail-day-group--flash");
+      window.clearTimeout(scrollAvailListToDate._flashTimer);
+      scrollAvailListToDate._flashTimer = window.setTimeout(function () {
+        group.classList.remove("avail-day-group--flash");
+        if (col) col.classList.remove("avail-week__col--target");
+      }, 1100);
+    }
+
+    requestAnimationFrame(function () {
+      requestAnimationFrame(runScroll);
+    });
+  }
+
+  /**
+   * Desktop: kółko / trackpad nad kalendarzem przesuwa pasek dni w poziomie.
+   * Dotyk (telefon) obsługuje natywne przewijanie paska — bez ingerencji JS.
+   */
   function bindAvailWeekScrollBridge() {
     if (bindAvailWeekScrollBridge.done) return;
     bindAvailWeekScrollBridge.done = true;
-    let touch = null;
 
     document.addEventListener(
       "wheel",
       function (event) {
-        const top = event.target.closest(".avail-top");
-        if (!top) return;
-        const body = document.querySelector('[data-role="avail-body"]');
-        if (!body) return;
-        if (Math.abs(event.deltaY) >= Math.abs(event.deltaX)) {
-          event.preventDefault();
-          body.scrollTop += event.deltaY;
-          return;
-        }
-        const grid = top.querySelector('[data-role="avail-week-grid"]');
+        const week = event.target.closest(".avail-week");
+        if (!week) return;
+        const grid = week.querySelector('[data-role="avail-week-grid"]');
         if (!grid) return;
+        const dx = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+        if (!dx) return;
         event.preventDefault();
-        grid.scrollLeft += event.deltaX;
+        grid.scrollLeft += dx;
         handleAvailStripScroll(grid);
       },
       { passive: false }
     );
-
-    document.addEventListener(
-      "touchstart",
-      function (event) {
-        const top = event.target.closest(".avail-top");
-        const t = event.touches && event.touches[0];
-        if (!top || !t) {
-          touch = null;
-          return;
-        }
-        touch = {
-          x: t.clientX,
-          y: t.clientY,
-          mode: null,
-          grid: top.querySelector('[data-role="avail-week-grid"]'),
-          body: document.querySelector('[data-role="avail-body"]'),
-        };
-      },
-      { passive: true }
-    );
-
-    document.addEventListener(
-      "touchmove",
-      function (event) {
-        if (!touch) return;
-        const t = event.touches && event.touches[0];
-        if (!t) return;
-        const dx = t.clientX - touch.x;
-        const dy = t.clientY - touch.y;
-        if (!touch.mode) {
-          if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
-          touch.mode = Math.abs(dy) > Math.abs(dx) ? "v" : "h";
-        }
-        if (touch.mode === "v" && touch.body) {
-          event.preventDefault();
-          touch.body.scrollTop -= dy;
-          touch.x = t.clientX;
-          touch.y = t.clientY;
-          return;
-        }
-        if (touch.mode === "h" && touch.grid) {
-          event.preventDefault();
-          touch.grid.scrollLeft -= dx;
-          touch.x = t.clientX;
-          touch.y = t.clientY;
-          handleAvailStripScroll(touch.grid);
-        }
-      },
-      { passive: false }
-    );
-
-    function endAvailTouch() {
-      touch = null;
-    }
-    document.addEventListener("touchend", endAvailTouch, { passive: true });
-    document.addEventListener("touchcancel", endAvailTouch, { passive: true });
   }
 
   const AVAIL_REPEAT_OPTIONS = [
@@ -3191,7 +3404,6 @@
         recurring: repeat !== "none",
       };
     });
-    if (!blocks.length) blocks.push(defaultAvailBlock(p));
     return { dateISO: dateISO, blocks: blocks };
   }
 
@@ -3331,7 +3543,6 @@
     const i = Number(index);
     if (isNaN(i) || i < 0 || i >= draft.blocks.length) return;
     draft.blocks.splice(i, 1);
-    if (!draft.blocks.length) draft.blocks.push(defaultAvailBlock(myProvider()));
     persistAvailDraft(dateISO);
     saveState();
     renderAll();
@@ -3487,37 +3698,24 @@
                 </select>
               </span>
             </label>
+            <button type="button" class="avail-edit__remove avail-edit__remove--in-group" data-action="remove-avail-block" data-date="${escapeHtml(
+              dateISO
+            )}" data-index="${i}" aria-label="Usuń blok">Usuń</button>
           </div>
-          ${
-            i === (draft.blocks || []).length - 1
-              ? ""
-              : `<button type="button" class="avail-edit__remove" data-action="remove-avail-block" data-date="${escapeHtml(
-                  dateISO
-                )}" data-index="${i}" aria-label="Usuń blok">Usuń blok</button>`
-          }
         </div>`;
       })
       .join("");
 
-    const lastIdx = Math.max(0, (draft.blocks || []).length - 1);
-
     return `
       <form class="avail-edit" data-role="avail-edit-form" data-date="${escapeHtml(dateISO)}" onsubmit="return false;">
         ${rows}
-        <div class="avail-edit__actions avail-edit__actions--bar">
-          <button type="button" class="btn btn--ghost avail-edit__btn avail-edit__btn--add" data-action="add-avail-block" data-date="${escapeHtml(
-            dateISO
-          )}">+ Blok</button>
-          <button type="button" class="avail-edit__remove avail-edit__remove--inline" data-action="remove-avail-block" data-date="${escapeHtml(
-            dateISO
-          )}" data-index="${lastIdx}" aria-label="Usuń blok">Usuń</button>
-        </div>
       </form>`;
   }
 
   function renderAvailability() {
     const p = myProvider();
     const weekStart = ensureAvailWeekStart();
+    const focusDate = ensureAvailFocusDate();
     const weekDates = availWeekDays(weekStart);
     const stripDates = availStripDays();
     const availByDate = {};
@@ -3550,8 +3748,11 @@
           : `<span class="avail-week__empty-mark" aria-hidden="true">—</span>`;
         const cardTone =
           has && blocks.length === 1 ? " " + locationToneClass(p, blocks[0].locationId) : has ? " avail-week__card--mixed" : "";
+        const isFocus = dateISO === focusDate;
         return `
-        <div class="avail-week__col${has ? " avail-week__col--open" : " avail-week__col--closed"}${sunday ? " avail-week__col--sunday" : ""}${monthStart ? " avail-week__col--month-start" : ""}" data-date="${escapeHtml(dateISO)}">
+        <div class="avail-week__col${has ? " avail-week__col--open" : " avail-week__col--closed"}${sunday ? " avail-week__col--sunday" : ""}${monthStart ? " avail-week__col--month-start" : ""}${isFocus ? " avail-week__col--current" : ""}"
+          data-date="${escapeHtml(dateISO)}" data-action="avail-jump-date" role="button" tabindex="0"
+          aria-label="${has ? "Pokaż" : "Ustaw"} ${escapeHtml(String(dt.getDate()))} ${escapeHtml(MONTHS[dt.getMonth()])} na liście">
           <span class="avail-week__dow${sunday ? " avail-week__dow--red" : ""}">${AVAIL_DOW[dt.getDay()]}</span>
           <span class="avail-week__day${sunday ? " avail-week__day--red" : ""}">${dt.getDate()}</span>
           <div class="avail-week__card${cardTone}" aria-label="${has ? "Dostępność" : "Brak dostępności"}">
@@ -3561,9 +3762,12 @@
       })
       .join("");
 
-    const listDates = stripDates.filter(function (dateISO) {
-      return (availByDate[dateISO] || []).length > 0;
-    });
+    const onlySet = !!window.AppState.availListOnlySet;
+    const listDates = onlySet
+      ? stripDates.filter(function (dateISO) {
+          return (availByDate[dateISO] || []).length > 0;
+        })
+      : weekDates;
 
     const AVAIL_DOW_PRINT = ["ND", "PN", "WT", "ŚR", "CZ", "PT", "SB"];
 
@@ -3573,15 +3777,24 @@
         const blocks = availByDate[dateISO] || [];
         const red = isSunday(dateISO);
         const has = blocks.length > 0;
-        const draft = ensureAvailDraft(dateISO);
+        const draft = has ? ensureAvailDraft(dateISO) : null;
+        const editor =
+          has && draft
+            ? `<div class="avail-day avail-day--editing">${renderAvailDayEditor(p, dateISO, draft)}</div>`
+            : "";
         return `
-        <div class="avail-day-group${has ? "" : " avail-day-group--closed"}">
+        <div class="avail-day-group${has ? "" : " avail-day-group--closed"}" data-date="${escapeHtml(dateISO)}" id="avail-day-${escapeHtml(dateISO)}">
           <div class="avail-day__sep">
             <span class="avail-day__dow${red ? " avail-day__dow--red" : ""}">${AVAIL_DOW_PRINT[dt.getDay()]}</span>
             <span class="avail-day__date${red ? " avail-day__date--red" : ""}">${dt.getDate()} ${MONTHS[dt.getMonth()]}</span>
           </div>
-          <div class="avail-day avail-day--editing${has ? "" : " avail-day--closed"}">
-            ${draft ? renderAvailDayEditor(p, dateISO, draft) : ""}
+          ${editor}
+          <div class="avail-day__add-row">
+            <button type="button" class="avail-add-btn" data-action="add-avail-block" data-date="${escapeHtml(
+              dateISO
+            )}" aria-label="Dodaj blok godzin" title="Dodaj">
+              <span class="avail-add-btn__plus" aria-hidden="true"></span>
+            </button>
           </div>
         </div>`;
       })
@@ -3610,8 +3823,15 @@
         <div class="avail-body" data-role="avail-body">
           <div class="avail-list__head">
             <h3 class="avail-list__heading">Lista dostępności</h3>
+            <button type="button" class="avail-list__toggle${onlySet ? " avail-list__toggle--on" : ""}"
+              data-action="toggle-avail-list-filter" role="switch" aria-checked="${onlySet ? "true" : "false"}"
+              aria-label="${onlySet ? "Pokaż wszystkie dni" : "Pokaż tylko ustawione terminy"}"
+              title="${onlySet ? "Tylko ustawione" : "Wszystkie dni"}">
+              <span class="avail-list__toggle-text">${onlySet ? "Ustawione" : "Wszystkie"}</span>
+              <span class="avail-list__switch" aria-hidden="true"><span class="avail-list__switch-knob"></span></span>
+            </button>
           </div>
-          <div class="avail-list">${list || `<p class="empty-note">Brak ustawionych terminów w tym tygodniu.</p>`}</div>
+          <div class="avail-list">${list || `<p class="empty-note">Brak ustawionych terminów.</p>`}</div>
         </div>
       </div>`;
   }
@@ -3651,6 +3871,8 @@
         return renderProposeScreen(window.AppState.params.provider && window.AppState.params.provider.requestId);
       case "services":
         return renderServices();
+      case "calendar":
+        return renderProviderCalendar();
       case "availability":
         return renderAvailability();
       case "settings":
@@ -3694,6 +3916,13 @@
     requestAnimationFrame(function () {
       const availGrid = document.querySelector('[data-role="avail-week-grid"]');
       if (availGrid) initAvailStripScroll(availGrid);
+      const provStrip = document.querySelector('[data-role="prov-cal-strip"]');
+      if (provStrip) {
+        const on = provStrip.querySelector(".prov-cal__chip--on");
+        if (on) {
+          provStrip.scrollLeft = Math.max(0, on.offsetLeft - provStrip.clientWidth / 2 + on.offsetWidth / 2);
+        }
+      }
     });
   }
 
@@ -4605,6 +4834,16 @@
         event.preventDefault();
         scrollAvailStripByWeeks(1);
         break;
+      case "avail-jump-date":
+        event.preventDefault();
+        scrollAvailListToDate(d.date);
+        break;
+      case "toggle-avail-list-filter":
+        event.preventDefault();
+        window.AppState.availListOnlySet = !window.AppState.availListOnlySet;
+        saveState();
+        renderAll();
+        break;
       case "add-avail-block":
         event.preventDefault();
         addAvailEditBlock(d.date);
@@ -4638,7 +4877,29 @@
       case "accept-proposal": acceptProposal(d.bookingId); break;
       case "reject-proposal": rejectProposal(d.bookingId); break;
 
-      case "provider-tab": navigate("provider", d.tab, {}); break;
+      case "provider-tab":
+        if (d.tab === "availability") openAvailability();
+        else if (d.tab === "calendar") {
+          ensureProvCalDate();
+          navigate("provider", "calendar", {});
+        } else navigate("provider", d.tab, {});
+        break;
+      case "prov-cal-prev":
+        event.preventDefault();
+        shiftProvCalDays(-1);
+        break;
+      case "prov-cal-next":
+        event.preventDefault();
+        shiftProvCalDays(1);
+        break;
+      case "prov-cal-today":
+        event.preventDefault();
+        pickProvCalDate(demoTodayISO());
+        break;
+      case "prov-cal-pick-date":
+        event.preventDefault();
+        pickProvCalDate(d.date);
+        break;
       case "propose-open": proposeOpen(d.requestId); break;
       case "propose-date": proposeDate(d.requestId, d.date); break;
       case "propose-slot": proposeSlot(d.requestId, d.slot, d.date); break;
