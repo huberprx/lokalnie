@@ -36,6 +36,15 @@
     cancelled: "Odwołana",
   };
 
+  const APP_VERSION = "1.0.0";
+
+  const PWA = {
+    registration: null,
+    waitingWorker: null,
+    updateNotified: false,
+    deferredInstall: null,
+  };
+
   function data() {
     return window.LOKALNIE_DATA || { PROVIDERS: [], CATEGORIES: [], HOLIDAYS_2026: [], CURRENT_USER: {} };
   }
@@ -65,6 +74,10 @@
       searchOpenSlug: null,
       myCalMonth: null,
       myCalDate: null,
+      availWeekStart: null,
+      availListOnlySet: true,
+      availEditDate: null,
+      availEditDraft: null,
       appMenuOpen: false,
       clientAvatarUrl: null,
     };
@@ -152,6 +165,16 @@
 
   function isHoliday(dateISO) {
     return (data().HOLIDAYS_2026 || []).indexOf(dateISO) !== -1;
+  }
+
+  function isSunday(dateISO) {
+    const d = new Date(dateISO + "T12:00:00");
+    return !isNaN(d.getTime()) && d.getDay() === 0;
+  }
+
+  /** Niedziela lub święto — czerwony numer w kalendarzach / paskach dat. */
+  function isRedCalendarDay(dateISO) {
+    return isSunday(dateISO) || isHoliday(dateISO);
   }
 
   function getProviderBySlug(slug) {
@@ -362,16 +385,21 @@
   function renderDateStripHtml(availDates, activeDate) {
     if (!availDates.length) return `<p class="empty-note">Brak dostępnych terminów.</p>`;
     const availSet = new Set(availDates);
+    const today = demoTodayISO();
     const stripDates = eachDateISO(availDates[0], availDates[availDates.length - 1]);
     return stripDates
       .map(function (dateISO) {
         const dt = new Date(dateISO + "T12:00:00");
         const on = dateISO === activeDate;
-        const hol = isHoliday(dateISO);
+        const red = isRedCalendarDay(dateISO);
         const open = availSet.has(dateISO);
+        // Wyszarzanie tylko dla dni przeszłych (już nie da się rezerwować).
+        // Dni wolne / bez slotów w przyszłości wyglądają jak zwykłe, ale są nieklikalne.
+        const past = dateISO < today;
+        const bookable = open && !past;
         return `
-        <button type="button" class="date-chip${on ? " date-chip--active" : ""}${hol ? " date-chip--holiday" : ""}${open ? "" : " date-chip--closed"}"
-          data-date="${escapeHtml(dateISO)}"${open ? ` data-action="pick-date"` : " disabled aria-disabled=\"true\""}>
+        <button type="button" class="date-chip${on ? " date-chip--active" : ""}${red ? " date-chip--holiday" : ""}${past ? " date-chip--closed" : ""}${!bookable && !past ? " date-chip--unavailable" : ""}"
+          data-date="${escapeHtml(dateISO)}"${bookable ? ` data-action="pick-date"` : " disabled aria-disabled=\"true\""}>
           <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span>
           <span class="date-chip__day">${dt.getDate()}</span>
         </button>`;
@@ -448,8 +476,7 @@
       }
     }
 
-    const nav = screen.querySelector(".bottom-nav");
-    if (nav) updateBookingBottomNav(nav, ctx.draft);
+    updateBookingBottomNav(screen, ctx.draft);
   }
 
   function refreshBookingDraftUI() {
@@ -1155,6 +1182,14 @@
         searchOpenSlug: typeof stored.searchOpenSlug === "string" ? stored.searchOpenSlug : base.searchOpenSlug,
         myCalMonth: typeof stored.myCalMonth === "string" ? stored.myCalMonth : base.myCalMonth,
         myCalDate: typeof stored.myCalDate === "string" ? stored.myCalDate : base.myCalDate,
+        availWeekStart: typeof stored.availWeekStart === "string" ? stored.availWeekStart : base.availWeekStart,
+        availListOnlySet:
+          typeof stored.availListOnlySet === "boolean" ? stored.availListOnlySet : base.availListOnlySet,
+        availEditDate: typeof stored.availEditDate === "string" ? stored.availEditDate : base.availEditDate,
+        availEditDraft:
+          stored.availEditDraft && typeof stored.availEditDraft === "object"
+            ? stored.availEditDraft
+            : base.availEditDraft,
         appMenuOpen: !!stored.appMenuOpen,
         clientAvatarUrl: typeof stored.clientAvatarUrl === "string" ? stored.clientAvatarUrl : base.clientAvatarUrl,
       };
@@ -1320,13 +1355,38 @@
         <button type="button" class="app-menu__backdrop" data-action="close-app-menu" tabindex="-1" aria-label="Zamknij menu"></button>
         <aside class="app-menu__panel" id="app-menu-panel" role="dialog" aria-modal="true" aria-label="Menu konta">
           <div class="app-menu__head">
-            <h2 class="app-menu__title">Profile</h2>
+            <div class="app-menu__brand">
+              <img class="app-menu__logo" src="assets/icons/logo-1024.png" alt="" width="40" height="40" />
+              <div class="app-menu__brand-text">
+                <p class="app-menu__brand-name">Lokalnie</p>
+                <h2 class="app-menu__title">Menu</h2>
+              </div>
+            </div>
             <button type="button" class="app-menu__close" data-action="close-app-menu" aria-label="Zamknij">
               <span class="app-menu__close-icon" aria-hidden="true"></span>
             </button>
           </div>
 
+          <nav class="app-menu__links" aria-label="Informacje">
+            ${
+              isPwaInstalled()
+                ? ""
+                : `<button type="button" class="app-menu__link" data-action="install-pwa">Pobierz aplikację</button>`
+            }
+            <button type="button" class="app-menu__link" data-action="open-legal" data-doc="privacy">Polityka prywatności</button>
+            <button type="button" class="app-menu__link" data-action="open-legal" data-doc="terms">Regulamin</button>
+            <button type="button" class="app-menu__link" data-action="open-legal" data-doc="contact">Kontakt</button>
+          </nav>
+
+          <div class="app-menu__version" data-role="app-version">
+            <button type="button" class="app-menu__link app-menu__link--version" data-action="check-pwa-update" title="Sprawdź aktualizacje">
+              <span>Wersja aplikacji</span>
+              <span class="app-menu__version-num">${escapeHtml(APP_VERSION)}</span>
+            </button>
+          </div>
+
           <div class="app-menu__profiles" role="group" aria-label="Przełącz profil">
+            <p class="app-menu__profiles-label">Profile</p>
             <button type="button" class="app-menu__profile app-menu__profile--client${clientActive ? " app-menu__profile--active" : ""}" data-action="switch-role" data-role="client" aria-pressed="${clientActive ? "true" : "false"}">
               <span class="app-menu__avatar app-menu__avatar--client">${renderClientMenuAvatar()}</span>
               <span class="app-menu__profile-text">
@@ -1341,12 +1401,6 @@
             </label>
             ${providerBlock}
           </div>
-
-          <nav class="app-menu__links" aria-label="Informacje">
-            <button type="button" class="app-menu__link" data-action="open-legal" data-doc="privacy">Polityka prywatności</button>
-            <button type="button" class="app-menu__link" data-action="open-legal" data-doc="terms">Regulamin</button>
-            <button type="button" class="app-menu__link" data-action="open-legal" data-doc="contact">Kontakt</button>
-          </nav>
 
           <div class="app-menu__footer">
             <button type="button" class="app-menu__link app-menu__link--logout" data-action="logout">Wyloguj</button>
@@ -1431,14 +1485,238 @@
     });
   }
 
+  function activateWaitingWorker(worker) {
+    if (!worker) return false;
+    PWA.waitingWorker = worker;
+    worker.postMessage({ type: "SKIP_WAITING" });
+    return true;
+  }
+
+  /** Automatyczna aktualizacja — bez pytania użytkownika. */
+  function applyPwaUpdateAutomatically(worker) {
+    if (!worker || PWA.updateNotified) return;
+    PWA.updateNotified = true;
+    showToast("Aktualizuję aplikację…");
+    activateWaitingWorker(worker);
+  }
+
+  function trackServiceWorker(reg) {
+    if (!reg) return;
+    PWA.registration = reg;
+
+    reg.addEventListener("updatefound", function () {
+      const installing = reg.installing;
+      if (!installing) return;
+      installing.addEventListener("statechange", function () {
+        if (installing.state === "installed" && navigator.serviceWorker.controller) {
+          applyPwaUpdateAutomatically(installing);
+        }
+      });
+    });
+  }
+
+  /** Przy każdym starcie: sprawdź i od razu wdróż nową wersję, jeśli jest. */
+  function checkPwaUpdateOnLaunch(reg) {
+    if (!reg) return;
+    if (reg.waiting) {
+      applyPwaUpdateAutomatically(reg.waiting);
+      return;
+    }
+    reg
+      .update()
+      .then(function () {
+        if (reg.waiting) applyPwaUpdateAutomatically(reg.waiting);
+      })
+      .catch(function () {});
+  }
+
+  function registerServiceWorker() {
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker
+      .register("./sw.js")
+      .then(function (reg) {
+        trackServiceWorker(reg);
+        checkPwaUpdateOnLaunch(reg);
+        setInterval(function () {
+          reg.update().then(function () {
+            if (reg.waiting) applyPwaUpdateAutomatically(reg.waiting);
+          }).catch(function () {});
+        }, 60 * 60 * 1000);
+      })
+      .catch(function () {});
+
+    var refreshing = false;
+    navigator.serviceWorker.addEventListener("controllerchange", function () {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+  }
+
+  function isPwaInstalled() {
+    return (
+      window.matchMedia("(display-mode: standalone)").matches ||
+      window.matchMedia("(display-mode: minimal-ui)").matches ||
+      window.navigator.standalone === true
+    );
+  }
+
+  function isIosDevice() {
+    return (
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+    );
+  }
+
+  function pwaInstallHelpSteps() {
+    if (isIosDevice()) {
+      return {
+        title: "Dodaj do ekranu początkowego",
+        steps: [
+          "Otwórz menu Udostępnij (ikona kwadratu ze strzałką w górę).",
+          "Przewiń i wybierz „Do ekranu początkowego”.",
+          "Potwierdź „Dodaj” — ikona Lokalnie pojawi się na pulpicie.",
+        ],
+      };
+    }
+    if (/Android/i.test(navigator.userAgent)) {
+      return {
+        title: "Zainstaluj aplikację",
+        steps: [
+          "Otwórz menu przeglądarki (⋮ w prawym górnym rogu).",
+          "Wybierz „Zainstaluj aplikację” lub „Dodaj do ekranu głównego”.",
+          "Potwierdź — Lokalnie pojawi się jak zwykła aplikacja.",
+        ],
+      };
+    }
+    return {
+      title: "Zainstaluj aplikację",
+      steps: [
+        "W pasku adresu kliknij ikonę instalacji (lub +).",
+        "Albo otwórz menu przeglądarki → „Zainstaluj Lokalnie”.",
+        "Po instalacji otwieraj aplikację z pulpitu / menu Start.",
+      ],
+    };
+  }
+
+  function ensurePwaInstallHelp() {
+    let el = document.getElementById("pwa-install-help");
+    if (el) return el;
+    el = document.createElement("div");
+    el.id = "pwa-install-help";
+    el.className = "pwa-install-help";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-labelledby", "pwa-install-help-title");
+    el.hidden = true;
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function closePwaInstallHelp() {
+    const el = document.getElementById("pwa-install-help");
+    if (!el || el.hidden) return;
+    el.hidden = true;
+    el.innerHTML = "";
+    document.body.classList.remove("pwa-install-help-open");
+  }
+
+  function openPwaInstallHelp() {
+    const help = pwaInstallHelpSteps();
+    const el = ensurePwaInstallHelp();
+    const stepsHtml = help.steps
+      .map(function (step, i) {
+        return `<li class="pwa-install-help__step"><span class="pwa-install-help__num">${i + 1}</span><span>${escapeHtml(step)}</span></li>`;
+      })
+      .join("");
+    el.innerHTML = `
+      <button type="button" class="pwa-install-help__backdrop" data-action="close-pwa-install-help" aria-label="Zamknij"></button>
+      <div class="pwa-install-help__dialog">
+        <button type="button" class="pwa-install-help__close" data-action="close-pwa-install-help" aria-label="Zamknij">
+          <span class="pwa-install-help__close-icon" aria-hidden="true"></span>
+        </button>
+        <h2 class="pwa-install-help__title" id="pwa-install-help-title">${escapeHtml(help.title)}</h2>
+        <p class="pwa-install-help__lead">Twoja przeglądarka nie pokazuje automatycznego okna instalacji. Dodaj Lokalnie ręcznie:</p>
+        <ol class="pwa-install-help__steps">${stepsHtml}</ol>
+        <button type="button" class="btn btn--primary pwa-install-help__ok" data-action="close-pwa-install-help">Rozumiem</button>
+      </div>`;
+    el.hidden = false;
+    document.body.classList.add("pwa-install-help-open");
+  }
+
+  function handlePwaInstallClick() {
+    closeAppMenu();
+    if (isPwaInstalled()) {
+      showToast("Aplikacja jest już zainstalowana.");
+      return;
+    }
+    if (PWA.deferredInstall) {
+      const deferred = PWA.deferredInstall;
+      deferred
+        .prompt()
+        .then(function () {
+          return deferred.userChoice;
+        })
+        .then(function (choice) {
+          PWA.deferredInstall = null;
+          if (choice && choice.outcome === "accepted") {
+            showToast("Aplikacja dodana ✓");
+          }
+        })
+        .catch(function () {
+          openPwaInstallHelp();
+        });
+      return;
+    }
+    openPwaInstallHelp();
+  }
+
+  function bindPwaInstallPrompt() {
+    window.addEventListener("beforeinstallprompt", function (event) {
+      event.preventDefault();
+      PWA.deferredInstall = event;
+    });
+    window.addEventListener("appinstalled", function () {
+      PWA.deferredInstall = null;
+      closePwaInstallHelp();
+      if (window.AppState && window.AppState.appMenuOpen) {
+        syncAppMenus();
+      }
+    });
+  }
+
+  /** Tap w „Wersja aplikacji”: wymuś sprawdzenie (auto-wdrożenie jeśli jest update). */
+  function checkPwaUpdate() {
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.getRegistration("./").then(function (reg) {
+      if (!reg) {
+        registerServiceWorker();
+        return;
+      }
+      trackServiceWorker(reg);
+      PWA.updateNotified = false;
+      if (reg.waiting || PWA.waitingWorker) {
+        applyPwaUpdateAutomatically(reg.waiting || PWA.waitingWorker);
+        return;
+      }
+      reg
+        .update()
+        .then(function () {
+          if (reg.waiting) applyPwaUpdateAutomatically(reg.waiting);
+        })
+        .catch(function () {});
+    });
+  }
+
   function renderBookingConfirmSummary(p, totals, draft) {
-    if (!p || !totals || !totals.count) return "";
-    const priceText = totals.hasNullPrice ? "wycena indyw." : formatPrice(totals.price);
+    const empty = !totals || !totals.count;
+    const priceText = empty ? "—" : totals.hasNullPrice ? "wycena indyw." : formatPrice(totals.price);
+    const durText = empty ? "—" : formatDuration(totals.duration);
     return `
-      <div class="bottom-nav__summary">
+      <div class="bottom-nav__summary${empty ? " bottom-nav__summary--empty" : ""}">
         <span class="bottom-nav__summary-label">Suma:</span>
         <div class="bottom-nav__summary-meta">
-          <span class="bottom-nav__summary-dur">${escapeHtml(formatDuration(totals.duration))}</span>
+          <span class="bottom-nav__summary-dur">${escapeHtml(durText)}</span>
           <span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>
         </div>
       </div>`;
@@ -1457,50 +1735,50 @@
     return {
       action: "confirm-booking",
       label: "Rezerwuj",
-      enabled: !!(draft && draft.slotId),
+      enabled: !!(draft && draft.slotId && totals && totals.count),
       slugAttr: "",
     };
   }
 
   function renderBookingConfirmBar(draft) {
-    const hasServices = !!(draft && draft.serviceIds && draft.serviceIds.length);
-    if (!hasServices) return "";
+    if (!draft) return "";
+    const hasServices = !!(draft.serviceIds && draft.serviceIds.length);
     const p = draft.slug ? getProviderBySlug(draft.slug) : null;
-    const totals = p ? draftTotals(p) : { count: 0 };
+    const totals = p ? draftTotals(p) : { count: 0, duration: 0, price: 0 };
     const cta = bookingConfirmCTA(p, draft, totals);
+    const clearBtn = hasServices
+      ? `<button type="button" class="bottom-nav__clear" data-action="cancel-booking-selection" aria-label="Anuluj wybór usług">
+          <span class="bottom-nav__icon bottom-nav__icon--close" aria-hidden="true"></span>
+        </button>`
+      : "";
     return `
       <div class="booking-confirm-bar" data-role="booking-confirm-bar">
         ${renderBookingConfirmSummary(p, totals, draft)}
         <button type="button" class="bottom-nav__book" data-action="${cta.action}"${cta.slugAttr}${cta.enabled ? "" : " disabled"}>${cta.label}</button>
+        ${clearBtn}
       </div>`;
   }
 
-  function updateBookingBottomNav(nav, draft) {
-    if (!nav) return;
-    const screen = nav.closest(".app-screen--booking");
-    const hasServices = !!(draft && draft.serviceIds && draft.serviceIds.length);
-    const p = draft && draft.slug ? getProviderBySlug(draft.slug) : null;
-    const totals = p ? draftTotals(p) : null;
-
-    let bar = screen && screen.querySelector('[data-role="booking-confirm-bar"]');
-    if (hasServices && p && totals) {
-      const html = renderBookingConfirmBar(draft);
+  function updateBookingBottomNav(screenOrNav, draft) {
+    const screen =
+      screenOrNav && screenOrNav.classList && screenOrNav.classList.contains("app-screen--booking")
+        ? screenOrNav
+        : screenOrNav && screenOrNav.closest
+          ? screenOrNav.closest(".app-screen--booking")
+          : null;
+    if (!screen) return;
+    let bar = screen.querySelector('[data-role="booking-confirm-bar"]');
+    const html = renderBookingConfirmBar(draft);
+    if (html) {
       if (bar) bar.outerHTML = html;
-      else nav.insertAdjacentHTML("beforebegin", html);
-      bar = screen.querySelector('[data-role="booking-confirm-bar"]');
+      else screen.insertAdjacentHTML("beforeend", html);
     } else if (bar) {
       bar.remove();
     }
-
-    syncBottomNavIndicators(null);
   }
 
   function bookingBottomNav(draft) {
-    return `
-      ${renderBookingConfirmBar(draft)}
-      <nav class="bottom-nav bottom-nav--booking bottom-nav--with-back" aria-label="Menu klienta">
-        ${renderBottomNavMenuLayer("search", { backOnSearch: true })}
-      </nav>`;
+    return renderBookingConfirmBar(draft);
   }
 
   function captureBottomNavTab() {
@@ -1647,8 +1925,9 @@
       .map(function (dateISO) {
         const dt = new Date(dateISO + "T12:00:00");
         const on = selectedDates.indexOf(dateISO) !== -1;
+        const red = isRedCalendarDay(dateISO);
         return `
-          <button type="button" class="date-chip${on ? " date-chip--active" : ""}"
+          <button type="button" class="date-chip${on ? " date-chip--active" : ""}${red ? " date-chip--holiday" : ""}"
             data-action="toggle-filter-date" data-date="${escapeHtml(dateISO)}" aria-pressed="${on ? "true" : "false"}">
             <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span>
             <span class="date-chip__day">${dt.getDate()}</span>
@@ -1698,7 +1977,10 @@
 
     const mainChipsHtml = `
             <button type="button" class="category-chip${cat === "" ? " category-chip--active" : ""}"
-              data-action="filter-category" data-category="">Wszystkie</button>
+              data-action="filter-category" data-category="" aria-label="Wszystkie">
+              <span class="chip-label chip-label--full">Wszystkie</span>
+              <span class="chip-label chip-label--short" aria-hidden="true">Wsz.</span>
+            </button>
             ${chips}`;
 
     return `
@@ -1790,10 +2072,10 @@
       const hasVisit = visitSet.has(dateISO);
       const selected = dateISO === selectedDate;
       const isToday = dateISO === todayISO;
-      const hol = isHoliday(dateISO);
+      const red = isRedCalendarDay(dateISO);
       cells += `
         <button type="button"
-          class="cal__day cal__day--selectable${hasVisit ? " cal__day--visit" : ""}${selected ? " cal__day--selected" : ""}${isToday && !selected ? " cal__day--today" : ""}${hol ? " cal__day--holiday" : ""}"
+          class="cal__day cal__day--selectable${hasVisit ? " cal__day--visit" : ""}${selected ? " cal__day--selected" : ""}${isToday && !selected ? " cal__day--today" : ""}${red ? " cal__day--holiday" : ""}"
           data-action="my-cal-pick-date" data-date="${escapeHtml(dateISO)}"
           aria-pressed="${selected ? "true" : "false"}"
           aria-label="${day}${hasVisit ? ", wizyty" : ""}">
@@ -1973,10 +2255,10 @@
       const dateISO = `${year}-${pad(month)}-${pad(day)}`;
       const available = availSet.has(dateISO);
       const selected = dateISO === activeDate;
-      const hol = isHoliday(dateISO);
+      const red = isRedCalendarDay(dateISO);
       cells += `
         <button type="button"
-          class="cal__day${selected ? " cal__day--selected" : ""}${hol ? " cal__day--holiday" : ""}${available ? " cal__day--available" : " cal__day--disabled"}"
+          class="cal__day${selected ? " cal__day--selected" : ""}${red ? " cal__day--holiday" : ""}${available ? " cal__day--available" : " cal__day--disabled"}"
           data-action="${available ? "pick-date" : ""}" data-date="${escapeHtml(dateISO)}" ${available ? "" : "disabled"}>
           ${day}
         </button>`;
@@ -2308,7 +2590,8 @@
       .map((d) => {
         const dt = new Date(d.dateISO + "T00:00:00");
         const on = d.dateISO === activeDate;
-        return `<button type="button" class="date-chip${on ? " date-chip--active" : ""}" data-action="propose-date" data-request-id="${escapeHtml(req.id)}" data-date="${escapeHtml(d.dateISO)}">
+        const red = isRedCalendarDay(d.dateISO);
+        return `<button type="button" class="date-chip${on ? " date-chip--active" : ""}${red ? " date-chip--holiday" : ""}" data-action="propose-date" data-request-id="${escapeHtml(req.id)}" data-date="${escapeHtml(d.dateISO)}">
           <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span><span class="date-chip__day">${dt.getDate()}</span></button>`;
       })
       .join("");
@@ -2680,31 +2963,342 @@
     showToast(isNew ? "Usługa dodana." : "Usługa zapisana.");
   }
 
-  function renderAvailability() {
+  function mondayISOFrom(dateISO) {
+    const d = new Date(dateISO + "T12:00:00");
+    if (isNaN(d.getTime())) return demoTodayISO();
+    const dow = d.getDay();
+    const diff = dow === 0 ? -6 : 1 - dow;
+    d.setDate(d.getDate() + diff);
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+
+  function ensureAvailWeekStart() {
+    if (window.AppState.availWeekStart) return window.AppState.availWeekStart;
+    window.AppState.availWeekStart = mondayISOFrom(demoTodayISO());
+    return window.AppState.availWeekStart;
+  }
+
+  function shiftAvailWeek(deltaWeeks) {
+    const start = ensureAvailWeekStart();
+    const d = new Date(start + "T12:00:00");
+    d.setDate(d.getDate() + deltaWeeks * 7);
+    window.AppState.availWeekStart =
+      d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+    saveState();
+    renderAll();
+  }
+
+  function availWeekDays(weekStartISO) {
+    const start = new Date(weekStartISO + "T12:00:00");
+    const out = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      out.push(d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()));
+    }
+    return out;
+  }
+
+  function defaultAvailBlock(p) {
+    const locId = p && p.locations && p.locations[0] ? p.locations[0].id : "";
+    return { from: "09:00", to: "17:00", locationId: locId, recurring: true };
+  }
+
+  function toggleAvailDayEdit(dateISO) {
+    if (!dateISO) return;
     const p = myProvider();
-    const days = (p ? p.availability : []).slice(0, 10);
-    const list = days
-      .map((d) => {
-        const dt = new Date(d.dateISO + "T00:00:00");
-        const hol = isHoliday(d.dateISO);
-        const blocks = d.blocks
-          .map((b) => `<span class="avail-block">${escapeHtml(b.from)}–${escapeHtml(b.to)} · ${escapeHtml(locationLabel(p, b.locationId))}${b.recurring ? " ↻" : ""}</span>`)
+    if (!p) return;
+    if (window.AppState.availEditDate === dateISO) {
+      window.AppState.availEditDate = null;
+      window.AppState.availEditDraft = null;
+    } else {
+      const day = (p.availability || []).find(function (d) {
+        return d.dateISO === dateISO;
+      });
+      const blocks = (day && day.blocks ? day.blocks : []).map(function (b) {
+        return {
+          from: b.from || "09:00",
+          to: b.to || "17:00",
+          locationId: b.locationId || defaultAvailBlock(p).locationId,
+          recurring: !!b.recurring,
+        };
+      });
+      if (!blocks.length) blocks.push(defaultAvailBlock(p));
+      window.AppState.availEditDate = dateISO;
+      window.AppState.availEditDraft = { dateISO: dateISO, blocks: blocks };
+    }
+    saveState();
+    renderAll();
+  }
+
+  function addAvailEditBlock() {
+    const draft = window.AppState.availEditDraft;
+    const p = myProvider();
+    if (!draft || !p) return;
+    draft.blocks.push(defaultAvailBlock(p));
+    saveState();
+    renderAll();
+  }
+
+  function removeAvailEditBlock(index) {
+    const draft = window.AppState.availEditDraft;
+    if (!draft || !draft.blocks) return;
+    const i = Number(index);
+    if (isNaN(i) || i < 0 || i >= draft.blocks.length) return;
+    draft.blocks.splice(i, 1);
+    if (!draft.blocks.length) draft.blocks.push(defaultAvailBlock(myProvider()));
+    saveState();
+    renderAll();
+  }
+
+  function saveAvailDayEdit(dateISO) {
+    const p = myProvider();
+    const draft = window.AppState.availEditDraft;
+    if (!p || !draft || draft.dateISO !== dateISO) return;
+
+    const form = document.querySelector('[data-role="avail-edit-form"][data-date="' + dateISO + '"]');
+    if (!form) return;
+
+    const rows = form.querySelectorAll("[data-avail-block]");
+    const blocks = [];
+    rows.forEach(function (row, idx) {
+      const fromEl = row.querySelector('[name="from"]');
+      const toEl = row.querySelector('[name="to"]');
+      const locEl = row.querySelector('[name="locationId"]');
+      const recEl = row.querySelector('[name="recurring"]');
+      const from = fromEl ? fromEl.value : "";
+      const to = toEl ? toEl.value : "";
+      if (!from || !to) return;
+      if (timeToMinutes(from) >= timeToMinutes(to)) return;
+      blocks.push({
+        id: "blk-" + p.id + "-" + dateISO + "-" + idx,
+        from: from,
+        to: to,
+        locationId: locEl ? locEl.value : defaultAvailBlock(p).locationId,
+        recurring: !!(recEl && recEl.checked),
+      });
+    });
+
+    if (!p.availability) p.availability = [];
+    const existing = p.availability.findIndex(function (d) {
+      return d.dateISO === dateISO;
+    });
+    if (!blocks.length) {
+      if (existing !== -1) p.availability.splice(existing, 1);
+    } else if (existing !== -1) {
+      p.availability[existing].blocks = blocks;
+    } else {
+      p.availability.push({ dateISO: dateISO, blocks: blocks });
+      p.availability.sort(function (a, b) {
+        return a.dateISO.localeCompare(b.dateISO);
+      });
+    }
+
+    window.AppState.availEditDate = null;
+    window.AppState.availEditDraft = null;
+    saveState();
+    renderAll();
+    showToast(blocks.length ? "Dostępność zapisana." : "Dzień oznaczony jako zamknięty.");
+  }
+
+  function clearAvailDay(dateISO) {
+    const p = myProvider();
+    if (!p || !p.availability) return;
+    p.availability = p.availability.filter(function (d) {
+      return d.dateISO !== dateISO;
+    });
+    window.AppState.availEditDate = null;
+    window.AppState.availEditDraft = null;
+    saveState();
+    renderAll();
+    showToast("Usunięto dostępność w tym dniu.");
+  }
+
+  function renderAvailDayEditor(p, dateISO, draft) {
+    const locs = p.locations || [];
+    const locOptions = locs
+      .map(function (l) {
+        return `<option value="${escapeHtml(l.id)}">${escapeHtml(l.label)}</option>`;
+      })
+      .join("");
+    const rows = (draft.blocks || [])
+      .map(function (b, i) {
+        const opts = locs
+          .map(function (l) {
+            return `<option value="${escapeHtml(l.id)}"${l.id === b.locationId ? " selected" : ""}>${escapeHtml(l.label)}</option>`;
+          })
           .join("");
         return `
-        <div class="avail-day${hol ? " avail-day--holiday" : ""}">
-          <div class="avail-day__head">
-            <span class="avail-day__date">${WEEKDAYS[dt.getDay()]} ${dt.getDate()} ${MONTHS[dt.getMonth()]}</span>
-            ${hol ? `<span class="avail-day__holiday">święto</span>` : ""}
+        <div class="avail-edit__row" data-avail-block data-index="${i}">
+          <div class="avail-edit__times">
+            <label class="avail-edit__field">
+              <span>Od</span>
+              <input type="time" name="from" value="${escapeHtml(b.from)}" required />
+            </label>
+            <label class="avail-edit__field">
+              <span>Do</span>
+              <input type="time" name="to" value="${escapeHtml(b.to)}" required />
+            </label>
           </div>
-          <div class="avail-day__blocks">${blocks}</div>
+          <label class="avail-edit__field avail-edit__field--grow">
+            <span>Miejsce</span>
+            <select name="locationId">${opts || locOptions || '<option value="">—</option>'}</select>
+          </label>
+          <label class="avail-edit__check">
+            <input type="checkbox" name="recurring"${b.recurring ? " checked" : ""} />
+            <span>Powtarzalne</span>
+          </label>
+          <button type="button" class="avail-edit__remove" data-action="remove-avail-block" data-index="${i}" aria-label="Usuń blok">×</button>
         </div>`;
       })
       .join("");
+
+    return `
+      <form class="avail-edit" data-role="avail-edit-form" data-date="${escapeHtml(dateISO)}" data-action-submit="save-avail-day">
+        <p class="avail-edit__hint">Ustaw godziny pracy w tym dniu.</p>
+        ${rows}
+        <div class="avail-edit__actions">
+          <button type="button" class="btn btn--ghost avail-edit__btn" data-action="add-avail-block">+ Blok godzin</button>
+          <button type="button" class="btn btn--ghost avail-edit__btn avail-edit__btn--danger" data-action="clear-avail-day" data-date="${escapeHtml(dateISO)}">Zamknij dzień</button>
+          <button type="button" class="btn btn--primary avail-edit__btn avail-edit__btn--save" data-action="save-avail-day" data-date="${escapeHtml(dateISO)}">Zapisz</button>
+        </div>
+      </form>`;
+  }
+
+  function renderAvailability() {
+    const p = myProvider();
+    const weekStart = ensureAvailWeekStart();
+    const weekDates = availWeekDays(weekStart);
+    const availByDate = {};
+    (p ? p.availability || [] : []).forEach(function (d) {
+      availByDate[d.dateISO] = d.blocks || [];
+    });
+
+    const monthLabel = monthLabelFromISO(weekDates[0]);
+    const AVAIL_DOW = ["Pn", "Wt", "Śr", "Cz", "Pt", "Sb", "Nd"];
+    const editDate = window.AppState.availEditDate || null;
+    const editDraft = window.AppState.availEditDraft;
+
+    const weekCols = weekDates
+      .map(function (dateISO, i) {
+        const dt = new Date(dateISO + "T12:00:00");
+        const blocks = availByDate[dateISO] || [];
+        const red = isRedCalendarDay(dateISO);
+        const hol = isHoliday(dateISO);
+        const has = blocks.length > 0;
+        const body = has
+          ? blocks
+              .map(function (b) {
+                return `
+              <div class="avail-week__slot">
+                <span class="avail-week__slot-label">od</span>
+                <span class="avail-week__slot-time">${escapeHtml(b.from)}</span>
+                <span class="avail-week__slot-label">do</span>
+                <span class="avail-week__slot-time">${escapeHtml(b.to)}</span>
+              </div>`;
+              })
+              .join("")
+          : `<span class="avail-week__empty-mark" aria-hidden="true">—</span>`;
+        return `
+        <div class="avail-week__col${has ? " avail-week__col--open" : " avail-week__col--closed"}${red ? " avail-week__col--sunday" : ""}">
+          <span class="avail-week__dow${red ? " avail-week__dow--red" : ""}">${AVAIL_DOW[i]}</span>
+          <span class="avail-week__day${red ? " avail-week__day--red" : ""}">${dt.getDate()}</span>
+          <div class="avail-week__card" aria-label="${has ? "Dostępność" : "Brak dostępności"}">
+            ${body}
+            ${hol ? `<span class="avail-week__hol">święto</span>` : ""}
+          </div>
+        </div>`;
+      })
+      .join("");
+
+    const onlySet = !!window.AppState.availListOnlySet;
+    const listDates = onlySet
+      ? weekDates.filter(function (dateISO) {
+          return (availByDate[dateISO] || []).length > 0 || dateISO === editDate;
+        })
+      : weekDates;
+
+    const AVAIL_DOW_PRINT = ["ND", "PN", "WT", "ŚR", "CZ", "PT", "SB"];
+
+    const list = listDates
+      .map(function (dateISO) {
+        const dt = new Date(dateISO + "T12:00:00");
+        const blocks = availByDate[dateISO] || [];
+        const red = isRedCalendarDay(dateISO);
+        const hol = isHoliday(dateISO);
+        const expanded = editDate === dateISO && editDraft && editDraft.dateISO === dateISO;
+        const has = blocks.length > 0;
+        const hoursHtml = has
+          ? blocks
+              .map(function (b) {
+                return `
+                <div class="avail-day__hours-block">
+                  <span class="avail-day__hours-row"><span class="avail-day__hours-label">od</span> ${escapeHtml(b.from)}</span>
+                  <span class="avail-day__hours-row"><span class="avail-day__hours-label">do</span> ${escapeHtml(b.to)}</span>
+                </div>`;
+              })
+              .join("")
+          : "";
+        const blockHtml = has
+          ? blocks
+              .map(function (b) {
+                return `<span class="avail-block">${escapeHtml(locationLabel(p, b.locationId))}${b.recurring ? " ↻" : ""}</span>`;
+              })
+              .join("")
+          : "";
+        return `
+        <div class="avail-day${has ? "" : " avail-day--closed"}${red ? " avail-day--holiday" : ""}${expanded ? " avail-day--editing" : ""}">
+          <button type="button" class="avail-day__summary" data-action="toggle-avail-day" data-date="${escapeHtml(dateISO)}" aria-expanded="${expanded ? "true" : "false"}">
+            <div class="avail-day__head">
+              <div class="avail-day__main">
+                <span class="avail-day__date${red ? " avail-day__date--red" : ""}">${AVAIL_DOW_PRINT[dt.getDay()]} ${dt.getDate()} ${MONTHS[dt.getMonth()]}</span>
+                ${
+                  has
+                    ? `<div class="avail-day__hours">${hoursHtml}</div>`
+                    : hol
+                      ? `<span class="avail-day__holiday">święto</span>`
+                      : `<span class="avail-day__off">zamknięte</span>`
+                }
+              </div>
+              <span class="avail-day__chevron" aria-hidden="true"></span>
+            </div>
+            ${has ? `<div class="avail-day__blocks">${blockHtml}</div>` : ""}
+          </button>
+          ${expanded ? renderAvailDayEditor(p, dateISO, editDraft) : ""}
+        </div>`;
+      })
+      .join("");
+
     return `
       <div class="app-screen app-screen--provider">
         <div class="app-scroll">
-          <header class="screen-head"><h2 class="screen-head__title">Dostępność</h2><p class="screen-head__sub">Godziny pracy na najbliższe dni.</p></header>
-          <div class="avail-list">${list || `<p class="empty-note">Brak zdefiniowanej dostępności.</p>`}</div>
+          <header class="screen-head">
+            <h2 class="screen-head__title">Ustawienia dostępności</h2>
+            <p class="screen-head__sub">Godziny pracy w wybranym tygodniu.</p>
+          </header>
+
+          <section class="avail-week" aria-label="Tydzień dostępności">
+            <div class="avail-week__nav">
+              <span class="avail-week__month">${escapeHtml(monthLabel)}</span>
+              <div class="avail-week__nav-btns">
+                <button type="button" class="avail-week__nav-btn" data-action="avail-week-prev" aria-label="Poprzedni tydzień">‹</button>
+                <button type="button" class="avail-week__nav-btn" data-action="avail-week-next" aria-label="Następny tydzień">›</button>
+              </div>
+            </div>
+            <div class="avail-week__grid">${weekCols}</div>
+          </section>
+
+          <div class="avail-list__head">
+            <h3 class="avail-list__heading">Lista dostępności</h3>
+            <button type="button" class="avail-list__toggle${onlySet ? " avail-list__toggle--on" : ""}"
+              data-action="toggle-avail-list-filter" role="switch" aria-checked="${onlySet ? "true" : "false"}"
+              aria-label="${onlySet ? "Pokaż wszystkie dni" : "Pokaż tylko ustawione terminy"}"
+              title="${onlySet ? "Tylko ustawione" : "Wszystkie dni"}">
+              <span class="avail-list__toggle-text">${onlySet ? "Ustawione" : "Wszystkie"}</span>
+              <span class="avail-list__switch" aria-hidden="true"><span class="avail-list__switch-knob"></span></span>
+            </button>
+          </div>
+          <div class="avail-list">${list || `<p class="empty-note">Brak ustawionych terminów w tym tygodniu.</p>`}</div>
         </div>
         ${providerBottomNav("availability")}
       </div>`;
@@ -3437,12 +4031,22 @@
 
   function switchRole(role) {
     if (INSTANCES.indexOf(role) === -1) return;
-    const keepMenu = !!window.AppState.appMenuOpen;
-    window.AppState.appMenuOpen = keepMenu;
+    const wasMenuOpen = !!window.AppState.appMenuOpen;
     window.AppState.activeRole = role;
+    window.AppState.appMenuOpen = false;
     saveState();
     updateAppHeader(role);
-    renderAll();
+    syncAppMenuNavButtons(false);
+    if (wasMenuOpen) {
+      setAppMenuOpenClass(false);
+      // Po animacji schowania menu — przełącz widok profilu.
+      setTimeout(function () {
+        if (window.AppState.appMenuOpen) return;
+        renderAll();
+      }, 380);
+    } else {
+      renderAll();
+    }
   }
 
   function setClientAvatarFromFile(file) {
@@ -3490,6 +4094,12 @@
   // ─────────────────────────────────────────────────────────
   document.addEventListener("keydown", function (event) {
     if (event.key === "Escape") {
+      const installHelp = document.getElementById("pwa-install-help");
+      if (installHelp && !installHelp.hidden) {
+        event.preventDefault();
+        closePwaInstallHelp();
+        return;
+      }
       const preview = document.getElementById("avatar-preview");
       if (preview && !preview.hidden) {
         event.preventDefault();
@@ -3581,6 +4191,18 @@
           showToast(labels[d.doc] || "Informacja");
         }
         break;
+      case "check-pwa-update":
+        event.preventDefault();
+        checkPwaUpdate();
+        break;
+      case "install-pwa":
+        event.preventDefault();
+        handlePwaInstallClick();
+        break;
+      case "close-pwa-install-help":
+        event.preventDefault();
+        closePwaInstallHelp();
+        break;
       case "open-provider": openProvider(d.slug); break;
       case "open-profile": openProvider(d.slug); break;
       case "preview-avatar":
@@ -3655,6 +4277,40 @@
       case "my-cal-prev": shiftMyCalMonth(-1); break;
       case "my-cal-next": shiftMyCalMonth(1); break;
       case "my-cal-pick-date": pickMyCalDate(d.date); break;
+      case "avail-week-prev":
+        event.preventDefault();
+        shiftAvailWeek(-1);
+        break;
+      case "avail-week-next":
+        event.preventDefault();
+        shiftAvailWeek(1);
+        break;
+      case "toggle-avail-list-filter":
+        event.preventDefault();
+        window.AppState.availListOnlySet = !window.AppState.availListOnlySet;
+        saveState();
+        renderAll();
+        break;
+      case "toggle-avail-day":
+        event.preventDefault();
+        toggleAvailDayEdit(d.date);
+        break;
+      case "add-avail-block":
+        event.preventDefault();
+        addAvailEditBlock();
+        break;
+      case "remove-avail-block":
+        event.preventDefault();
+        removeAvailEditBlock(d.index);
+        break;
+      case "save-avail-day":
+        event.preventDefault();
+        saveAvailDayEdit(d.date);
+        break;
+      case "clear-avail-day":
+        event.preventDefault();
+        clearAvailDay(d.date);
+        break;
       case "confirm-booking": confirmBooking(); break;
       case "accept-proposal": acceptProposal(d.bookingId); break;
       case "reject-proposal": rejectProposal(d.bookingId); break;
@@ -3799,6 +4455,8 @@
       updateAppHeader(window.AppState.activeRole);
     }
     handleRouteHash();
+    bindPwaInstallPrompt();
+    registerServiceWorker();
 
     window.matchMedia("(min-width: 900px)").addEventListener("change", function () {
       renderAll();

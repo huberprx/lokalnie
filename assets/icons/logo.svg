@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Lokalnie">
+  <defs>
+    <linearGradient id="g" x1="96" y1="96" x2="416" y2="416" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#5b8def"/>
+      <stop offset="100%" stop-color="#3ecf8e"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#ffffff"/>
+  <g fill="none" stroke="url(#g)" stroke-width="48" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M176 128 V288 H320"/>
+    <path d="M336 384 V224 H192"/>
+  </g>
+  <g fill="url(#g)">
+    <path d="M300 264 L356 288 L300 312 Z"/>
+    <path d="M212 200 L156 224 L212 248 Z"/>
+  </g>
+</svg>

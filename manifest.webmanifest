@@ -1,0 +1,36 @@
+{
+  "id": "./",
+  "name": "Lokalnie",
+  "short_name": "Lokalnie",
+  "description": "Rezerwuj usługi lokalnie — klient i usługodawca w jednej aplikacji.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#5b8def",
+  "lang": "pl",
+  "dir": "ltr",
+  "categories": ["lifestyle", "business"],
+  "icons": [
+    {
+      "src": "assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
