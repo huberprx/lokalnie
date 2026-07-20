@@ -2654,6 +2654,17 @@
     renderAll();
   }
 
+  /** ±1 dzień w kalendarzu usługodawcy (gest swipe / nawigacja). */
+  function shiftProvCalDate(deltaDays) {
+    const cur = ensureProvCalDate();
+    const d = new Date(cur + "T12:00:00");
+    if (isNaN(d.getTime())) return;
+    d.setDate(d.getDate() + Number(deltaDays || 0));
+    const iso = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+    pickProvCalDate(iso, { keepView: true });
+    hapticTap(12);
+  }
+
   function setProvCalView(view) {
     const next = view === "week" ? "week" : "day";
     window.AppState.provCalView = next;
@@ -2796,12 +2807,48 @@
     });
   }
 
-  function canPlaceFree(dateISO, fromMin, toMin) {
-    const dayStart = PROV_CAL_HOUR_START * 60;
-    const dayEnd = PROV_CAL_HOUR_END * 60;
-    if (!(toMin > fromMin) || fromMin < dayStart || toMin > dayEnd) return false;
-    return !activeDayBookings(dateISO, null).some(function (b) {
-      return fromMin < timeToMinutes(b.to) && timeToMinutes(b.from) < toMin;
+  /** Luki wolne jakby ta wizyta już nie zajmowała miejsca (do przenoszenia). */
+  function freeGapsForBookingMove(bookingId, dateISO) {
+    return providerFreeGapsForDate(dateISO, activeDayBookings(dateISO, bookingId));
+  }
+
+  function canPlaceBookingInFree(bookingId, dateISO, fromMin, toMin) {
+    if (!canPlaceBooking(bookingId, dateISO, fromMin, toMin)) return false;
+    return freeGapsForBookingMove(bookingId, dateISO).some(function (g) {
+      return fromMin >= g.from && toMin <= g.to;
+    });
+  }
+
+  /** Dopasuj start wizyty do luki wolnej (snap), albo null gdy się nie mieści. */
+  function fitBookingIntoFreeGap(gapFrom, gapTo, preferFrom, duration) {
+    if (!(duration > 0) || duration > gapTo - gapFrom) return null;
+    let fromMin = snapProvCalMin(preferFrom);
+    fromMin = Math.max(gapFrom, Math.min(fromMin, gapTo - duration));
+    if (fromMin < gapFrom) fromMin = gapFrom;
+    if (fromMin + duration > gapTo) fromMin = gapTo - duration;
+    fromMin = snapProvCalMin(fromMin);
+    if (fromMin < gapFrom) fromMin = gapFrom;
+    if (fromMin + duration > gapTo) return null;
+    return { from: fromMin, to: fromMin + duration };
+  }
+
+  function clampBookingIntoFreeGap(preferFrom, duration, gapFrom, gapTo) {
+    return fitBookingIntoFreeGap(gapFrom, gapTo, preferFrom, duration);
+  }
+
+  function clearProvCalDropTargets() {
+    document.querySelectorAll(".gcal__event--drop-target").forEach(function (el) {
+      el.classList.remove("gcal__event--drop-target");
+    });
+  }
+
+  function highlightProvCalDropTargets(bookingId, dateISO, duration) {
+    clearProvCalDropTargets();
+    document.querySelectorAll('[data-role="prov-cal-slot"][data-kind="free"]').forEach(function (el) {
+      if ((el.getAttribute("data-date") || "") !== dateISO) return;
+      const gapFrom = Number(el.getAttribute("data-from-min"));
+      const gapTo = Number(el.getAttribute("data-to-min"));
+      el.classList.toggle("gcal__event--drop-target", gapTo - gapFrom >= duration);
     });
   }
 
@@ -2812,38 +2859,6 @@
     if (!bk) return false;
     bk.from = minToTime(fromMin);
     bk.to = minToTime(toMin);
-    return true;
-  }
-
-  function moveFreeGap(dateISO, oldFrom, oldTo, newFrom, newTo) {
-    const p = myProvider();
-    if (!p || !dateISO) return false;
-    const raw = providerAvailBlocksForDate(dateISO)
-      .map(function (b) {
-        return { from: timeToMinutes(b.from), to: timeToMinutes(b.to), locationId: b.locationId };
-      })
-      .filter(function (s) {
-        return !isNaN(s.from) && !isNaN(s.to) && s.to > s.from;
-      });
-    let segs = mergeTimeIntervals(
-      raw.map(function (s) {
-        return { from: s.from, to: s.to };
-      })
-    );
-    segs = subtractMinuteRange(segs, oldFrom, oldTo);
-    segs = mergeTimeIntervals(segs.concat([{ from: newFrom, to: newTo }]));
-    const locId = (raw[0] && raw[0].locationId) || defaultAvailBlock(p).locationId;
-    const blocks = segs.map(function (s, i) {
-      return {
-        id: "avail-move-" + dateISO + "-" + i + "-" + s.from,
-        from: minToTime(s.from),
-        to: minToTime(s.to),
-        locationId: locId,
-        repeat: "none",
-        recurring: false,
-      };
-    });
-    writeAvailDayBlocks(dateISO, blocks);
     return true;
   }
 
@@ -2865,6 +2880,36 @@
     if (timeEl) timeEl.textContent = minToTime(fromMin) + "–" + minToTime(toMin);
     const titleEl = el.querySelector(".gcal__event-title");
     if (titleEl && isFree) titleEl.textContent = "Wolne · " + (toMin - fromMin) + " min";
+  }
+
+  /** Zielona godzina startu na osi czasu podczas przytrzymania / przeciągania wizyty. */
+  function updateProvCalDragTime(fromMin) {
+    const timeline = document.querySelector('[data-role="prov-cal-timeline"]');
+    if (!timeline || typeof fromMin !== "number" || isNaN(fromMin)) return;
+    let tip = timeline.querySelector('[data-role="prov-cal-drag-time"]');
+    if (!tip) {
+      tip = document.createElement("div");
+      tip.className = "gcal__drag-time";
+      tip.setAttribute("data-role", "prov-cal-drag-time");
+      tip.setAttribute("aria-hidden", "true");
+      timeline.appendChild(tip);
+    }
+    const hourH = ensureProvCalHourH();
+    const dayStartMin = PROV_CAL_HOUR_START * 60;
+    const top = ((fromMin - dayStartMin) / 60) * hourH;
+    tip.textContent = minToTime(fromMin);
+    tip.style.top = Math.max(0, top) + "px";
+    tip.hidden = false;
+    timeline.classList.add("gcal__timeline--dragging");
+  }
+
+  function hideProvCalDragTime() {
+    document.querySelectorAll('[data-role="prov-cal-drag-time"]').forEach(function (el) {
+      el.remove();
+    });
+    document.querySelectorAll(".gcal__timeline--dragging").forEach(function (el) {
+      el.classList.remove("gcal__timeline--dragging");
+    });
   }
 
   function ensureProvCalPickerMonth() {
@@ -3250,7 +3295,7 @@
 
     const trackContent = freeBlocks + events;
     return `
-      <div class="gcal" data-role="prov-cal-gcal">
+      <div class="gcal" data-role="prov-cal-gcal" data-prov-cal-day-swipe>
         <div class="gcal__timeline" style="height:${totalH}px;--gcal-hour-h:${hourH}px" data-role="prov-cal-timeline">
           <div class="gcal__hours">${hours}</div>
           <div class="gcal__track">
@@ -3404,7 +3449,12 @@
         <div class="prov-cal-top">
           <header class="screen-head screen-head--prov-cal">
             <div class="prov-cal-head">
-              <h2 class="screen-head__title">Kalendarz</h2>
+              <div class="prov-cal-head__title-row">
+                <button type="button" class="screen-head__back" data-action="provider-tab" data-tab="dashboard" aria-label="Wróć">
+                  <span class="screen-head__back-icon" aria-hidden="true"></span>
+                </button>
+                <h2 class="screen-head__title">Kalendarz</h2>
+              </div>
               <div class="prov-cal-head__actions">
                 <div class="prov-cal__tools" role="toolbar" aria-label="Narzędzia kalendarza">
                   <button type="button" class="prov-cal__tool${!weekView && !monthOpen ? " is-on" : ""}" data-action="prov-cal-view" data-view="day"
@@ -5829,7 +5879,10 @@
     true
   );
 
-  /** Zaznaczanie + przeciąganie wolnych/zajętych slotów (snap 5 min). */
+  /**
+   * Zaznaczanie wolnych/zajętych + przeciąganie WIZYT na wolne sloty (snap 5 min).
+   * „Wolne” da się tylko zaznaczyć — nie przesuwa się; przyjmuje upuszczoną wizytę.
+   */
   function bindProvCalEventDrag() {
     if (bindProvCalEventDrag.done) return;
     bindProvCalEventDrag.done = true;
@@ -5846,43 +5899,106 @@
       pointerId: null,
       moved: false,
       lastFrom: 0,
+      allowMove: false,
+      armed: false,
+      holdTimer: 0,
     };
 
+    function clearHoldTimer() {
+      if (drag.holdTimer) {
+        clearTimeout(drag.holdTimer);
+        drag.holdTimer = 0;
+      }
+    }
+
     function resetDrag() {
+      clearHoldTimer();
       if (drag.el) drag.el.classList.remove("gcal__event--dragging");
+      clearProvCalDropTargets();
+      hideProvCalDragTime();
       drag.active = false;
       drag.el = null;
       drag.pointerId = null;
       drag.moved = false;
+      drag.allowMove = false;
+      drag.armed = false;
     }
 
-    function commitDrag() {
+    function armBookingDrag() {
+      drag.holdTimer = 0;
+      if (!drag.active || !drag.allowMove || !drag.el) return;
+      drag.armed = true;
+      drag.el.classList.add("gcal__event--dragging");
+      if (!isProvCalSlotSelected(drag.el)) {
+        selectProvCalSlot(
+          {
+            kind: "booking",
+            bookingId: drag.bookingId,
+            dateISO: drag.dateISO,
+            fromMin: drag.startFrom,
+            toMin: drag.startTo,
+          },
+          { force: true }
+        );
+      } else {
+        hapticTap(16);
+      }
+      highlightProvCalDropTargets(drag.bookingId, drag.dateISO, drag.duration);
+      updateProvCalDragTime(drag.startFrom);
+    }
+
+    function resolveDropOnFree(clientX, clientY, preferredFrom) {
+      if (!drag.el) return null;
+      drag.el.style.pointerEvents = "none";
+      const under = document.elementFromPoint(clientX, clientY);
+      drag.el.style.pointerEvents = "";
+      const freeEl = under && under.closest && under.closest('[data-role="prov-cal-slot"][data-kind="free"]');
+      if (!freeEl) return null;
+      if ((freeEl.getAttribute("data-date") || "") !== drag.dateISO) return null;
+      const gapFrom = Number(freeEl.getAttribute("data-from-min"));
+      const gapTo = Number(freeEl.getAttribute("data-to-min"));
+      return clampBookingIntoFreeGap(preferredFrom, drag.duration, gapFrom, gapTo);
+    }
+
+    function commitBookingDrag(event) {
       if (!drag.el) return;
-      const newFrom = Number(drag.el.getAttribute("data-from-min"));
-      const newTo = Number(drag.el.getAttribute("data-to-min"));
+      let newFrom = Number(drag.el.getAttribute("data-from-min"));
+      let newTo = Number(drag.el.getAttribute("data-to-min"));
+      const drop = event ? resolveDropOnFree(event.clientX, event.clientY, newFrom) : null;
+      if (drop) {
+        newFrom = drop.from;
+        newTo = drop.to;
+      }
       if (!(newTo > newFrom) || (newFrom === drag.startFrom && newTo === drag.startTo)) {
         resetDrag();
+        renderAll();
         return;
       }
-      if (drag.kind === "booking") {
-        if (!canPlaceBooking(drag.bookingId, drag.dateISO, newFrom, newTo)) {
-          showToast("Termin koliduje z inną wizytą.");
+      if (!canPlaceBookingInFree(drag.bookingId, drag.dateISO, newFrom, newTo)) {
+        // Spróbuj dopasować do najbliższej wolnej luki pod kursorem / pozycją
+        const gaps = freeGapsForBookingMove(drag.bookingId, drag.dateISO).filter(function (g) {
+          return g.to - g.from >= drag.duration;
+        });
+        let fitted = null;
+        for (let i = 0; i < gaps.length; i++) {
+          const g = gaps[i];
+          if (newFrom < g.to && newTo > g.from) {
+            fitted = clampBookingIntoFreeGap(newFrom, drag.duration, g.from, g.to);
+            if (fitted) break;
+          }
+        }
+        if (!fitted) {
+          showToast("Upuść wizytę na wolny termin.");
           resetDrag();
           renderAll();
           return;
         }
-        moveBookingTimes(drag.bookingId, newFrom, newTo);
-      } else {
-        if (!canPlaceFree(drag.dateISO, newFrom, newTo)) {
-          showToast("Tu jest już wizyta — wybierz inne miejsce.");
-          resetDrag();
-          renderAll();
-          return;
-        }
-        moveFreeGap(drag.dateISO, drag.startFrom, drag.startTo, newFrom, newTo);
+        newFrom = fitted.from;
+        newTo = fitted.to;
       }
+      moveBookingTimes(drag.bookingId, newFrom, newTo);
       window.AppState.provCalSelection = normalizeProvCalSelection({
-        kind: drag.kind,
+        kind: "booking",
         bookingId: drag.bookingId,
         dateISO: drag.dateISO,
         fromMin: newFrom,
@@ -5892,7 +6008,6 @@
       resetDrag();
       saveState();
       renderAll();
-      showToast("Przesunięto.");
     }
 
     document.addEventListener(
@@ -5905,9 +6020,11 @@
         const fromMin = Number(el.getAttribute("data-from-min"));
         const toMin = Number(el.getAttribute("data-to-min"));
         if (!(toMin > fromMin)) return;
+        const kind = el.getAttribute("data-kind") || "booking";
         drag.active = true;
         drag.el = el;
-        drag.kind = el.getAttribute("data-kind") || "booking";
+        drag.kind = kind;
+        drag.allowMove = kind === "booking";
         drag.bookingId = el.getAttribute("data-booking-id");
         drag.dateISO = el.getAttribute("data-date") || ensureProvCalDate();
         drag.startFrom = fromMin;
@@ -5917,6 +6034,11 @@
         drag.pointerId = event.pointerId;
         drag.moved = false;
         drag.lastFrom = fromMin;
+        drag.armed = false;
+        clearHoldTimer();
+        if (drag.allowMove) {
+          drag.holdTimer = setTimeout(armBookingDrag, 300);
+        }
         try {
           el.setPointerCapture(event.pointerId);
         } catch (err) {
@@ -5929,32 +6051,22 @@
     document.addEventListener(
       "pointermove",
       function (event) {
-        if (!drag.active || !drag.el) return;
+        if (!drag.active || !drag.el || !drag.allowMove) return;
         if (drag.pointerId != null && event.pointerId !== drag.pointerId) return;
         const hourH = ensureProvCalHourH();
         const dayStart = PROV_CAL_HOUR_START * 60;
         const dayEnd = PROV_CAL_HOUR_END * 60;
         const dy = event.clientY - drag.originY;
-        if (!drag.moved && Math.abs(dy) < 8) return;
-        if (!drag.moved) {
-          drag.moved = true;
-          drag.el.classList.add("gcal__event--dragging");
-          if (!isProvCalSlotSelected(drag.el)) {
-            selectProvCalSlot(
-              {
-                kind: drag.kind,
-                bookingId: drag.bookingId,
-                dateISO: drag.dateISO,
-                fromMin: drag.startFrom,
-                toMin: drag.startTo,
-              },
-              { force: true }
-            );
-          }
-          hapticTap(12);
+        if (!drag.armed) {
+          if (Math.abs(dy) > 10) resetDrag();
+          return;
         }
         event.preventDefault();
-        let deltaMin = snapProvCalMin((dy / hourH) * 60);
+        if (!drag.moved && Math.abs(dy) < 3) return;
+        if (!drag.moved) {
+          drag.moved = true;
+        }
+        const deltaMin = snapProvCalMin((dy / hourH) * 60);
         let newFrom = snapProvCalMin(drag.startFrom + deltaMin);
         let newTo = newFrom + drag.duration;
         if (newFrom < dayStart) {
@@ -5968,6 +6080,9 @@
         if (newFrom === drag.lastFrom) return;
         drag.lastFrom = newFrom;
         applyProvCalSlotLayout(drag.el, newFrom, newTo);
+        updateProvCalDragTime(newFrom);
+        const ok = canPlaceBookingInFree(drag.bookingId, drag.dateISO, newFrom, newTo);
+        drag.el.classList.toggle("gcal__event--invalid", !ok);
       },
       { capture: true, passive: false }
     );
@@ -5979,8 +6094,10 @@
       setTimeout(function () {
         window._provCalSlotIgnoreClick = false;
       }, 0);
-      if (drag.moved) {
-        commitDrag();
+      if (drag.moved && drag.allowMove && drag.armed) {
+        commitBookingDrag(event);
+      } else if (drag.armed) {
+        resetDrag();
       } else {
         const sel = selectionFromSlotEl(drag.el);
         resetDrag();
@@ -5989,16 +6106,20 @@
     }
 
     document.addEventListener("pointerup", endPointer, true);
-    document.addEventListener("pointercancel", function (event) {
-      if (!drag.active) return;
-      if (drag.pointerId != null && event.pointerId !== drag.pointerId) return;
-      if (drag.moved) {
-        resetDrag();
-        renderAll();
-      } else {
-        resetDrag();
-      }
-    }, true);
+    document.addEventListener(
+      "pointercancel",
+      function (event) {
+        if (!drag.active) return;
+        if (drag.pointerId != null && event.pointerId !== drag.pointerId) return;
+        if (drag.moved) {
+          resetDrag();
+          renderAll();
+        } else {
+          resetDrag();
+        }
+      },
+      true
+    );
   }
 
   function bindProvCalPinchZoom() {
@@ -6116,6 +6237,79 @@
     );
   }
 
+  /** Swipe w lewo/prawo na widoku dnia → następny / poprzedni dzień. */
+  function bindProvCalDaySwipe() {
+    if (bindProvCalDaySwipe.done) return;
+    bindProvCalDaySwipe.done = true;
+    const swipe = { active: false, startX: 0, startY: 0, locked: false };
+
+    function inDayView(target) {
+      if (!target || !target.closest) return false;
+      if (window.AppState.provCalView === "week") return false;
+      if (window.AppState.provCalMonthOpen) return false;
+      return !!target.closest("[data-prov-cal-day-swipe]");
+    }
+
+    document.addEventListener(
+      "touchstart",
+      function (event) {
+        if (event.touches.length !== 1) return;
+        if (!inDayView(event.target)) return;
+        // nie koliduj z przeciąganiem zajętej wizyty
+        if (event.target.closest('[data-role="prov-cal-slot"][data-kind="booking"]')) return;
+        swipe.active = true;
+        swipe.locked = false;
+        swipe.startX = event.touches[0].clientX;
+        swipe.startY = event.touches[0].clientY;
+      },
+      { passive: true }
+    );
+
+    document.addEventListener(
+      "touchmove",
+      function (event) {
+        if (!swipe.active || event.touches.length !== 1) return;
+        const dx = event.touches[0].clientX - swipe.startX;
+        const dy = event.touches[0].clientY - swipe.startY;
+        if (!swipe.locked) {
+          if (Math.abs(dx) < 14 && Math.abs(dy) < 14) return;
+          if (Math.abs(dy) >= Math.abs(dx) * 0.85) {
+            swipe.active = false;
+            return;
+          }
+          swipe.locked = true;
+        }
+      },
+      { passive: true }
+    );
+
+    document.addEventListener(
+      "touchend",
+      function (event) {
+        if (!swipe.active) return;
+        const t = event.changedTouches && event.changedTouches[0];
+        const dx = t ? t.clientX - swipe.startX : 0;
+        const wasLocked = swipe.locked;
+        swipe.active = false;
+        swipe.locked = false;
+        if (!wasLocked || Math.abs(dx) < 52) return;
+        if (window.AppState.provCalView === "week" || window.AppState.provCalMonthOpen) return;
+        // w lewo → następny dzień, w prawo → poprzedni
+        shiftProvCalDate(dx < 0 ? 1 : -1);
+      },
+      { passive: true }
+    );
+
+    document.addEventListener(
+      "touchcancel",
+      function () {
+        swipe.active = false;
+        swipe.locked = false;
+      },
+      { passive: true }
+    );
+  }
+
   function bindProvCalMonthSwipe() {
     if (bindProvCalMonthSwipe.done) return;
     bindProvCalMonthSwipe.done = true;
@@ -6182,6 +6376,7 @@
     bindFilterScroll();
     bindProvCalEventDrag();
     bindProvCalPinchZoom();
+    bindProvCalDaySwipe();
     bindProvCalMonthSwipe();
     bindAvailWeekScrollBridge();
     loadState();

@@ -5292,6 +5292,17 @@ body.avatar-preview-open {
   gap: 0.75rem;
 }
 
+.prov-cal-head__title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.05rem;
+  min-width: 0;
+}
+
+.prov-cal-head__title-row .screen-head__title {
+  margin: 0;
+}
+
 .prov-cal-head__actions {
   display: flex;
   align-items: center;
@@ -5651,6 +5662,11 @@ body.avatar-preview-open {
   grid-template-columns: 3.1rem 1fr;
   touch-action: pan-y;
   --gcal-hour-h: 60px;
+  overflow: visible;
+}
+
+.gcal__timeline--dragging {
+  z-index: 5;
 }
 
 /* ---- Widok tygodnia (wąskie kolumny, same bloki) ---- */
@@ -5806,6 +5822,7 @@ body.avatar-preview-open {
 .gcal__hours {
   position: relative;
   z-index: 2;
+  overflow: visible;
 }
 
 .gcal__hour {
@@ -5823,6 +5840,32 @@ body.avatar-preview-open {
   font-weight: 600;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.gcal__timeline--dragging .gcal__hour-label {
+  opacity: 0.28;
+}
+
+/* Godzina startu na osi — przytrzymanie / przeciąganie wizyty */
+.gcal__drag-time {
+  position: absolute;
+  left: 0;
+  z-index: 12;
+  transform: translateY(-50%);
+  min-width: 2.7rem;
+  padding: 0.18rem 0.28rem;
+  border-radius: 6px;
+  background: var(--accent-provider);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-provider) 45%, rgba(0, 0, 0, 0.2));
 }
 
 .gcal__track {
@@ -5879,14 +5922,15 @@ body.avatar-preview-open {
   padding: 0.22rem 0.4rem 0.22rem 0.55rem;
   border-radius: 3px;
   overflow: hidden;
-  background: transparent;
+  /* Zarezerwowane: zawsze lekkie zielone tło (jak po zaznaczeniu) */
+  background: color-mix(in srgb, var(--accent-provider) 16%, var(--surface));
   color: var(--text);
   border: 0;
   box-shadow: none;
   box-sizing: border-box;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: background 0.12s ease, box-shadow 0.12s ease;
+  transition: background 0.12s ease, box-shadow 0.12s ease, transform 0.14s ease;
 }
 
 .gcal__event::before {
@@ -5904,13 +5948,19 @@ body.avatar-preview-open {
 
 .gcal__event--selected {
   z-index: 5;
-  background: color-mix(in srgb, var(--accent-provider) 16%, var(--surface));
+  background: color-mix(in srgb, var(--accent-provider) 22%, var(--surface));
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent-provider) 55%, transparent);
+  transform: scale(1.035);
+  transform-origin: left center;
 }
 
 .gcal__event--selected::before {
   width: 4px;
   background: var(--accent-provider);
+}
+
+.gcal__event--dragging.gcal__event--selected {
+  transform: scale(1.05);
 }
 
 .gcal__event--proposed {
@@ -5952,6 +6002,17 @@ body.avatar-preview-open {
   z-index: 5;
   background: color-mix(in srgb, var(--text-muted) 22%, var(--surface));
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--text-muted) 55%, transparent);
+}
+
+.gcal__event--free.gcal__event--drop-target {
+  z-index: 3;
+  background: color-mix(in srgb, var(--accent-provider) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-provider) 55%, var(--border));
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent-provider) 40%, transparent);
+}
+
+.gcal__event--invalid {
+  opacity: 0.55;
 }
 
 .gcal__event--free .gcal__event-time {
