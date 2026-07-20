@@ -5271,10 +5271,15 @@ body.avatar-preview-open {
 
 .prov-cal-top {
   flex-shrink: 0;
-  padding: 0.75rem var(--app-pad-x) 0.55rem;
+  padding: 0.75rem var(--app-pad-x) 0;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   z-index: 2;
+}
+
+.prov-cal-top .gcal__dayhead {
+  margin: 0.35rem 0 0;
+  padding-bottom: 0.45rem;
 }
 
 .screen-head--prov-cal {
@@ -5283,13 +5288,9 @@ body.avatar-preview-open {
 
 .prov-cal-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-}
-
-.prov-cal-head .screen-head__sub {
-  margin: 0.15rem 0 0;
 }
 
 .prov-cal-head__actions {
@@ -5313,88 +5314,6 @@ body.avatar-preview-open {
   cursor: pointer;
 }
 
-.prov-cal__strip {
-  display: flex;
-  gap: 0.35rem;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  touch-action: pan-x;
-  padding: 0.1rem 0 0.35rem;
-  scrollbar-width: none;
-}
-
-.prov-cal__strip::-webkit-scrollbar {
-  display: none;
-}
-
-.prov-cal__chip {
-  appearance: none;
-  position: relative;
-  flex: 0 0 2.85rem;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.12rem;
-  margin: 0;
-  padding: 0.45rem 0.2rem 0.55rem;
-  border: 1px solid transparent;
-  border-radius: 14px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-}
-
-.prov-cal__chip-dow {
-  font-size: 0.68rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  color: var(--text-muted);
-}
-
-.prov-cal__chip-day {
-  font-size: 1.05rem;
-  font-weight: 750;
-  line-height: 1;
-}
-
-.prov-cal__chip-dow--red,
-.prov-cal__chip-day--red {
-  color: var(--danger);
-}
-
-.prov-cal__chip-dot {
-  position: absolute;
-  bottom: 0.28rem;
-  width: 0.28rem;
-  height: 0.28rem;
-  border-radius: 50%;
-  background: var(--accent-provider);
-}
-
-.prov-cal__chip--today:not(.prov-cal__chip--on) .prov-cal__chip-day {
-  color: var(--accent-provider);
-}
-
-.prov-cal__chip--on {
-  background: var(--accent-provider);
-  border-color: var(--accent-provider);
-  color: #fff;
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent-provider) 35%, transparent);
-}
-
-.prov-cal__chip--on .prov-cal__chip-dow,
-.prov-cal__chip--on .prov-cal__chip-day,
-.prov-cal__chip--on .prov-cal__chip-dow--red,
-.prov-cal__chip--on .prov-cal__chip-day--red {
-  color: #fff;
-}
-
-.prov-cal__chip--on .prov-cal__chip-dot {
-  background: #fff;
-}
-
 .prov-cal-body {
   flex: 1 1 0;
   min-height: 0;
@@ -5410,15 +5329,10 @@ body.avatar-preview-open {
 }
 
 .gcal__dayhead {
-  position: sticky;
-  top: 0;
-  z-index: 5;
   display: grid;
   grid-template-columns: 3.1rem 1fr;
   align-items: start;
   gap: 0;
-  margin-bottom: 0.15rem;
-  padding-bottom: 0.2rem;
   background: var(--surface);
 }
 
@@ -5428,6 +5342,7 @@ body.avatar-preview-open {
   align-items: center;
   gap: 0.15rem;
   padding-top: 0.1rem;
+  min-width: 0;
 }
 
 .gcal__daybadge-dow {
@@ -5459,6 +5374,39 @@ body.avatar-preview-open {
   color: #fff;
 }
 
+.gcal__month-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  margin: 0.12rem 0 0;
+  padding: 0.1rem 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 3.4rem;
+}
+
+.gcal__month-btn-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gcal__month-btn-chevron {
+  font-size: 0.62rem;
+  line-height: 1;
+  opacity: 0.85;
+}
+
 .gcal__dayhead-line {
   height: 1px;
   margin-top: 1.55rem;
@@ -5469,6 +5417,8 @@ body.avatar-preview-open {
   position: relative;
   display: grid;
   grid-template-columns: 3.1rem 1fr;
+  touch-action: pan-y;
+  --gcal-hour-h: 60px;
 }
 
 .gcal__hours {
@@ -5500,9 +5450,9 @@ body.avatar-preview-open {
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
-    transparent 59px,
-    color-mix(in srgb, var(--border) 85%, transparent) 59px,
-    color-mix(in srgb, var(--border) 85%, transparent) 60px
+    transparent calc(var(--gcal-hour-h) - 1px),
+    color-mix(in srgb, var(--border) 85%, transparent) calc(var(--gcal-hour-h) - 1px),
+    color-mix(in srgb, var(--border) 85%, transparent) var(--gcal-hour-h)
   );
 }
 
@@ -5567,14 +5517,14 @@ body.avatar-preview-open {
 
 .gcal__event--free {
   z-index: 1;
-  background: color-mix(in srgb, var(--accent-provider) 10%, var(--surface));
-  color: var(--accent-provider);
-  border: 1px dashed color-mix(in srgb, var(--accent-provider) 42%, var(--border));
+  background: color-mix(in srgb, var(--text-muted) 6%, var(--surface));
+  color: color-mix(in srgb, var(--text-muted) 88%, var(--text));
+  border: 1px dashed color-mix(in srgb, var(--text-muted) 55%, var(--border));
   box-shadow: none;
 }
 
 .gcal__event--free .gcal__event-time {
-  opacity: 0.85;
+  opacity: 0.8;
 }
 
 .gcal__event--compact {
@@ -5620,6 +5570,10 @@ body.avatar-preview-open {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.gcal__event--compact .gcal__event-client {
+  display: none;
 }
 
 .time-list--vertical {
@@ -7597,28 +7551,59 @@ body.avatar-preview-open {
   margin-top: 0.15rem;
 }
 
-.avail-edit__remove--in-group {
+.avail-edit__footer {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+}
+
+.avail-edit__footer::before {
+  content: "";
+  position: absolute;
+  left: 0.85rem;
+  right: 0.85rem;
+  top: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--border) 85%, transparent);
+  pointer-events: none;
+}
+
+.avail-edit__remove--in-group,
+.avail-edit__save--in-group {
   position: relative;
   width: 100%;
   min-height: 2.6rem;
-  border-radius: 0 0 14px 14px;
+  border-radius: 0;
   background: transparent;
   font-size: 0.92rem;
   font-weight: 600;
 }
 
-.avail-edit__remove--in-group::before {
-  content: "";
-  position: absolute;
-  left: 0.85rem;
-  right: 0;
-  top: 0;
-  height: 1px;
-  background: color-mix(in srgb, var(--border) 85%, transparent);
+.avail-edit__remove--in-group {
+  border-radius: 0 0 0 14px;
+}
+
+.avail-edit__save--in-group {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0.55rem 0.85rem;
+  border: none;
+  border-radius: 0 0 14px 0;
+  color: var(--accent-provider);
+  font: inherit;
+  cursor: pointer;
 }
 
 .avail-edit__remove--in-group:hover {
   background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.avail-edit__save--in-group:hover {
+  background: color-mix(in srgb, var(--accent-provider) 10%, transparent);
 }
 
 .avail-day__add-row {
