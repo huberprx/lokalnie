@@ -83,6 +83,7 @@
       provCalPickerMonth: null,
       provCalSearchOpen: false,
       provCalSearchQ: "",
+      provCalSelection: null,
       availWeekStart: null,
       availStripScrollLeft: null,
       availListOnlySet: true,
@@ -1233,6 +1234,12 @@
           typeof stored.provCalPickerMonth === "string" ? stored.provCalPickerMonth : base.provCalPickerMonth,
         provCalSearchOpen: !!stored.provCalSearchOpen,
         provCalSearchQ: typeof stored.provCalSearchQ === "string" ? stored.provCalSearchQ : base.provCalSearchQ,
+        provCalSelection: normalizeProvCalSelection(
+          stored.provCalSelection ||
+            (typeof stored.provCalSelectedBookingId === "string"
+              ? { kind: "booking", bookingId: stored.provCalSelectedBookingId }
+              : null)
+        ),
         availWeekStart: typeof stored.availWeekStart === "string" ? stored.availWeekStart : base.availWeekStart,
         availStripScrollLeft:
           typeof stored.availStripScrollLeft === "number" ? stored.availStripScrollLeft : base.availStripScrollLeft,
@@ -1438,6 +1445,23 @@
             </button>
           </div>
 
+          <div class="app-menu__profiles" role="group" aria-label="Przełącz profil">
+            <p class="app-menu__profiles-label">Profile</p>
+            <button type="button" class="app-menu__profile app-menu__profile--client${clientActive ? " app-menu__profile--active" : ""}" data-action="switch-role" data-role="client" aria-pressed="${clientActive ? "true" : "false"}">
+              <span class="app-menu__avatar app-menu__avatar--client">${renderClientMenuAvatar()}</span>
+              <span class="app-menu__profile-text">
+                <span class="app-menu__profile-label">Klient</span>
+                <span class="app-menu__profile-name">${escapeHtml(user.name || "Użytkownik")}</span>
+              </span>
+              ${clientActive ? check : ""}
+            </button>
+            <label class="app-menu__photo-btn">
+              <span class="app-menu__photo-btn-label">Zmień zdjęcie profilu klienta</span>
+              <input type="file" class="app-menu__file" accept="image/*" data-action="change-client-avatar" tabindex="-1" />
+            </label>
+            ${providerBlock}
+          </div>
+
           <nav class="app-menu__links" aria-label="Informacje">
             ${
               isPwaInstalled()
@@ -1454,23 +1478,6 @@
               <span>Wersja aplikacji</span>
               <span class="app-menu__version-num">${escapeHtml(APP_VERSION)}</span>
             </button>
-          </div>
-
-          <div class="app-menu__profiles" role="group" aria-label="Przełącz profil">
-            <p class="app-menu__profiles-label">Profile</p>
-            <button type="button" class="app-menu__profile app-menu__profile--client${clientActive ? " app-menu__profile--active" : ""}" data-action="switch-role" data-role="client" aria-pressed="${clientActive ? "true" : "false"}">
-              <span class="app-menu__avatar app-menu__avatar--client">${renderClientMenuAvatar()}</span>
-              <span class="app-menu__profile-text">
-                <span class="app-menu__profile-label">Klient</span>
-                <span class="app-menu__profile-name">${escapeHtml(user.name || "Użytkownik")}</span>
-              </span>
-              ${clientActive ? check : ""}
-            </button>
-            <label class="app-menu__photo-btn">
-              <span class="app-menu__photo-btn-label">Zmień zdjęcie profilu klienta</span>
-              <input type="file" class="app-menu__file" accept="image/*" data-action="change-client-avatar" tabindex="-1" />
-            </label>
-            ${providerBlock}
           </div>
 
           <div class="app-menu__footer">
@@ -2642,6 +2649,7 @@
     window.AppState.provCalPickerMonth = dateISO.slice(0, 7);
     window.AppState.provCalMonthOpen = false;
     if (!opts.keepView) window.AppState.provCalView = "day";
+    if (!opts.keepSelection) window.AppState.provCalSelection = null;
     saveState();
     renderAll();
   }
@@ -2652,6 +2660,211 @@
     if (next === "week") window.AppState.provCalMonthOpen = false;
     saveState();
     renderAll();
+  }
+
+  /** Krótki haptyczny feedback w PWA / na telefonie (jeśli API dostępne). */
+  function hapticTap(ms) {
+    try {
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+        navigator.vibrate(typeof ms === "number" ? ms : 14);
+      }
+    } catch (err) {
+      /* ignore */
+    }
+  }
+
+  const PROV_CAL_SNAP_MIN = 5;
+
+  function normalizeProvCalSelection(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    if (raw.kind === "booking" && raw.bookingId) {
+      return {
+        kind: "booking",
+        bookingId: String(raw.bookingId),
+        dateISO: typeof raw.dateISO === "string" ? raw.dateISO : null,
+        fromMin: Number(raw.fromMin) || 0,
+        toMin: Number(raw.toMin) || 0,
+      };
+    }
+    if (raw.kind === "free" && raw.dateISO) {
+      const fromMin = Number(raw.fromMin);
+      const toMin = Number(raw.toMin);
+      if (!(toMin > fromMin)) return null;
+      return { kind: "free", dateISO: String(raw.dateISO), fromMin: fromMin, toMin: toMin };
+    }
+    return null;
+  }
+
+  function provCalSelectionKey(sel) {
+    if (!sel) return "";
+    if (sel.kind === "booking") return "b:" + sel.bookingId;
+    return "f:" + sel.dateISO + ":" + sel.fromMin + ":" + sel.toMin;
+  }
+
+  function selectionFromSlotEl(el) {
+    if (!el) return null;
+    const kind = el.getAttribute("data-kind");
+    const dateISO = el.getAttribute("data-date") || ensureProvCalDate();
+    const fromMin = Number(el.getAttribute("data-from-min"));
+    const toMin = Number(el.getAttribute("data-to-min"));
+    if (kind === "booking") {
+      return normalizeProvCalSelection({
+        kind: "booking",
+        bookingId: el.getAttribute("data-booking-id"),
+        dateISO: dateISO,
+        fromMin: fromMin,
+        toMin: toMin,
+      });
+    }
+    if (kind === "free") {
+      return normalizeProvCalSelection({ kind: "free", dateISO: dateISO, fromMin: fromMin, toMin: toMin });
+    }
+    return null;
+  }
+
+  function isProvCalSlotSelected(el) {
+    const sel = window.AppState.provCalSelection;
+    if (!sel || !el) return false;
+    return provCalSelectionKey(sel) === provCalSelectionKey(selectionFromSlotEl(el));
+  }
+
+  function syncProvCalSelection() {
+    document.querySelectorAll('[data-role="prov-cal-slot"]').forEach(function (el) {
+      const on = isProvCalSlotSelected(el);
+      el.classList.toggle("gcal__event--selected", on);
+      el.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  }
+
+  function selectProvCalSlot(nextSel, opts) {
+    opts = opts || {};
+    const normalized = normalizeProvCalSelection(nextSel);
+    const prevKey = provCalSelectionKey(window.AppState.provCalSelection);
+    const nextKey = provCalSelectionKey(normalized);
+    if (!opts.force && prevKey && prevKey === nextKey) {
+      window.AppState.provCalSelection = null;
+    } else {
+      window.AppState.provCalSelection = normalized;
+    }
+    hapticTap(window.AppState.provCalSelection ? 16 : 10);
+    syncProvCalSelection();
+    saveState();
+  }
+
+  function clearProvCalSelection() {
+    if (!window.AppState.provCalSelection) return;
+    window.AppState.provCalSelection = null;
+    syncProvCalSelection();
+  }
+
+  function snapProvCalMin(min) {
+    return Math.round(Number(min) / PROV_CAL_SNAP_MIN) * PROV_CAL_SNAP_MIN;
+  }
+
+  function subtractMinuteRange(segments, from, to) {
+    const next = [];
+    (segments || []).forEach(function (seg) {
+      if (to <= seg.from || from >= seg.to) {
+        next.push({ from: seg.from, to: seg.to });
+        return;
+      }
+      if (from > seg.from) next.push({ from: seg.from, to: from });
+      if (to < seg.to) next.push({ from: to, to: seg.to });
+    });
+    return next.filter(function (s) {
+      return s.to > s.from;
+    });
+  }
+
+  function activeDayBookings(dateISO, exceptId) {
+    return (window.AppState.bookings || []).filter(function (b) {
+      if (!b || b.dateISO !== dateISO) return false;
+      if (exceptId && b.id === exceptId) return false;
+      if (b.status !== "confirmed" && b.status !== "proposed") return false;
+      const from = timeToMinutes(b.from);
+      const to = timeToMinutes(b.to);
+      return !isNaN(from) && !isNaN(to) && to > from;
+    });
+  }
+
+  function canPlaceBooking(bookingId, dateISO, fromMin, toMin) {
+    const dayStart = PROV_CAL_HOUR_START * 60;
+    const dayEnd = PROV_CAL_HOUR_END * 60;
+    if (!(toMin > fromMin) || fromMin < dayStart || toMin > dayEnd) return false;
+    return !activeDayBookings(dateISO, bookingId).some(function (b) {
+      return fromMin < timeToMinutes(b.to) && timeToMinutes(b.from) < toMin;
+    });
+  }
+
+  function canPlaceFree(dateISO, fromMin, toMin) {
+    const dayStart = PROV_CAL_HOUR_START * 60;
+    const dayEnd = PROV_CAL_HOUR_END * 60;
+    if (!(toMin > fromMin) || fromMin < dayStart || toMin > dayEnd) return false;
+    return !activeDayBookings(dateISO, null).some(function (b) {
+      return fromMin < timeToMinutes(b.to) && timeToMinutes(b.from) < toMin;
+    });
+  }
+
+  function moveBookingTimes(bookingId, fromMin, toMin) {
+    const bk = (window.AppState.bookings || []).find(function (b) {
+      return b.id === bookingId;
+    });
+    if (!bk) return false;
+    bk.from = minToTime(fromMin);
+    bk.to = minToTime(toMin);
+    return true;
+  }
+
+  function moveFreeGap(dateISO, oldFrom, oldTo, newFrom, newTo) {
+    const p = myProvider();
+    if (!p || !dateISO) return false;
+    const raw = providerAvailBlocksForDate(dateISO)
+      .map(function (b) {
+        return { from: timeToMinutes(b.from), to: timeToMinutes(b.to), locationId: b.locationId };
+      })
+      .filter(function (s) {
+        return !isNaN(s.from) && !isNaN(s.to) && s.to > s.from;
+      });
+    let segs = mergeTimeIntervals(
+      raw.map(function (s) {
+        return { from: s.from, to: s.to };
+      })
+    );
+    segs = subtractMinuteRange(segs, oldFrom, oldTo);
+    segs = mergeTimeIntervals(segs.concat([{ from: newFrom, to: newTo }]));
+    const locId = (raw[0] && raw[0].locationId) || defaultAvailBlock(p).locationId;
+    const blocks = segs.map(function (s, i) {
+      return {
+        id: "avail-move-" + dateISO + "-" + i + "-" + s.from,
+        from: minToTime(s.from),
+        to: minToTime(s.to),
+        locationId: locId,
+        repeat: "none",
+        recurring: false,
+      };
+    });
+    writeAvailDayBlocks(dateISO, blocks);
+    return true;
+  }
+
+  function applyProvCalSlotLayout(el, fromMin, toMin) {
+    if (!el) return;
+    const hourH = ensureProvCalHourH();
+    const dayStartMin = PROV_CAL_HOUR_START * 60;
+    const isBare = el.classList.contains("gcal__event--bare");
+    const isFree = el.classList.contains("gcal__event--free");
+    const top = ((fromMin - dayStartMin) / 60) * hourH + 1;
+    const minH = isBare ? 6 : isFree ? 18 : 22;
+    const height = Math.max(minH, ((toMin - fromMin) / 60) * hourH - (isBare ? 2 : 3));
+    el.style.top = top + "px";
+    el.style.height = height + "px";
+    el.setAttribute("data-from-min", String(fromMin));
+    el.setAttribute("data-to-min", String(toMin));
+    el.classList.toggle("gcal__event--compact", !isBare && height < 40);
+    const timeEl = el.querySelector(".gcal__event-time");
+    if (timeEl) timeEl.textContent = minToTime(fromMin) + "–" + minToTime(toMin);
+    const titleEl = el.querySelector(".gcal__event-title");
+    if (titleEl && isFree) titleEl.textContent = "Wolne · " + (toMin - fromMin) + " min";
   }
 
   function ensureProvCalPickerMonth() {
@@ -2779,8 +2992,10 @@
     return `
       <div class="gcal__dayhead">
         <div class="gcal__daybadge${isToday ? " gcal__daybadge--today" : ""}">
-          <span class="gcal__daybadge-dow">${PROV_CAL_DOW_SHORT[d.getDay()]}</span>
-          <span class="gcal__daybadge-num">${d.getDate()}</span>
+          <div class="gcal__daybadge-date">
+            <span class="gcal__daybadge-dow">${PROV_CAL_DOW_SHORT[d.getDay()]}</span>
+            <span class="gcal__daybadge-num">${d.getDate()}</span>
+          </div>
           <span class="gcal__month-label">${escapeHtml(monthName)}</span>
         </div>
       </div>`;
@@ -2957,10 +3172,22 @@
         const height = Math.max(18, ((toM - fromM) / 60) * hourH - 3);
         const fromLabel = minToTime(fromM);
         const toLabel = minToTime(toM);
+        const selected =
+          !!window.AppState.provCalSelection &&
+          window.AppState.provCalSelection.kind === "free" &&
+          window.AppState.provCalSelection.dateISO === dateISO &&
+          window.AppState.provCalSelection.fromMin === fromM &&
+          window.AppState.provCalSelection.toMin === toM;
         return `
-          <article class="gcal__event gcal__event--free${height < 40 ? " gcal__event--compact" : ""}"
-            style="top:${top}px;height:${height}px" data-from-min="${fromM}" data-to-min="${toM}"
-            aria-label="Wolne ${mins} min">
+          <article class="gcal__event gcal__event--free${height < 40 ? " gcal__event--compact" : ""}${
+            selected ? " gcal__event--selected" : ""
+          }"
+            style="top:${top}px;height:${height}px"
+            data-role="prov-cal-slot" data-kind="free" data-date="${escapeHtml(dateISO)}"
+            data-action="select-prov-cal-slot"
+            data-from-min="${fromM}" data-to-min="${toM}"
+            role="button" tabindex="0" aria-pressed="${selected ? "true" : "false"}"
+            aria-label="Wolne ${mins} min, ${escapeHtml(fromLabel)}–${escapeHtml(toLabel)}">
             <div class="gcal__event-row">
               <span class="gcal__event-title">Wolne · ${mins} min</span>
               <span class="gcal__event-time">${escapeHtml(fromLabel)}–${escapeHtml(toLabel)}</span>
@@ -2970,7 +3197,7 @@
       .join("");
 
     const events = (dayVisits || [])
-      .map(function (b, idx) {
+      .map(function (b) {
         const fromM = timeToMinutes(b.from);
         const toM = timeToMinutes(b.to);
         if (isNaN(fromM) || isNaN(toM) || toM <= fromM) return "";
@@ -2979,7 +3206,6 @@
         if (clampedTo <= clampedFrom) return "";
         const top = ((clampedFrom - dayStartMin) / 60) * hourH + 1;
         const height = Math.max(22, ((clampedTo - clampedFrom) / 60) * hourH - 3);
-        const tone = idx % 3;
         const svc = (b.serviceNames || []).join(", ") || "Usługa";
         const client = b.clientName || "Klient";
         const q = String(window.AppState.provCalSearchQ || "")
@@ -2987,11 +3213,22 @@
           .toLowerCase();
         const hay = (svc + " " + client).toLowerCase();
         const dim = q && hay.indexOf(q) === -1;
+        const selected = !!(
+          window.AppState.provCalSelection &&
+          window.AppState.provCalSelection.kind === "booking" &&
+          window.AppState.provCalSelection.bookingId === b.id
+        );
         return `
-          <article class="gcal__event gcal__event--tone-${tone} gcal__event--${escapeHtml(b.status)}${height < 40 ? " gcal__event--compact" : ""}${dim ? " gcal__event--dim" : ""}"
-            style="top:${top}px;height:${height}px" data-booking-id="${escapeHtml(b.id)}"
+          <article class="gcal__event gcal__event--${escapeHtml(b.status)}${height < 40 ? " gcal__event--compact" : ""}${
+            dim ? " gcal__event--dim" : ""
+          }${selected ? " gcal__event--selected" : ""}"
+            style="top:${top}px;height:${height}px"
+            data-role="prov-cal-slot" data-kind="booking" data-date="${escapeHtml(dateISO)}"
+            data-action="select-prov-cal-slot" data-booking-id="${escapeHtml(b.id)}"
             data-from-min="${clampedFrom}" data-to-min="${clampedTo}"
-            data-search="${escapeHtml(hay)}">
+            data-search="${escapeHtml(hay)}" role="button" tabindex="0"
+            aria-pressed="${selected ? "true" : "false"}"
+            aria-label="${escapeHtml(svc + ", " + client + ", " + b.from + "–" + b.to)}">
             <div class="gcal__event-row">
               <span class="gcal__event-title">${escapeHtml(svc)}</span>
               <span class="gcal__event-time">${escapeHtml(b.from)}–${escapeHtml(b.to)}</span>
@@ -3082,19 +3319,25 @@
             if (clampedTo <= clampedFrom) return "";
             const top = ((clampedFrom - dayStartMin) / 60) * hourH + 1;
             const height = Math.max(6, ((clampedTo - clampedFrom) / 60) * hourH - 2);
-            const tone = idx % 3;
             const svc = (b.serviceNames || []).join(", ") || "Usługa";
             const client = b.clientName || "Klient";
             const hay = (svc + " " + client).toLowerCase();
             const dim = q && hay.indexOf(q) === -1;
+            const selected = !!(
+              window.AppState.provCalSelection &&
+              window.AppState.provCalSelection.kind === "booking" &&
+              window.AppState.provCalSelection.bookingId === b.id
+            );
             return `
-              <article class="gcal__event gcal__event--bare gcal__event--tone-${tone} gcal__event--${escapeHtml(
-                b.status
-              )}${dim ? " gcal__event--dim" : ""}"
-                style="top:${top}px;height:${height}px" data-booking-id="${escapeHtml(b.id)}"
-                data-action="prov-cal-pick-date" data-date="${escapeHtml(dateISO)}"
+              <article class="gcal__event gcal__event--bare gcal__event--${escapeHtml(b.status)}${
+                dim ? " gcal__event--dim" : ""
+              }${selected ? " gcal__event--selected" : ""}"
+                style="top:${top}px;height:${height}px"
+                data-role="prov-cal-slot" data-kind="booking" data-date="${escapeHtml(dateISO)}"
+                data-action="select-prov-cal-slot" data-booking-id="${escapeHtml(b.id)}"
                 data-from-min="${clampedFrom}" data-to-min="${clampedTo}"
-                data-search="${escapeHtml(hay)}"
+                data-search="${escapeHtml(hay)}" role="button" tabindex="0"
+                aria-pressed="${selected ? "true" : "false"}"
                 aria-label="${escapeHtml(svc + ", " + client)}"></article>`;
           })
           .join("");
@@ -5122,6 +5365,20 @@
       if (window.AppState.appMenuOpen) {
         event.preventDefault();
         closeAppMenu();
+        return;
+      }
+      if (window.AppState.provCalSelection) {
+        event.preventDefault();
+        clearProvCalSelection();
+        saveState();
+      }
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      const slot = event.target.closest('[data-role="prov-cal-slot"]');
+      if (slot) {
+        event.preventDefault();
+        selectProvCalSlot(selectionFromSlotEl(slot));
       }
     }
   });
@@ -5360,6 +5617,21 @@
           navigate("provider", "calendar", {});
         } else navigate("provider", d.tab, {});
         break;
+      case "select-prov-cal-slot":
+        event.preventDefault();
+        event.stopPropagation();
+        if (window._provCalSlotIgnoreClick) {
+          window._provCalSlotIgnoreClick = false;
+          break;
+        }
+        selectProvCalSlot({
+          kind: d.kind || (d.bookingId ? "booking" : "free"),
+          bookingId: d.bookingId,
+          dateISO: d.date || ensureProvCalDate(),
+          fromMin: Number(d.fromMin),
+          toMin: Number(d.toMin),
+        });
+        break;
       case "prov-cal-today":
         event.preventDefault();
         pickProvCalDate(demoTodayISO(), { keepView: true });
@@ -5557,6 +5829,178 @@
     true
   );
 
+  /** Zaznaczanie + przeciąganie wolnych/zajętych slotów (snap 5 min). */
+  function bindProvCalEventDrag() {
+    if (bindProvCalEventDrag.done) return;
+    bindProvCalEventDrag.done = true;
+    const drag = {
+      active: false,
+      el: null,
+      kind: null,
+      bookingId: null,
+      dateISO: null,
+      startFrom: 0,
+      startTo: 0,
+      duration: 0,
+      originY: 0,
+      pointerId: null,
+      moved: false,
+      lastFrom: 0,
+    };
+
+    function resetDrag() {
+      if (drag.el) drag.el.classList.remove("gcal__event--dragging");
+      drag.active = false;
+      drag.el = null;
+      drag.pointerId = null;
+      drag.moved = false;
+    }
+
+    function commitDrag() {
+      if (!drag.el) return;
+      const newFrom = Number(drag.el.getAttribute("data-from-min"));
+      const newTo = Number(drag.el.getAttribute("data-to-min"));
+      if (!(newTo > newFrom) || (newFrom === drag.startFrom && newTo === drag.startTo)) {
+        resetDrag();
+        return;
+      }
+      if (drag.kind === "booking") {
+        if (!canPlaceBooking(drag.bookingId, drag.dateISO, newFrom, newTo)) {
+          showToast("Termin koliduje z inną wizytą.");
+          resetDrag();
+          renderAll();
+          return;
+        }
+        moveBookingTimes(drag.bookingId, newFrom, newTo);
+      } else {
+        if (!canPlaceFree(drag.dateISO, newFrom, newTo)) {
+          showToast("Tu jest już wizyta — wybierz inne miejsce.");
+          resetDrag();
+          renderAll();
+          return;
+        }
+        moveFreeGap(drag.dateISO, drag.startFrom, drag.startTo, newFrom, newTo);
+      }
+      window.AppState.provCalSelection = normalizeProvCalSelection({
+        kind: drag.kind,
+        bookingId: drag.bookingId,
+        dateISO: drag.dateISO,
+        fromMin: newFrom,
+        toMin: newTo,
+      });
+      hapticTap(22);
+      resetDrag();
+      saveState();
+      renderAll();
+      showToast("Przesunięto.");
+    }
+
+    document.addEventListener(
+      "pointerdown",
+      function (event) {
+        if (event.button != null && event.button !== 0) return;
+        const el = event.target.closest && event.target.closest('[data-role="prov-cal-slot"]');
+        if (!el) return;
+        if (!el.closest('[data-role="prov-cal-body"]')) return;
+        const fromMin = Number(el.getAttribute("data-from-min"));
+        const toMin = Number(el.getAttribute("data-to-min"));
+        if (!(toMin > fromMin)) return;
+        drag.active = true;
+        drag.el = el;
+        drag.kind = el.getAttribute("data-kind") || "booking";
+        drag.bookingId = el.getAttribute("data-booking-id");
+        drag.dateISO = el.getAttribute("data-date") || ensureProvCalDate();
+        drag.startFrom = fromMin;
+        drag.startTo = toMin;
+        drag.duration = toMin - fromMin;
+        drag.originY = event.clientY;
+        drag.pointerId = event.pointerId;
+        drag.moved = false;
+        drag.lastFrom = fromMin;
+        try {
+          el.setPointerCapture(event.pointerId);
+        } catch (err) {
+          /* ignore */
+        }
+      },
+      true
+    );
+
+    document.addEventListener(
+      "pointermove",
+      function (event) {
+        if (!drag.active || !drag.el) return;
+        if (drag.pointerId != null && event.pointerId !== drag.pointerId) return;
+        const hourH = ensureProvCalHourH();
+        const dayStart = PROV_CAL_HOUR_START * 60;
+        const dayEnd = PROV_CAL_HOUR_END * 60;
+        const dy = event.clientY - drag.originY;
+        if (!drag.moved && Math.abs(dy) < 8) return;
+        if (!drag.moved) {
+          drag.moved = true;
+          drag.el.classList.add("gcal__event--dragging");
+          if (!isProvCalSlotSelected(drag.el)) {
+            selectProvCalSlot(
+              {
+                kind: drag.kind,
+                bookingId: drag.bookingId,
+                dateISO: drag.dateISO,
+                fromMin: drag.startFrom,
+                toMin: drag.startTo,
+              },
+              { force: true }
+            );
+          }
+          hapticTap(12);
+        }
+        event.preventDefault();
+        let deltaMin = snapProvCalMin((dy / hourH) * 60);
+        let newFrom = snapProvCalMin(drag.startFrom + deltaMin);
+        let newTo = newFrom + drag.duration;
+        if (newFrom < dayStart) {
+          newFrom = dayStart;
+          newTo = newFrom + drag.duration;
+        }
+        if (newTo > dayEnd) {
+          newTo = dayEnd;
+          newFrom = newTo - drag.duration;
+        }
+        if (newFrom === drag.lastFrom) return;
+        drag.lastFrom = newFrom;
+        applyProvCalSlotLayout(drag.el, newFrom, newTo);
+      },
+      { capture: true, passive: false }
+    );
+
+    function endPointer(event) {
+      if (!drag.active || !drag.el) return;
+      if (drag.pointerId != null && event.pointerId !== drag.pointerId) return;
+      window._provCalSlotIgnoreClick = true;
+      setTimeout(function () {
+        window._provCalSlotIgnoreClick = false;
+      }, 0);
+      if (drag.moved) {
+        commitDrag();
+      } else {
+        const sel = selectionFromSlotEl(drag.el);
+        resetDrag();
+        selectProvCalSlot(sel);
+      }
+    }
+
+    document.addEventListener("pointerup", endPointer, true);
+    document.addEventListener("pointercancel", function (event) {
+      if (!drag.active) return;
+      if (drag.pointerId != null && event.pointerId !== drag.pointerId) return;
+      if (drag.moved) {
+        resetDrag();
+        renderAll();
+      } else {
+        resetDrag();
+      }
+    }, true);
+  }
+
   function bindProvCalPinchZoom() {
     if (bindProvCalPinchZoom.done) return;
     bindProvCalPinchZoom.done = true;
@@ -5736,6 +6180,7 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     bindFilterScroll();
+    bindProvCalEventDrag();
     bindProvCalPinchZoom();
     bindProvCalMonthSwipe();
     bindAvailWeekScrollBridge();

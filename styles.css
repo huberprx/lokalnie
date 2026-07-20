@@ -2035,9 +2035,9 @@ body:has(#page-app:not([hidden])) {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
-  margin-top: auto;
-  padding-top: 0.65rem;
-  border-top: 1px solid var(--border);
+  margin: 0;
+  padding: 0 0 0.85rem;
+  border-bottom: 1px solid var(--border);
 }
 
 .app-menu__profiles-label {
@@ -2189,6 +2189,11 @@ body:has(#page-app:not([hidden])) {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
+}
+
+.app-menu__footer {
+  margin-top: auto;
+  padding-top: 0.25rem;
 }
 
 .app-menu__link {
@@ -2383,12 +2388,6 @@ body.pwa-install-help-open {
   font-variant-numeric: tabular-nums;
   font-weight: 650;
   color: var(--text);
-}
-
-.app-menu__footer {
-  margin-top: 0;
-  padding-top: 0.25rem;
-  border-top: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5412,6 +5411,47 @@ body.avatar-preview-open {
   padding: 0 var(--app-pad-x);
 }
 
+/* Mobile: oś godzin blisko lewej krawędzi */
+@media (max-width: 899px) {
+  .app-fullscreen .gcal {
+    padding-left: 0.1rem;
+  }
+
+  .app-fullscreen .gcal__timeline,
+  .app-fullscreen .gcal-week__head,
+  .app-fullscreen .gcal-week__timeline {
+    grid-template-columns: 2.45rem 1fr;
+  }
+
+  .app-fullscreen .gcal-week__range {
+    padding-left: 2.45rem;
+  }
+
+  .app-fullscreen .gcal__hour-label {
+    right: 0.2rem;
+    font-size: 0.62rem;
+  }
+}
+
+.device-frame[data-view="mobile"] .gcal {
+  padding-left: 0.1rem;
+}
+
+.device-frame[data-view="mobile"] .gcal__timeline,
+.device-frame[data-view="mobile"] .gcal-week__head,
+.device-frame[data-view="mobile"] .gcal-week__timeline {
+  grid-template-columns: 2.45rem 1fr;
+}
+
+.device-frame[data-view="mobile"] .gcal-week__range {
+  padding-left: 2.45rem;
+}
+
+.device-frame[data-view="mobile"] .gcal__hour-label {
+  right: 0.2rem;
+  font-size: 0.62rem;
+}
+
 .gcal__dayhead {
   display: block;
   background: var(--surface);
@@ -5420,18 +5460,26 @@ body.avatar-preview-open {
 .gcal__daybadge {
   display: flex;
   flex-direction: row;
-  align-items: center;
+  align-items: flex-end;
   gap: 0.4rem;
   min-width: 0;
 }
 
-.gcal__daybadge-dow {
+.gcal__daybadge-date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.12rem;
   flex: 0 0 auto;
-  font-size: 0.86rem;
+}
+
+.gcal__daybadge-dow {
+  font-size: 0.72rem;
   font-weight: 750;
   letter-spacing: 0.03em;
   color: var(--text-muted);
   line-height: 1;
+  text-align: center;
 }
 
 .gcal__daybadge--today .gcal__daybadge-dow {
@@ -5441,7 +5489,6 @@ body.avatar-preview-open {
 .gcal__daybadge-num {
   display: grid;
   place-items: center;
-  flex: 0 0 auto;
   width: 2.1rem;
   height: 2.1rem;
   border-radius: 50%;
@@ -5459,7 +5506,7 @@ body.avatar-preview-open {
 .gcal__month-label {
   display: inline-block;
   margin: 0;
-  padding: 0.15rem 0;
+  padding: 0 0 0.45rem;
   color: var(--text-muted);
   font-size: 0.92rem;
   font-weight: 650;
@@ -5724,11 +5771,28 @@ body.avatar-preview-open {
 }
 
 .gcal__event--bare {
-  left: 2px;
-  right: 2px;
+  left: 1px;
+  right: 1px;
   padding: 0;
   border-radius: 3px;
   cursor: pointer;
+  /* Widok tygodnia: pełne wypełnienie (nie sama kreska) */
+  background: color-mix(in srgb, var(--accent-provider) 88%, #0d3d2a);
+  box-shadow: none;
+}
+
+.gcal__event--bare::before {
+  display: none;
+}
+
+.gcal__event--bare.gcal__event--selected {
+  background: color-mix(in srgb, var(--accent-provider) 100%, #0d3d2a);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, #fff 55%, transparent);
+}
+
+.gcal__event--bare.gcal__event--proposed {
+  background: color-mix(in srgb, var(--accent-provider) 65%, #0d3d2a);
+  opacity: 0.9;
 }
 
 .gcal-week__track .gcal__now {
@@ -5789,7 +5853,7 @@ body.avatar-preview-open {
   right: 0.35rem;
   z-index: 4;
   height: 0;
-  border-top: 2px solid #e24b4b;
+  border-top: 2px dashed #e24b4b;
   pointer-events: none;
 }
 
@@ -5812,33 +5876,82 @@ body.avatar-preview-open {
   flex-direction: column;
   justify-content: flex-start;
   gap: 0.08rem;
-  padding: 0.28rem 0.45rem;
-  border-radius: 2px;
+  padding: 0.22rem 0.4rem 0.22rem 0.55rem;
+  border-radius: 3px;
   overflow: hidden;
-  background: color-mix(in srgb, var(--accent-provider) 88%, #0d3d2a);
-  color: #fff;
-  box-shadow: 0 1px 0 color-mix(in srgb, #000 12%, transparent);
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  box-shadow: none;
+  box-sizing: border-box;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
 }
 
-.gcal__event--tone-1 {
-  background: #2f6fdb;
+.gcal__event::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  border-radius: 3px 0 0 3px;
+  background: var(--accent-provider);
+  pointer-events: none;
+  transition: width 0.12s ease, background 0.12s ease;
 }
 
-.gcal__event--tone-2 {
-  background: #c47a1a;
+.gcal__event--selected {
+  z-index: 5;
+  background: color-mix(in srgb, var(--accent-provider) 16%, var(--surface));
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent-provider) 55%, transparent);
+}
+
+.gcal__event--selected::before {
+  width: 4px;
+  background: var(--accent-provider);
 }
 
 .gcal__event--proposed {
-  opacity: 0.88;
-  background: color-mix(in srgb, var(--accent-provider) 55%, #c47a1a);
+  opacity: 0.9;
+}
+
+.gcal__event--proposed::before {
+  background: color-mix(in srgb, var(--accent-provider) 70%, var(--text-muted));
+}
+
+.gcal__event[data-role="prov-cal-slot"] {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.gcal__event--dragging {
+  z-index: 9;
+  opacity: 0.96;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--text) 18%, transparent);
 }
 
 .gcal__event--free {
   z-index: 1;
-  background: color-mix(in srgb, var(--text-muted) 6%, var(--surface));
+  cursor: pointer;
+  background: color-mix(in srgb, var(--text-muted) 14%, var(--surface));
   color: color-mix(in srgb, var(--text-muted) 88%, var(--text));
-  border: 1px dashed color-mix(in srgb, var(--text-muted) 55%, var(--border));
-  box-shadow: none;
+  border: 1px dashed color-mix(in srgb, var(--text-muted) 50%, var(--border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-muted) 8%, transparent),
+    0 1px 3px color-mix(in srgb, var(--text-muted) 18%, transparent);
+  padding-left: 0.45rem;
+}
+
+.gcal__event--free::before {
+  display: none;
+}
+
+.gcal__event--free.gcal__event--selected {
+  z-index: 5;
+  background: color-mix(in srgb, var(--text-muted) 22%, var(--surface));
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--text-muted) 55%, transparent);
 }
 
 .gcal__event--free .gcal__event-time {
