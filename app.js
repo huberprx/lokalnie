@@ -78,6 +78,11 @@
       myCalDate: null,
       provCalDate: null,
       provCalHourH: 60,
+      provCalView: "day",
+      provCalMonthOpen: false,
+      provCalPickerMonth: null,
+      provCalSearchOpen: false,
+      provCalSearchQ: "",
       availWeekStart: null,
       availStripScrollLeft: null,
       availListOnlySet: true,
@@ -1222,6 +1227,12 @@
           typeof stored.provCalHourH === "number" && stored.provCalHourH > 0
             ? clampProvCalHourH(stored.provCalHourH)
             : base.provCalHourH,
+        provCalView: stored.provCalView === "week" ? "week" : "day",
+        provCalMonthOpen: !!stored.provCalMonthOpen,
+        provCalPickerMonth:
+          typeof stored.provCalPickerMonth === "string" ? stored.provCalPickerMonth : base.provCalPickerMonth,
+        provCalSearchOpen: !!stored.provCalSearchOpen,
+        provCalSearchQ: typeof stored.provCalSearchQ === "string" ? stored.provCalSearchQ : base.provCalSearchQ,
         availWeekStart: typeof stored.availWeekStart === "string" ? stored.availWeekStart : base.availWeekStart,
         availStripScrollLeft:
           typeof stored.availStripScrollLeft === "number" ? stored.availStripScrollLeft : base.availStripScrollLeft,
@@ -2624,9 +2635,55 @@
     return window.AppState.provCalDate;
   }
 
-  function pickProvCalDate(dateISO) {
+  function pickProvCalDate(dateISO, opts) {
+    opts = opts || {};
     if (!dateISO) return;
     window.AppState.provCalDate = dateISO;
+    window.AppState.provCalPickerMonth = dateISO.slice(0, 7);
+    window.AppState.provCalMonthOpen = false;
+    if (!opts.keepView) window.AppState.provCalView = "day";
+    saveState();
+    renderAll();
+  }
+
+  function setProvCalView(view) {
+    const next = view === "week" ? "week" : "day";
+    window.AppState.provCalView = next;
+    if (next === "week") window.AppState.provCalMonthOpen = false;
+    saveState();
+    renderAll();
+  }
+
+  function ensureProvCalPickerMonth() {
+    if (window.AppState.provCalPickerMonth) return window.AppState.provCalPickerMonth;
+    window.AppState.provCalPickerMonth = ensureProvCalDate().slice(0, 7);
+    return window.AppState.provCalPickerMonth;
+  }
+
+  function toggleProvCalMonthPanel() {
+    const open = !window.AppState.provCalMonthOpen;
+    window.AppState.provCalMonthOpen = open;
+    if (open) window.AppState.provCalPickerMonth = ensureProvCalDate().slice(0, 7);
+    saveState();
+    renderAll();
+  }
+
+  function shiftProvCalPickerMonth(delta) {
+    const cur = ensureProvCalPickerMonth();
+    const parts = cur.split("-");
+    const y = Number(parts[0]) || 2026;
+    const m = Number(parts[1]) || 1;
+    const d = new Date(y, m - 1 + delta, 1);
+    window.AppState.provCalPickerMonth = d.getFullYear() + "-" + pad(d.getMonth() + 1);
+    window.AppState.provCalMonthOpen = true;
+    saveState();
+    renderAll();
+  }
+
+  function setProvCalPickerMonth(ym) {
+    if (!ym || !/^\d{4}-\d{2}$/.test(ym)) return;
+    window.AppState.provCalPickerMonth = ym;
+    window.AppState.provCalMonthOpen = true;
     saveState();
     renderAll();
   }
@@ -2684,18 +2741,19 @@
       const toM = Number(el.getAttribute("data-to-min"));
       if (isNaN(fromM) || isNaN(toM) || toM <= fromM) return;
       const isFree = el.classList.contains("gcal__event--free");
+      const isBare = el.classList.contains("gcal__event--bare");
       const top = ((fromM - dayStartMin) / 60) * hourH + 1;
-      const height = Math.max(isFree ? 18 : 22, ((toM - fromM) / 60) * hourH - 3);
+      const minH = isBare ? 6 : isFree ? 18 : 22;
+      const height = Math.max(minH, ((toM - fromM) / 60) * hourH - (isBare ? 2 : 3));
       el.style.top = top + "px";
       el.style.height = height + "px";
-      el.classList.toggle("gcal__event--compact", height < 40);
+      el.classList.toggle("gcal__event--compact", !isBare && height < 40);
     });
 
-    const nowEl = timeline.querySelector(".gcal__now[data-now-min]");
-    if (nowEl) {
+    timeline.querySelectorAll(".gcal__now[data-now-min]").forEach(function (nowEl) {
       const nowMin = Number(nowEl.getAttribute("data-now-min"));
       if (!isNaN(nowMin)) nowEl.style.top = ((nowMin - dayStartMin) / 60) * hourH + "px";
-    }
+    });
 
     if (body && typeof anchorMin === "number") {
       const yInBody = ((anchorMin - dayStartMin) / 60) * hourH;
@@ -2723,12 +2781,76 @@
         <div class="gcal__daybadge${isToday ? " gcal__daybadge--today" : ""}">
           <span class="gcal__daybadge-dow">${PROV_CAL_DOW_SHORT[d.getDay()]}</span>
           <span class="gcal__daybadge-num">${d.getDate()}</span>
-          <button type="button" class="gcal__month-btn" data-action="prov-cal-month" aria-label="Miesiąc: ${escapeHtml(monthName)}">
-            <span class="gcal__month-btn-label">${escapeHtml(monthName)}</span>
-            <span class="gcal__month-btn-chevron" aria-hidden="true">▾</span>
-          </button>
+          <span class="gcal__month-label">${escapeHtml(monthName)}</span>
         </div>
-        <span class="gcal__dayhead-line" aria-hidden="true"></span>
+      </div>`;
+  }
+
+  function renderProvCalMonthPanel(selectedISO, visits) {
+    if (!window.AppState.provCalMonthOpen) return "";
+    const pickerMonth = ensureProvCalPickerMonth();
+    const parts = pickerMonth.split("-");
+    const year = Number(parts[0]) || 2026;
+    const month = Number(parts[1]) || 1;
+    const today = demoTodayISO();
+    const visitDays = new Set(
+      (visits || []).map(function (b) {
+        return b.dateISO;
+      })
+    );
+
+    // Karuzela: 12 miesięcy roku widocznego w pickerze
+    let monthChips = "";
+    for (let m = 1; m <= 12; m++) {
+      const ym = year + "-" + pad(m);
+      const on = m === month;
+      const label = (MONTHS_NOM[m - 1] || "").toLowerCase();
+      monthChips += `
+        <button type="button" class="gcal-month__chip${on ? " gcal-month__chip--on" : ""}"
+          data-action="prov-cal-picker-month" data-month="${ym}"
+          aria-pressed="${on ? "true" : "false"}">${escapeHtml(label)}</button>`;
+    }
+
+    const first = new Date(year, month - 1, 1);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const startPad = (first.getDay() + 6) % 7;
+    const totalCells = 42;
+    let cells = "";
+    for (let i = 0; i < startPad; i++) {
+      cells += `<span class="gcal-month__day gcal-month__day--pad" aria-hidden="true"></span>`;
+    }
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateISO = year + "-" + pad(month) + "-" + pad(day);
+      const selected = dateISO === selectedISO;
+      const isToday = dateISO === today;
+      const hasVisit = visitDays.has(dateISO);
+      const red = isSunday(dateISO) || isRedCalendarDay(dateISO);
+      cells += `
+        <button type="button"
+          class="gcal-month__day${selected ? " gcal-month__day--on" : ""}${isToday && !selected ? " gcal-month__day--today" : ""}${hasVisit ? " gcal-month__day--busy" : ""}${red ? " gcal-month__day--red" : ""}"
+          data-action="prov-cal-pick-date" data-date="${escapeHtml(dateISO)}"
+          aria-pressed="${selected ? "true" : "false"}"
+          aria-label="${day}${hasVisit ? ", wizyty" : ""}">
+          <span class="gcal-month__day-num">${day}</span>
+          ${hasVisit ? `<span class="gcal-month__day-dot" aria-hidden="true"></span>` : ""}
+        </button>`;
+    }
+    const filled = startPad + daysInMonth;
+    for (let i = filled; i < totalCells; i++) {
+      cells += `<span class="gcal-month__day gcal-month__day--pad" aria-hidden="true"></span>`;
+    }
+
+    return `
+      <div class="gcal-month" id="prov-cal-month-panel" data-role="prov-cal-month-panel">
+        <div class="gcal-month__carousel" data-role="prov-cal-month-carousel" data-filter-scroll>
+          ${monthChips}
+        </div>
+        <div class="gcal-month__cal" data-role="prov-cal-month-swipe">
+          <div class="gcal-month__weekdays">${CAL_WEEKDAYS.map(function (w) {
+            return `<span>${w}</span>`;
+          }).join("")}</div>
+          <div class="gcal-month__grid">${cells}</div>
+        </div>
       </div>`;
   }
 
@@ -2756,10 +2878,16 @@
     return out;
   }
 
-  /** Wolne odcinki w ramach dostępności minus wizyty. */
+  /**
+   * Wolne odcinki = tylko w ramach zdefiniowanej dostępności dnia, minus wizyty.
+   * Bez bloków dostępności → brak „Wolne” (nawet gdy są wizyty).
+   */
   function providerFreeGapsForDate(dateISO, dayVisits) {
-    const avail = mergeTimeIntervals(
-      providerAvailBlocksForDate(dateISO)
+    const availBlocks = providerAvailBlocksForDate(dateISO);
+    if (!availBlocks.length) return [];
+
+    let segments = mergeTimeIntervals(
+      availBlocks
         .map(function (block) {
           return { from: timeToMinutes(block.from), to: timeToMinutes(block.to) };
         })
@@ -2767,6 +2895,8 @@
           return !isNaN(b.from) && !isNaN(b.to) && b.to > b.from;
         })
     );
+    if (!segments.length) return [];
+
     const busy = mergeTimeIntervals(
       (dayVisits || [])
         .map(function (b) {
@@ -2776,19 +2906,26 @@
           return !isNaN(b.from) && !isNaN(b.to) && b.to > b.from;
         })
     );
-    const gaps = [];
-    avail.forEach(function (win) {
-      let cursor = win.from;
-      busy.forEach(function (bk) {
-        if (bk.to <= cursor || bk.from >= win.to) return;
-        const cutStart = Math.max(bk.from, win.from);
-        const cutEnd = Math.min(bk.to, win.to);
-        if (cutStart > cursor) gaps.push({ from: cursor, to: cutStart });
-        cursor = Math.max(cursor, cutEnd);
+
+    busy.forEach(function (bk) {
+      const next = [];
+      segments.forEach(function (seg) {
+        // zajętość poza tym odcinkiem dostępności — bez zmian
+        if (bk.to <= seg.from || bk.from >= seg.to) {
+          next.push(seg);
+          return;
+        }
+        // lewy wolny fragment w ramach dostępności
+        if (bk.from > seg.from) next.push({ from: seg.from, to: bk.from });
+        // prawy wolny fragment w ramach dostępności
+        if (bk.to < seg.to) next.push({ from: bk.to, to: seg.to });
       });
-      if (cursor < win.to) gaps.push({ from: cursor, to: win.to });
+      segments = next;
     });
-    return gaps;
+
+    return segments.filter(function (s) {
+      return s.to > s.from;
+    });
   }
 
   /** Widok dnia jak Google Calendar: oś godzin + bloki wizyt i wolnych. */
@@ -2845,10 +2982,16 @@
         const tone = idx % 3;
         const svc = (b.serviceNames || []).join(", ") || "Usługa";
         const client = b.clientName || "Klient";
+        const q = String(window.AppState.provCalSearchQ || "")
+          .trim()
+          .toLowerCase();
+        const hay = (svc + " " + client).toLowerCase();
+        const dim = q && hay.indexOf(q) === -1;
         return `
-          <article class="gcal__event gcal__event--tone-${tone} gcal__event--${escapeHtml(b.status)}${height < 40 ? " gcal__event--compact" : ""}"
+          <article class="gcal__event gcal__event--tone-${tone} gcal__event--${escapeHtml(b.status)}${height < 40 ? " gcal__event--compact" : ""}${dim ? " gcal__event--dim" : ""}"
             style="top:${top}px;height:${height}px" data-booking-id="${escapeHtml(b.id)}"
-            data-from-min="${clampedFrom}" data-to-min="${clampedTo}">
+            data-from-min="${clampedFrom}" data-to-min="${clampedTo}"
+            data-search="${escapeHtml(hay)}">
             <div class="gcal__event-row">
               <span class="gcal__event-title">${escapeHtml(svc)}</span>
               <span class="gcal__event-time">${escapeHtml(b.from)}–${escapeHtml(b.to)}</span>
@@ -2881,12 +3024,138 @@
       </div>`;
   }
 
+  /** Widok tygodnia: 7 wąskich kolumn — same kolorowe bloki (bez usług / godzin / klientów). */
+  function renderProvCalGoogleWeek(selectedISO, visits) {
+    const weekStart = mondayISOFrom(selectedISO);
+    const weekDays = availWeekDays(weekStart);
+    const today = demoTodayISO();
+    const hourStart = PROV_CAL_HOUR_START;
+    const hourEnd = PROV_CAL_HOUR_END;
+    const hourH = ensureProvCalHourH();
+    const dayStartMin = hourStart * 60;
+    const dayEndMin = hourEnd * 60;
+    const totalH = (hourEnd - hourStart) * hourH;
+    const q = String(window.AppState.provCalSearchQ || "")
+      .trim()
+      .toLowerCase();
+
+    let hours = "";
+    for (let h = hourStart; h <= hourEnd; h++) {
+      const top = (h - hourStart) * hourH;
+      hours += `
+        <div class="gcal__hour" style="top:${top}px" data-hour="${h}">
+          <span class="gcal__hour-label">${h === hourStart ? "" : pad(h) + ":00"}</span>
+        </div>`;
+    }
+
+    const headCols = weekDays
+      .map(function (dateISO) {
+        const d = new Date(dateISO + "T12:00:00");
+        const isToday = dateISO === today;
+        const isSel = dateISO === selectedISO;
+        const sun = d.getDay() === 0;
+        return `
+          <button type="button" class="gcal-week__dayhead${isToday ? " gcal-week__dayhead--today" : ""}${
+            isSel ? " gcal-week__dayhead--sel" : ""
+          }${sun ? " gcal-week__dayhead--sun" : ""}"
+            data-action="prov-cal-pick-date" data-date="${escapeHtml(dateISO)}"
+            aria-label="${escapeHtml(PROV_CAL_DOW_SHORT[d.getDay()] + " " + d.getDate())}">
+            <span class="gcal-week__dow">${PROV_CAL_DOW_SHORT[d.getDay()]}</span>
+            <span class="gcal-week__num">${d.getDate()}</span>
+          </button>`;
+      })
+      .join("");
+
+    const cols = weekDays
+      .map(function (dateISO) {
+        const dayVisits = (visits || []).filter(function (b) {
+          return b.dateISO === dateISO;
+        });
+        const isToday = dateISO === today;
+        const events = dayVisits
+          .map(function (b, idx) {
+            const fromM = timeToMinutes(b.from);
+            const toM = timeToMinutes(b.to);
+            if (isNaN(fromM) || isNaN(toM) || toM <= fromM) return "";
+            const clampedFrom = Math.max(dayStartMin, Math.min(dayEndMin, fromM));
+            const clampedTo = Math.max(dayStartMin, Math.min(dayEndMin, toM));
+            if (clampedTo <= clampedFrom) return "";
+            const top = ((clampedFrom - dayStartMin) / 60) * hourH + 1;
+            const height = Math.max(6, ((clampedTo - clampedFrom) / 60) * hourH - 2);
+            const tone = idx % 3;
+            const svc = (b.serviceNames || []).join(", ") || "Usługa";
+            const client = b.clientName || "Klient";
+            const hay = (svc + " " + client).toLowerCase();
+            const dim = q && hay.indexOf(q) === -1;
+            return `
+              <article class="gcal__event gcal__event--bare gcal__event--tone-${tone} gcal__event--${escapeHtml(
+                b.status
+              )}${dim ? " gcal__event--dim" : ""}"
+                style="top:${top}px;height:${height}px" data-booking-id="${escapeHtml(b.id)}"
+                data-action="prov-cal-pick-date" data-date="${escapeHtml(dateISO)}"
+                data-from-min="${clampedFrom}" data-to-min="${clampedTo}"
+                data-search="${escapeHtml(hay)}"
+                aria-label="${escapeHtml(svc + ", " + client)}"></article>`;
+          })
+          .join("");
+
+        let nowLine = "";
+        if (isToday) {
+          const now = new Date();
+          const nowMin = now.getHours() * 60 + now.getMinutes();
+          if (nowMin >= dayStartMin && nowMin <= dayEndMin) {
+            const y = ((nowMin - dayStartMin) / 60) * hourH;
+            nowLine = `<div class="gcal__now" style="top:${y}px" data-now-min="${nowMin}" aria-hidden="true"><span></span></div>`;
+          }
+        }
+
+        return `
+          <div class="gcal-week__col${isToday ? " gcal-week__col--today" : ""}" data-date="${escapeHtml(dateISO)}">
+            <div class="gcal__track gcal-week__track" data-action="prov-cal-pick-date" data-date="${escapeHtml(dateISO)}">
+              ${nowLine}
+              ${events}
+            </div>
+          </div>`;
+      })
+      .join("");
+
+    const startD = new Date(weekDays[0] + "T12:00:00");
+    const endD = new Date(weekDays[6] + "T12:00:00");
+    const rangeLabel =
+      startD.getMonth() === endD.getMonth()
+        ? startD.getDate() + "–" + endD.getDate() + " " + (MONTHS_NOM[startD.getMonth()] || "").toLowerCase()
+        : startD.getDate() +
+          " " +
+          (MONTHS_NOM[startD.getMonth()] || "").toLowerCase().slice(0, 3) +
+          " – " +
+          endD.getDate() +
+          " " +
+          (MONTHS_NOM[endD.getMonth()] || "").toLowerCase().slice(0, 3);
+
+    return `
+      <div class="gcal gcal--week" data-role="prov-cal-gcal">
+        <div class="gcal-week__range">${escapeHtml(rangeLabel)}</div>
+        <div class="gcal-week__head">
+          <div class="gcal-week__corner" aria-hidden="true"></div>
+          <div class="gcal-week__days">${headCols}</div>
+        </div>
+        <div class="gcal__timeline gcal-week__timeline" style="height:${totalH}px;--gcal-hour-h:${hourH}px" data-role="prov-cal-timeline">
+          <div class="gcal__hours">${hours}</div>
+          <div class="gcal-week__cols">${cols}</div>
+        </div>
+      </div>`;
+  }
+
   function renderProviderCalendar() {
     const selected = ensureProvCalDate();
     const visits = providerVisits();
     const dayVisits = visits.filter(function (b) {
       return b.dateISO === selected;
     });
+    const weekView = window.AppState.provCalView === "week";
+    const monthOpen = !!window.AppState.provCalMonthOpen;
+    const searchOpen = !!window.AppState.provCalSearchOpen;
+    const searchQ = window.AppState.provCalSearchQ || "";
     return `
       <div class="app-screen app-screen--provider app-screen--prov-cal">
         <div class="prov-cal-top">
@@ -2894,14 +3163,42 @@
             <div class="prov-cal-head">
               <h2 class="screen-head__title">Kalendarz</h2>
               <div class="prov-cal-head__actions">
-                <button type="button" class="prov-cal__today-btn" data-action="prov-cal-today">Dziś</button>
+                <div class="prov-cal__tools" role="toolbar" aria-label="Narzędzia kalendarza">
+                  <button type="button" class="prov-cal__tool${!weekView && !monthOpen ? " is-on" : ""}" data-action="prov-cal-view" data-view="day"
+                    aria-label="Widok dnia" aria-pressed="${!weekView && !monthOpen ? "true" : "false"}">
+                    <span class="prov-cal__tool-icon prov-cal__tool-icon--day" aria-hidden="true"></span>
+                  </button>
+                  <button type="button" class="prov-cal__tool${weekView ? " is-on" : ""}" data-action="prov-cal-view" data-view="week"
+                    aria-label="Widok tygodnia" aria-pressed="${weekView ? "true" : "false"}">
+                    <span class="prov-cal__tool-icon prov-cal__tool-icon--week" aria-hidden="true"></span>
+                  </button>
+                  <button type="button" class="prov-cal__tool${monthOpen ? " is-on" : ""}" data-action="prov-cal-view" data-view="month"
+                    aria-label="Widok miesiąca" aria-pressed="${monthOpen ? "true" : "false"}">
+                    <span class="prov-cal__tool-icon prov-cal__tool-icon--month" aria-hidden="true"></span>
+                  </button>
+                  <button type="button" class="prov-cal__tool${searchOpen ? " is-on" : ""}" data-action="prov-cal-search"
+                    aria-label="Szukaj" aria-pressed="${searchOpen ? "true" : "false"}">
+                    <span class="prov-cal__tool-icon prov-cal__tool-icon--search" aria-hidden="true"></span>
+                  </button>
+                </div>
+                <button type="button" class="prov-cal__today-btn" data-action="prov-cal-today">Dzisiaj</button>
               </div>
             </div>
+            ${
+              searchOpen
+                ? `<div class="prov-cal__search">
+              <input type="search" class="prov-cal__search-input" data-role="prov-cal-search-input"
+                placeholder="Szukaj klienta lub usługi…" value="${escapeHtml(searchQ)}"
+                aria-label="Szukaj w kalendarzu" />
+            </div>`
+                : ""
+            }
           </header>
-          ${renderProvCalDayHead(selected)}
+          ${weekView ? "" : renderProvCalDayHead(selected)}
+          ${renderProvCalMonthPanel(selected, visits)}
         </div>
         <div class="prov-cal-body" data-role="prov-cal-body">
-          ${renderProvCalGoogleDay(selected, dayVisits)}
+          ${weekView ? renderProvCalGoogleWeek(selected, visits) : renderProvCalGoogleDay(selected, dayVisits)}
         </div>
         ${providerBottomNav("calendar")}
       </div>`;
@@ -3455,6 +3752,8 @@
   function scrollAvailListToDate(dateISO) {
     if (!dateISO) return;
     window.AppState.availFocusDate = dateISO;
+    const fab = document.querySelector('[data-role="avail-fab"]');
+    if (fab) fab.setAttribute("data-date", dateISO);
     prepareAvailListForDate(dateISO);
 
     function runScroll() {
@@ -3953,13 +4252,6 @@
             <span class="avail-day__date${red ? " avail-day__date--red" : ""}">${dt.getDate()} ${MONTHS[dt.getMonth()]}</span>
           </div>
           ${editor}
-          <div class="avail-day__add-row">
-            <button type="button" class="avail-add-btn" data-action="add-avail-block" data-date="${escapeHtml(
-              dateISO
-            )}" aria-label="Dodaj blok godzin" title="Dodaj">
-              <span class="avail-add-btn__plus" aria-hidden="true"></span>
-            </button>
-          </div>
         </div>`;
       })
       .join("");
@@ -3967,10 +4259,7 @@
     return `
       <div class="app-screen app-screen--provider app-screen--avail">
         <div class="avail-top">
-          <header class="screen-head screen-head--with-back">
-            <button type="button" class="screen-head__back" data-action="provider-tab" data-tab="dashboard" aria-label="Wróć">
-              <span class="screen-head__back-icon" aria-hidden="true"></span>
-            </button>
+          <header class="screen-head">
             <h2 class="screen-head__title">Ustawienia dostępności</h2>
           </header>
           <section class="avail-week" aria-label="Kalendarz dostępności">
@@ -3997,6 +4286,12 @@
           </div>
           <div class="avail-list">${list || `<p class="empty-note">Brak ustawionych terminów.</p>`}</div>
         </div>
+        <button type="button" class="avail-fab" data-action="add-avail-block" data-date="${escapeHtml(
+          focusDate
+        )}" data-role="avail-fab" aria-label="Dodaj blok godzin" title="Dodaj">
+          <span class="avail-fab__plus" aria-hidden="true"></span>
+        </button>
+        ${providerBottomNav("availability")}
       </div>`;
   }
 
@@ -4080,8 +4375,15 @@
     requestAnimationFrame(function () {
       const availGrid = document.querySelector('[data-role="avail-week-grid"]');
       if (availGrid) initAvailStripScroll(availGrid);
+      const monthCarousel = document.querySelector('[data-role="prov-cal-month-carousel"]');
+      if (monthCarousel) {
+        const on = monthCarousel.querySelector(".gcal-month__chip--on");
+        if (on) {
+          monthCarousel.scrollLeft = Math.max(0, on.offsetLeft - monthCarousel.clientWidth / 2 + on.offsetWidth / 2);
+        }
+      }
       const body = document.querySelector('[data-role="prov-cal-body"]');
-      if (body) {
+      if (body && !window.AppState.provCalMonthOpen) {
         const nowEl = body.querySelector(".gcal__now");
         const firstEvent = body.querySelector(".gcal__event");
         const target = nowEl || firstEvent;
@@ -5012,7 +5314,11 @@
         break;
       case "add-avail-block":
         event.preventDefault();
-        addAvailEditBlock(d.date);
+        {
+          const dateISO = d.date || ensureAvailFocusDate();
+          addAvailEditBlock(dateISO);
+          scrollAvailListToDate(dateISO);
+        }
         break;
       case "remove-avail-block":
         event.preventDefault();
@@ -5056,7 +5362,43 @@
         break;
       case "prov-cal-today":
         event.preventDefault();
-        pickProvCalDate(demoTodayISO());
+        pickProvCalDate(demoTodayISO(), { keepView: true });
+        break;
+      case "prov-cal-month":
+        event.preventDefault();
+        toggleProvCalMonthPanel();
+        break;
+      case "prov-cal-view":
+        event.preventDefault();
+        if (d.view === "day") {
+          window.AppState.provCalMonthOpen = false;
+          setProvCalView("day");
+        } else if (d.view === "week") {
+          setProvCalView(window.AppState.provCalView === "week" ? "day" : "week");
+        } else if (d.view === "month") {
+          toggleProvCalMonthPanel();
+        }
+        break;
+      case "prov-cal-search":
+        event.preventDefault();
+        window.AppState.provCalSearchOpen = !window.AppState.provCalSearchOpen;
+        if (!window.AppState.provCalSearchOpen) window.AppState.provCalSearchQ = "";
+        saveState();
+        renderAll();
+        if (window.AppState.provCalSearchOpen) {
+          requestAnimationFrame(function () {
+            const input = document.querySelector('[data-role="prov-cal-search-input"]');
+            if (input) input.focus();
+          });
+        }
+        break;
+      case "prov-cal-picker-month":
+        event.preventDefault();
+        setProvCalPickerMonth(d.month);
+        break;
+      case "prov-cal-pick-date":
+        event.preventDefault();
+        pickProvCalDate(d.date);
         break;
       case "propose-open": proposeOpen(d.requestId); break;
       case "propose-date": proposeDate(d.requestId, d.date); break;
@@ -5165,6 +5507,23 @@
       }
       saveState();
       updateProviderLists();
+      return;
+    }
+
+    const calSearch = event.target.closest('[data-role="prov-cal-search-input"]');
+    if (calSearch) {
+      const q = String(calSearch.value || "")
+        .trim()
+        .toLowerCase();
+      window.AppState.provCalSearchQ = calSearch.value;
+      document.querySelectorAll(".gcal__event[data-search]").forEach(function (el) {
+        const hay = el.getAttribute("data-search") || "";
+        el.classList.toggle("gcal__event--dim", !!(q && hay.indexOf(q) === -1));
+      });
+      clearTimeout(document._provCalSearchSave);
+      document._provCalSearchSave = setTimeout(function () {
+        saveState();
+      }, 250);
     }
   });
 
@@ -5313,9 +5672,72 @@
     );
   }
 
+  function bindProvCalMonthSwipe() {
+    if (bindProvCalMonthSwipe.done) return;
+    bindProvCalMonthSwipe.done = true;
+    const swipe = { active: false, startX: 0, startY: 0, locked: false };
+
+    document.addEventListener(
+      "touchstart",
+      function (event) {
+        if (event.touches.length !== 1) return;
+        if (!event.target.closest || !event.target.closest('[data-role="prov-cal-month-swipe"]')) return;
+        swipe.active = true;
+        swipe.locked = false;
+        swipe.startX = event.touches[0].clientX;
+        swipe.startY = event.touches[0].clientY;
+      },
+      { passive: true }
+    );
+
+    document.addEventListener(
+      "touchmove",
+      function (event) {
+        if (!swipe.active || event.touches.length !== 1) return;
+        const dx = event.touches[0].clientX - swipe.startX;
+        const dy = event.touches[0].clientY - swipe.startY;
+        if (!swipe.locked) {
+          if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return;
+          if (Math.abs(dy) > Math.abs(dx)) {
+            swipe.active = false;
+            return;
+          }
+          swipe.locked = true;
+        }
+      },
+      { passive: true }
+    );
+
+    document.addEventListener(
+      "touchend",
+      function (event) {
+        if (!swipe.active) return;
+        const t = event.changedTouches && event.changedTouches[0];
+        const dx = t ? t.clientX - swipe.startX : 0;
+        const wasLocked = swipe.locked;
+        swipe.active = false;
+        swipe.locked = false;
+        if (!wasLocked || Math.abs(dx) < 48) return;
+        if (!window.AppState.provCalMonthOpen) return;
+        shiftProvCalPickerMonth(dx < 0 ? 1 : -1);
+      },
+      { passive: true }
+    );
+
+    document.addEventListener(
+      "touchcancel",
+      function () {
+        swipe.active = false;
+        swipe.locked = false;
+      },
+      { passive: true }
+    );
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     bindFilterScroll();
     bindProvCalPinchZoom();
+    bindProvCalMonthSwipe();
     bindAvailWeekScrollBridge();
     loadState();
     renderAll();
@@ -5339,7 +5761,15 @@
   window.addEventListener("hashchange", handleRouteHash);
 
   document.addEventListener("keydown", function (event) {
-    if (event.key === "Escape") closeProviderCardMenu();
+    if (event.key === "Escape") {
+      if (window.AppState.provCalMonthOpen) {
+        window.AppState.provCalMonthOpen = false;
+        saveState();
+        renderAll();
+        return;
+      }
+      closeProviderCardMenu();
+    }
   });
 
   window.addEventListener("resize", closeProviderCardMenu);
