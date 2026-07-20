@@ -376,6 +376,94 @@
 
   const DEMO_TODAY_ISO = "2026-07-16";
 
+  /** Wizyty demo u Grzesiu Barber — m.in. krótkie 10 min (widok dnia). */
+  const DEMO_BOOKINGS = [
+    {
+      id: "bk-demo-gb-1010",
+      providerId: "grzesiu-barber",
+      providerName: "Grzesiu Barber",
+      clientName: "Adam K",
+      serviceIds: ["svc-gb-2"],
+      serviceNames: ["Strzyżenie brody"],
+      dateISO: DEMO_TODAY_ISO,
+      from: "10:00",
+      to: "10:10",
+      locationLabel: "Studio główne",
+      status: "confirmed",
+      side: "client",
+    },
+    {
+      id: "bk-demo-gb-1030",
+      providerId: "grzesiu-barber",
+      providerName: "Grzesiu Barber",
+      clientName: "Marek W",
+      serviceIds: ["svc-gb-1"],
+      serviceNames: ["Strzyżenie męskie"],
+      dateISO: DEMO_TODAY_ISO,
+      from: "10:30",
+      to: "11:00",
+      locationLabel: "Studio główne",
+      status: "confirmed",
+      side: "client",
+    },
+    {
+      id: "bk-demo-gb-1210",
+      providerId: "grzesiu-barber",
+      providerName: "Grzesiu Barber",
+      clientName: "Ola N",
+      serviceIds: ["svc-gb-6"],
+      serviceNames: ["Golenie brzytwą"],
+      dateISO: DEMO_TODAY_ISO,
+      from: "12:00",
+      to: "12:10",
+      locationLabel: "Studio główne",
+      status: "confirmed",
+      side: "client",
+    },
+    {
+      id: "bk-demo-gb-1400",
+      providerId: "grzesiu-barber",
+      providerName: "Grzesiu Barber",
+      clientName: "Piotr S",
+      serviceIds: ["svc-gb-3"],
+      serviceNames: ["Combo: włosy + broda"],
+      dateISO: DEMO_TODAY_ISO,
+      from: "14:00",
+      to: "14:45",
+      locationLabel: "Studio główne",
+      status: "confirmed",
+      side: "client",
+    },
+    {
+      id: "bk-demo-gb-1530",
+      providerId: "grzesiu-barber",
+      providerName: "Grzesiu Barber",
+      clientName: "Kasia L",
+      serviceIds: ["svc-gb-2"],
+      serviceNames: ["Strzyżenie brody"],
+      dateISO: DEMO_TODAY_ISO,
+      from: "15:30",
+      to: "15:40",
+      locationLabel: "Studio główne",
+      status: "proposed",
+      side: "client",
+    },
+    {
+      id: "bk-demo-gb-1700",
+      providerId: "grzesiu-barber",
+      providerName: "Grzesiu Barber",
+      clientName: "Hubert Z",
+      serviceIds: ["svc-gb-2"],
+      serviceNames: ["Strzyżenie brody"],
+      dateISO: DEMO_TODAY_ISO,
+      from: "17:00",
+      to: "17:20",
+      locationLabel: "Studio główne",
+      status: "confirmed",
+      side: "client",
+    },
+  ];
+
   function todayOpenHoursLabel(weekly) {
     if (!weekly || !Object.keys(weekly).length) return "Brak grafiku";
     const dow = new Date(DEMO_TODAY_ISO + "T00:00:00").getDay();
@@ -398,5 +486,6 @@
     HOLIDAYS_2026,
     CURRENT_USER,
     DEMO_TODAY_ISO,
+    DEMO_BOOKINGS,
   };
 })();

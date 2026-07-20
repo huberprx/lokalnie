@@ -55,7 +55,9 @@
       screen: { client: DEFAULT_SCREEN.client, provider: DEFAULT_SCREEN.provider },
       params: { client: {}, provider: {} },
       favorites: [],
-      bookings: [],
+      bookings: (data().DEMO_BOOKINGS || []).map(function (b) {
+        return Object.assign({}, b);
+      }),
       requests: [],
       notifications: [],
       simView: { client: "mobile", provider: "mobile" },
@@ -1235,6 +1237,19 @@
       };
     } else {
       window.AppState = base;
+    }
+
+    // Dopnij brakujące wizyty demo (np. po starym localStorage).
+    const demoBookings = data().DEMO_BOOKINGS || [];
+    if (demoBookings.length) {
+      const existing = {};
+      (window.AppState.bookings || []).forEach(function (b) {
+        if (b && b.id) existing[b.id] = true;
+      });
+      demoBookings.forEach(function (b) {
+        if (!b || !b.id || existing[b.id]) return;
+        window.AppState.bookings.push(Object.assign({}, b));
+      });
     }
 
     const hasProposedClientVisit = (window.AppState.bookings || []).some(function (b) {
@@ -2605,16 +2620,6 @@
     return window.AppState.provCalDate;
   }
 
-  function shiftProvCalDays(delta) {
-    const cur = ensureProvCalDate();
-    const d = new Date(cur + "T12:00:00");
-    d.setDate(d.getDate() + delta);
-    window.AppState.provCalDate =
-      d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
-    saveState();
-    renderAll();
-  }
-
   function pickProvCalDate(dateISO) {
     if (!dateISO) return;
     window.AppState.provCalDate = dateISO;
@@ -2653,58 +2658,161 @@
     return `<div class="prov-cal__strip" data-role="prov-cal-strip" data-filter-scroll>${cols}</div>`;
   }
 
-  function renderProvCalTimeline(dateISO, dayVisits) {
+  const PROV_CAL_DOW_SHORT = ["ND.", "PN.", "WT.", "ŚR.", "CZ.", "PT.", "SB."];
+
+  function providerAvailBlocksForDate(dateISO) {
+    const p = myProvider();
+    if (!p || !dateISO) return [];
+    const day = (p.availability || []).find(function (d) {
+      return d.dateISO === dateISO;
+    });
+    return (day && day.blocks) || [];
+  }
+
+  function mergeTimeIntervals(intervals) {
+    if (!intervals.length) return [];
+    const sorted = intervals.slice().sort(function (a, b) {
+      return a.from - b.from;
+    });
+    const out = [{ from: sorted[0].from, to: sorted[0].to }];
+    for (let i = 1; i < sorted.length; i++) {
+      const last = out[out.length - 1];
+      const cur = sorted[i];
+      if (cur.from <= last.to) last.to = Math.max(last.to, cur.to);
+      else out.push({ from: cur.from, to: cur.to });
+    }
+    return out;
+  }
+
+  /** Wolne odcinki w ramach dostępności minus wizyty. */
+  function providerFreeGapsForDate(dateISO, dayVisits) {
+    const avail = mergeTimeIntervals(
+      providerAvailBlocksForDate(dateISO)
+        .map(function (block) {
+          return { from: timeToMinutes(block.from), to: timeToMinutes(block.to) };
+        })
+        .filter(function (b) {
+          return !isNaN(b.from) && !isNaN(b.to) && b.to > b.from;
+        })
+    );
+    const busy = mergeTimeIntervals(
+      (dayVisits || [])
+        .map(function (b) {
+          return { from: timeToMinutes(b.from), to: timeToMinutes(b.to) };
+        })
+        .filter(function (b) {
+          return !isNaN(b.from) && !isNaN(b.to) && b.to > b.from;
+        })
+    );
+    const gaps = [];
+    avail.forEach(function (win) {
+      let cursor = win.from;
+      busy.forEach(function (bk) {
+        if (bk.to <= cursor || bk.from >= win.to) return;
+        const cutStart = Math.max(bk.from, win.from);
+        const cutEnd = Math.min(bk.to, win.to);
+        if (cutStart > cursor) gaps.push({ from: cursor, to: cutStart });
+        cursor = Math.max(cursor, cutEnd);
+      });
+      if (cursor < win.to) gaps.push({ from: cursor, to: win.to });
+    });
+    return gaps;
+  }
+
+  /** Widok dnia jak Google Calendar: oś godzin + bloki wizyt i wolnych. */
+  function renderProvCalGoogleDay(dateISO, dayVisits) {
+    const d = new Date(dateISO + "T12:00:00");
+    const today = demoTodayISO();
+    const isToday = dateISO === today;
     const hourStart = 8;
     const hourEnd = 20;
-    const hourH = 56;
+    const hourH = 60;
     const dayStartMin = hourStart * 60;
     const dayEndMin = hourEnd * 60;
     const totalH = (hourEnd - hourStart) * hourH;
 
     let hours = "";
-    for (let h = hourStart; h < hourEnd; h++) {
+    for (let h = hourStart; h <= hourEnd; h++) {
+      const top = (h - hourStart) * hourH;
       hours += `
-        <div class="prov-cal__hour" style="height:${hourH}px">
-          <span class="prov-cal__hour-label">${pad(h)}:00</span>
-          <span class="prov-cal__hour-line" aria-hidden="true"></span>
+        <div class="gcal__hour" style="top:${top}px">
+          <span class="gcal__hour-label">${h === hourStart ? "" : pad(h) + ":00"}</span>
         </div>`;
     }
 
-    const events = dayVisits
-      .map(function (b, idx) {
-        const fromM = timeToMinutes(b.from);
-        const toM = timeToMinutes(b.to);
-        if (isNaN(fromM) || isNaN(toM) || toM <= fromM) return "";
-        const top = Math.max(0, ((fromM - dayStartMin) / 60) * hourH);
-        const height = Math.max(28, ((toM - fromM) / 60) * hourH - 4);
-        const tone = idx % 3;
+    const freeBlocks = providerFreeGapsForDate(dateISO, dayVisits)
+      .map(function (gap) {
+        const fromM = Math.max(dayStartMin, Math.min(dayEndMin, gap.from));
+        const toM = Math.max(dayStartMin, Math.min(dayEndMin, gap.to));
+        if (toM <= fromM) return "";
+        const mins = toM - fromM;
+        const top = ((fromM - dayStartMin) / 60) * hourH + 1;
+        const height = Math.max(18, ((toM - fromM) / 60) * hourH - 3);
+        const fromLabel = minToTime(fromM);
+        const toLabel = minToTime(toM);
         return `
-          <article class="prov-cal__event prov-cal__event--tone-${tone} prov-cal__event--${escapeHtml(b.status)}"
-            style="top:${top}px;height:${height}px" data-booking-id="${escapeHtml(b.id)}">
-            <span class="prov-cal__event-time">${escapeHtml(b.from)}–${escapeHtml(b.to)}</span>
-            <span class="prov-cal__event-name">${escapeHtml(b.clientName || "Klient")}</span>
-            <span class="prov-cal__event-svc">${escapeHtml((b.serviceNames || []).join(", "))}</span>
+          <article class="gcal__event gcal__event--free${height < 40 ? " gcal__event--compact" : ""}"
+            style="top:${top}px;height:${height}px" aria-label="Wolne ${mins} min">
+            <div class="gcal__event-row">
+              <span class="gcal__event-title">Wolne · ${mins} min</span>
+              <span class="gcal__event-time">${escapeHtml(fromLabel)}–${escapeHtml(toLabel)}</span>
+            </div>
           </article>`;
       })
       .join("");
 
-    const now = new Date();
-    const today = demoTodayISO();
+    const events = (dayVisits || [])
+      .map(function (b, idx) {
+        const fromM = timeToMinutes(b.from);
+        const toM = timeToMinutes(b.to);
+        if (isNaN(fromM) || isNaN(toM) || toM <= fromM) return "";
+        const clampedFrom = Math.max(dayStartMin, Math.min(dayEndMin, fromM));
+        const clampedTo = Math.max(dayStartMin, Math.min(dayEndMin, toM));
+        if (clampedTo <= clampedFrom) return "";
+        const top = ((clampedFrom - dayStartMin) / 60) * hourH + 1;
+        const height = Math.max(22, ((clampedTo - clampedFrom) / 60) * hourH - 3);
+        const tone = idx % 3;
+        const svc = (b.serviceNames || []).join(", ") || "Usługa";
+        const client = b.clientName || "Klient";
+        const showClient = height >= 40;
+        return `
+          <article class="gcal__event gcal__event--tone-${tone} gcal__event--${escapeHtml(b.status)}${showClient ? "" : " gcal__event--compact"}"
+            style="top:${top}px;height:${height}px" data-booking-id="${escapeHtml(b.id)}">
+            <div class="gcal__event-row">
+              <span class="gcal__event-title">${escapeHtml(svc)}</span>
+              <span class="gcal__event-time">${escapeHtml(b.from)}–${escapeHtml(b.to)}</span>
+            </div>
+            ${showClient ? `<span class="gcal__event-client">${escapeHtml(client)}</span>` : ""}
+          </article>`;
+      })
+      .join("");
+
     let nowLine = "";
-    if (dateISO === today) {
+    if (isToday) {
+      const now = new Date();
       const nowMin = now.getHours() * 60 + now.getMinutes();
       if (nowMin >= dayStartMin && nowMin <= dayEndMin) {
         const y = ((nowMin - dayStartMin) / 60) * hourH;
-        nowLine = `<div class="prov-cal__now" style="top:${y}px" aria-hidden="true"><span></span></div>`;
+        nowLine = `<div class="gcal__now" style="top:${y}px" aria-hidden="true"><span></span></div>`;
       }
     }
 
+    const trackContent = freeBlocks + events;
     return `
-      <div class="prov-cal__timeline" style="height:${totalH}px">
-        <div class="prov-cal__hours">${hours}</div>
-        <div class="prov-cal__track">
-          ${nowLine}
-          ${events || `<p class="prov-cal__empty">Brak wizyt w tym dniu</p>`}
+      <div class="gcal" data-role="prov-cal-gcal">
+        <div class="gcal__dayhead">
+          <div class="gcal__daybadge${isToday ? " gcal__daybadge--today" : ""}">
+            <span class="gcal__daybadge-dow">${PROV_CAL_DOW_SHORT[d.getDay()]}</span>
+            <span class="gcal__daybadge-num">${d.getDate()}</span>
+          </div>
+          <span class="gcal__dayhead-line" aria-hidden="true"></span>
+        </div>
+        <div class="gcal__timeline" style="height:${totalH}px">
+          <div class="gcal__hours">${hours}</div>
+          <div class="gcal__track">
+            ${nowLine}
+            ${trackContent || `<p class="gcal__empty">Brak dostępności w tym dniu</p>`}
+          </div>
         </div>
       </div>`;
   }
@@ -2722,27 +2830,19 @@
         <div class="prov-cal-top">
           <header class="screen-head screen-head--prov-cal">
             <div class="prov-cal-head">
-              <h2 class="screen-head__title">Kalendarz</h2>
-              <button type="button" class="prov-cal__today-btn" data-action="prov-cal-today">Dziś</button>
+              <div>
+                <h2 class="screen-head__title">Kalendarz</h2>
+                <p class="screen-head__sub">${escapeHtml(monthLabel)}</p>
+              </div>
+              <div class="prov-cal-head__actions">
+                <button type="button" class="prov-cal__today-btn" data-action="prov-cal-today">Dziś</button>
+              </div>
             </div>
-            <p class="screen-head__sub">${escapeHtml(monthLabel)}</p>
           </header>
-          <div class="prov-cal__nav">
-            <button type="button" class="prov-cal__nav-btn" data-action="prov-cal-prev" aria-label="Poprzedni dzień">‹</button>
-            <button type="button" class="prov-cal__nav-btn" data-action="prov-cal-next" aria-label="Następny dzień">›</button>
-          </div>
           ${renderProvCalDayStrip(selected, visits)}
         </div>
         <div class="prov-cal-body" data-role="prov-cal-body">
-          ${renderProvCalTimeline(selected, dayVisits)}
-          ${
-            dayVisits.length
-              ? `<section class="prov-cal-list" aria-label="Wizyty dnia">
-                   <h3 class="prov-section">Wizyty · ${escapeHtml(formatDateLong(selected))}</h3>
-                   <div class="visit-list">${dayVisits.map(renderProviderVisitCard).join("")}</div>
-                 </section>`
-              : ""
-          }
+          ${renderProvCalGoogleDay(selected, dayVisits)}
         </div>
         ${providerBottomNav("calendar")}
       </div>`;
@@ -3923,6 +4023,15 @@
           provStrip.scrollLeft = Math.max(0, on.offsetLeft - provStrip.clientWidth / 2 + on.offsetWidth / 2);
         }
       }
+      const body = document.querySelector('[data-role="prov-cal-body"]');
+      if (body) {
+        const nowEl = body.querySelector(".gcal__now");
+        const firstEvent = body.querySelector(".gcal__event");
+        const target = nowEl || firstEvent;
+        if (target) {
+          body.scrollTop = Math.max(0, target.offsetTop - 48);
+        }
+      }
     });
   }
 
@@ -4883,14 +4992,6 @@
           ensureProvCalDate();
           navigate("provider", "calendar", {});
         } else navigate("provider", d.tab, {});
-        break;
-      case "prov-cal-prev":
-        event.preventDefault();
-        shiftProvCalDays(-1);
-        break;
-      case "prov-cal-next":
-        event.preventDefault();
-        shiftProvCalDays(1);
         break;
       case "prov-cal-today":
         event.preventDefault();
