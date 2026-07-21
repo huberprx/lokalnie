@@ -3106,6 +3106,44 @@
     return h;
   }
 
+  // Min. wysokość kafla wizyty (px) — musi zgadzać się z layoutem (Math.max(22, …)).
+  const PROV_CAL_BOOKING_MIN_H = 22;
+
+  /**
+   * Najmniejsza wysokość godziny (px), przy której sąsiednie wizyty w widocznych dniach
+   * jeszcze się nie nakładają. Zoom-out zatrzymuje się, gdy bloki się STYKAJĄ.
+   * Wynika z tego, że krótkie wizyty mają wymuszoną min. wysokość — przy zbyt małym
+   * zoomie blok byłby wyższy niż odstęp do startu kolejnej wizyty.
+   */
+  function provCalNoOverlapMinHourH() {
+    const selected = ensureProvCalDate();
+    const days = provCalVisibleDayList(selected, ensureProvCalVisibleDays());
+    const byDate = {};
+    days.forEach(function (d) {
+      byDate[d] = [];
+    });
+    providerVisits().forEach(function (b) {
+      if (!Object.prototype.hasOwnProperty.call(byDate, b.dateISO)) return;
+      const from = timeToMinutes(b.from);
+      if (!isNaN(from)) byDate[b.dateISO].push(from);
+    });
+
+    let minStartGap = Infinity;
+    Object.keys(byDate).forEach(function (d) {
+      const starts = byDate[d].sort(function (a, b) {
+        return a - b;
+      });
+      for (let i = 1; i < starts.length; i++) {
+        const gap = starts[i] - starts[i - 1];
+        if (gap > 0 && gap < minStartGap) minStartGap = gap;
+      }
+    });
+
+    if (!isFinite(minStartGap)) return PROV_CAL_HOUR_H_MIN;
+    const required = (PROV_CAL_BOOKING_MIN_H * 60) / minStartGap;
+    return Math.min(PROV_CAL_HOUR_H_MAX, Math.max(PROV_CAL_HOUR_H_MIN, required));
+  }
+
   /** Największe widoczne body kalendarza (demo ma 2 instancje — querySelector łapał ukrytą). */
   function resolveProvCalBody(preferred) {
     if (preferred && preferred.getAttribute && preferred.getAttribute("data-role") === "prov-cal-body") {
@@ -3171,7 +3209,9 @@
   function applyProvCalZoom(nextH, opts) {
     opts = opts || {};
     const prevH = ensureProvCalHourH();
-    const hourH = clampProvCalHourH(nextH);
+    // Dolny limit zoom-out: bloki wizyt stykają się, ale nie nachodzą.
+    const dynMin = provCalNoOverlapMinHourH();
+    const hourH = Math.max(dynMin, clampProvCalHourH(nextH));
     const body = resolveProvCalBody(opts.body || opts.target || null);
     const dayStartMin = PROV_CAL_HOUR_START * 60;
     const timelines = document.querySelectorAll('[data-role="prov-cal-timeline"]');
@@ -3576,6 +3616,9 @@
       return b.dateISO === selected;
     });
     const visibleDays = ensureProvCalVisibleDays();
+    // Nie pozwól, by zapisany zbyt mały zoom nakładał wizyty po odświeżeniu.
+    const dynMinHourH = provCalNoOverlapMinHourH();
+    if (ensureProvCalHourH() < dynMinHourH) window.AppState.provCalHourH = clampProvCalHourH(dynMinHourH);
     const weekView = visibleDays > 1;
     const monthOpen = !!window.AppState.provCalMonthOpen;
     const dayToolOn = !monthOpen && visibleDays <= 1;
