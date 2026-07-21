@@ -6294,10 +6294,9 @@
     };
     let wheelSaveTimer = null;
 
-    function touchDist(a, b) {
-      const dx = a.clientX - b.clientX;
-      const dy = a.clientY - b.clientY;
-      return Math.sqrt(dx * dx + dy * dy);
+    /** Odległość tylko w pionie — zoom osi reaguje na rozsuwanie palców góra/dół, nie w bok. */
+    function touchVertDist(a, b) {
+      return Math.abs(a.clientY - b.clientY);
     }
 
     function flushPinchZoom() {
@@ -6322,13 +6321,17 @@
     function beginPinch(body, t0, t1) {
       const timeline = body.querySelector('[data-role="prov-cal-timeline"]');
       if (!timeline) return;
+      // Gest musi mieć komponent pionowy — czysto poziome 2 palce nie startują zoomu.
+      const vert = touchVertDist(t0, t1);
+      const horiz = Math.abs(t0.clientX - t1.clientX);
+      if (vert < 24 && horiz > vert * 1.4) return;
       const hourH = ensureProvCalHourH();
       const midY = (t0.clientY + t1.clientY) / 2;
       const rect = timeline.getBoundingClientRect();
       const contentY = midY - rect.top;
       pinch.active = true;
       pinch.body = body;
-      pinch.startDist = Math.max(8, touchDist(t0, t1));
+      pinch.startDist = Math.max(24, vert);
       pinch.startH = hourH;
       pinch.anchorClientY = midY;
       pinch.anchorMin = PROV_CAL_HOUR_START * 60 + (contentY / hourH) * 60;
@@ -6357,7 +6360,7 @@
         const body = event.target && event.target.closest && event.target.closest('[data-role="prov-cal-body"]');
         if (!body) return;
         beginPinch(body, event.touches[0], event.touches[1]);
-        event.preventDefault();
+        if (pinch.active) event.preventDefault();
       },
       { passive: false, capture: true }
     );
@@ -6373,7 +6376,7 @@
         event.preventDefault();
         const t0 = event.touches[0];
         const t1 = event.touches[1];
-        const dist = touchDist(t0, t1);
+        const dist = touchVertDist(t0, t1);
         if (!(pinch.startDist > 0) || !(dist > 0)) return;
         pinch.anchorClientY = (t0.clientY + t1.clientY) / 2;
         schedulePinchZoom(pinch.startH * (dist / pinch.startDist));
