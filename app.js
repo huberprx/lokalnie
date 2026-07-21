@@ -2955,28 +2955,34 @@
     return h;
   }
 
-  /** Płynny zoom osi — aktualizuje DOM bez pełnego re-renderu. */
-  function applyProvCalZoom(nextH, opts) {
-    opts = opts || {};
-    const prevH = ensureProvCalHourH();
-    const hourH = clampProvCalHourH(nextH);
-    const body = document.querySelector('[data-role="prov-cal-body"]');
-    const timeline = document.querySelector('[data-role="prov-cal-timeline"]');
+  /** Największe widoczne body kalendarza (demo ma 2 instancje — querySelector łapał ukrytą). */
+  function resolveProvCalBody(preferred) {
+    if (preferred && preferred.getAttribute && preferred.getAttribute("data-role") === "prov-cal-body") {
+      return preferred;
+    }
+    if (preferred && preferred.closest) {
+      const near = preferred.closest('[data-role="prov-cal-body"]');
+      if (near) return near;
+    }
+    const bodies = document.querySelectorAll('[data-role="prov-cal-body"]');
+    let best = null;
+    let bestArea = 0;
+    for (let i = 0; i < bodies.length; i++) {
+      const r = bodies[i].getBoundingClientRect();
+      const area = Math.max(0, r.width) * Math.max(0, r.height);
+      if (area > bestArea) {
+        bestArea = area;
+        best = bodies[i];
+      }
+    }
+    return best || bodies[0] || null;
+  }
+
+  /** Przelicz układ jednej osi czasu po zmianie wysokości godziny. */
+  function layoutProvCalTimeline(timeline, hourH) {
+    if (!timeline) return;
     const dayStartMin = PROV_CAL_HOUR_START * 60;
     const spanH = PROV_CAL_HOUR_END - PROV_CAL_HOUR_START;
-
-    let anchorMin = opts.anchorMin;
-    if (anchorMin == null && body && prevH > 0) {
-      anchorMin = dayStartMin + ((body.scrollTop + body.clientHeight * 0.35) / prevH) * 60;
-    }
-
-    window.AppState.provCalHourH = hourH;
-
-    if (!timeline) {
-      if (opts.persist) saveState();
-      return hourH;
-    }
-
     timeline.style.height = spanH * hourH + "px";
     timeline.style.setProperty("--gcal-hour-h", hourH + "px");
 
@@ -3004,6 +3010,36 @@
       const nowMin = Number(nowEl.getAttribute("data-now-min"));
       if (!isNaN(nowMin)) nowEl.style.top = ((nowMin - dayStartMin) / 60) * hourH + "px";
     });
+  }
+
+  /**
+   * Płynny zoom osi (wysokość godziny) — jak Google Calendar Android:
+   * pinch / Ctrl+scroll zmienia slotMinHeight, treść znika przy małym zoomie.
+   * Aktualizuje WSZYSTKIE timeline (demo ma 2 instancje).
+   */
+  function applyProvCalZoom(nextH, opts) {
+    opts = opts || {};
+    const prevH = ensureProvCalHourH();
+    const hourH = clampProvCalHourH(nextH);
+    const body = resolveProvCalBody(opts.body || opts.target || null);
+    const dayStartMin = PROV_CAL_HOUR_START * 60;
+    const timelines = document.querySelectorAll('[data-role="prov-cal-timeline"]');
+
+    let anchorMin = opts.anchorMin;
+    if (anchorMin == null && body && prevH > 0) {
+      anchorMin = dayStartMin + ((body.scrollTop + body.clientHeight * 0.35) / prevH) * 60;
+    }
+
+    window.AppState.provCalHourH = hourH;
+
+    if (!timelines.length) {
+      if (opts.persist) saveState();
+      return hourH;
+    }
+
+    for (let i = 0; i < timelines.length; i++) {
+      layoutProvCalTimeline(timelines[i], hourH);
+    }
 
     if (body && typeof anchorMin === "number") {
       const yInBody = ((anchorMin - dayStartMin) / 60) * hourH;
@@ -6252,6 +6288,7 @@
       startH: 60,
       anchorMin: null,
       anchorClientY: null,
+      body: null,
       raf: 0,
       pendingH: null,
     };
@@ -6269,6 +6306,7 @@
       const h = pinch.pendingH;
       pinch.pendingH = null;
       applyProvCalZoom(h, {
+        body: pinch.body,
         anchorMin: pinch.anchorMin,
         anchorClientY: pinch.anchorClientY,
         persist: false,
@@ -6281,46 +6319,27 @@
       pinch.raf = requestAnimationFrame(flushPinchZoom);
     }
 
-    document.addEventListener(
-      "touchstart",
-      function (event) {
-        if (event.touches.length !== 2) return;
-        const body = event.target.closest && event.target.closest('[data-role="prov-cal-body"]');
-        const timeline = body && body.querySelector('[data-role="prov-cal-timeline"]');
-        if (!timeline) return;
-        const t0 = event.touches[0];
-        const t1 = event.touches[1];
-        const hourH = ensureProvCalHourH();
-        const midY = (t0.clientY + t1.clientY) / 2;
-        const rect = timeline.getBoundingClientRect();
-        const contentY = midY - rect.top;
-        pinch.active = true;
-        pinch.startDist = touchDist(t0, t1);
-        pinch.startH = hourH;
-        pinch.anchorClientY = midY;
-        pinch.anchorMin = PROV_CAL_HOUR_START * 60 + (contentY / hourH) * 60;
-      },
-      { passive: true }
-    );
-
-    document.addEventListener(
-      "touchmove",
-      function (event) {
-        if (!pinch.active || event.touches.length !== 2) return;
-        if (!event.target.closest || !event.target.closest('[data-role="prov-cal-body"]')) return;
-        const t0 = event.touches[0];
-        const t1 = event.touches[1];
-        const dist = touchDist(t0, t1);
-        if (!(pinch.startDist > 0) || !(dist > 0)) return;
-        pinch.anchorClientY = (t0.clientY + t1.clientY) / 2;
-        schedulePinchZoom(pinch.startH * (dist / pinch.startDist));
-      },
-      { passive: true }
-    );
+    function beginPinch(body, t0, t1) {
+      const timeline = body.querySelector('[data-role="prov-cal-timeline"]');
+      if (!timeline) return;
+      const hourH = ensureProvCalHourH();
+      const midY = (t0.clientY + t1.clientY) / 2;
+      const rect = timeline.getBoundingClientRect();
+      const contentY = midY - rect.top;
+      pinch.active = true;
+      pinch.body = body;
+      pinch.startDist = Math.max(8, touchDist(t0, t1));
+      pinch.startH = hourH;
+      pinch.anchorClientY = midY;
+      pinch.anchorMin = PROV_CAL_HOUR_START * 60 + (contentY / hourH) * 60;
+      document.body.classList.add("prov-cal-pinching");
+    }
 
     function endPinch() {
       if (!pinch.active) return;
       pinch.active = false;
+      pinch.body = null;
+      document.body.classList.remove("prov-cal-pinching");
       if (pinch.raf) {
         cancelAnimationFrame(pinch.raf);
         flushPinchZoom();
@@ -6328,33 +6347,80 @@
       saveState();
     }
 
+    // Pinch: MUSI być passive:false + preventDefault — inaczej przeglądarka
+    // przejmuje gest (scroll / page-zoom) i nasza oś się nie skaluje.
+    document.addEventListener(
+      "touchstart",
+      function (event) {
+        if (event.touches.length !== 2) return;
+        // Tylko gdy gest zaczyna się NAD kalendarzem (bez fallbacku do innego body).
+        const body = event.target && event.target.closest && event.target.closest('[data-role="prov-cal-body"]');
+        if (!body) return;
+        beginPinch(body, event.touches[0], event.touches[1]);
+        event.preventDefault();
+      },
+      { passive: false, capture: true }
+    );
+
+    document.addEventListener(
+      "touchmove",
+      function (event) {
+        if (!pinch.active) return;
+        if (event.touches.length !== 2) {
+          endPinch();
+          return;
+        }
+        event.preventDefault();
+        const t0 = event.touches[0];
+        const t1 = event.touches[1];
+        const dist = touchDist(t0, t1);
+        if (!(pinch.startDist > 0) || !(dist > 0)) return;
+        pinch.anchorClientY = (t0.clientY + t1.clientY) / 2;
+        schedulePinchZoom(pinch.startH * (dist / pinch.startDist));
+      },
+      { passive: false, capture: true }
+    );
+
     document.addEventListener(
       "touchend",
       function (event) {
         if (!pinch.active) return;
         if (event.touches.length < 2) endPinch();
       },
-      { passive: true }
+      { passive: true, capture: true }
     );
 
-    document.addEventListener("touchcancel", endPinch, { passive: true });
+    document.addEventListener("touchcancel", endPinch, { passive: true, capture: true });
 
+    // Desktop / trackpad: Ctrl/⌘+scroll (pinch na Macu) oraz Alt+scroll.
     document.addEventListener(
       "wheel",
       function (event) {
-        if (!event.ctrlKey && !event.metaKey) return;
-        if (!event.target.closest || !event.target.closest('[data-role="prov-cal-body"]')) return;
+        if (!event.ctrlKey && !event.metaKey && !event.altKey) return;
+        const body = event.target && event.target.closest && event.target.closest('[data-role="prov-cal-body"]');
+        if (!body) return;
         event.preventDefault();
         const cur = ensureProvCalHourH();
-        // Płynnie: deltaY skaluje wysokość godziny (bez skoków poziomów).
+        const timeline = body.querySelector('[data-role="prov-cal-timeline"]');
+        let anchorMin = null;
+        if (timeline) {
+          const rect = timeline.getBoundingClientRect();
+          const contentY = event.clientY - rect.top;
+          anchorMin = PROV_CAL_HOUR_START * 60 + (contentY / cur) * 60;
+        }
         const next = cur * Math.exp(-event.deltaY * 0.0018);
-        applyProvCalZoom(next, { persist: false });
+        applyProvCalZoom(next, {
+          body: body,
+          anchorMin: anchorMin,
+          anchorClientY: event.clientY,
+          persist: false,
+        });
         clearTimeout(wheelSaveTimer);
         wheelSaveTimer = setTimeout(function () {
           saveState();
         }, 180);
       },
-      { passive: false }
+      { passive: false, capture: true }
     );
   }
 

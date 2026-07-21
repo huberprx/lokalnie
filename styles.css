@@ -5985,6 +5985,15 @@ body.prov-cal-dragging .gcal__event[data-role="prov-cal-slot"] {
   touch-action: none;
 }
 
+/* Pinch zoom osi — przeglądarka nie może przejąć gestu (scroll / page-zoom). */
+body.prov-cal-pinching,
+body.prov-cal-pinching .prov-cal-body,
+body.prov-cal-pinching .gcal__timeline,
+body.prov-cal-pinching .gcal__event[data-role="prov-cal-slot"] {
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
 .gcal__event--dragging {
   z-index: 9;
   opacity: 0.96;
