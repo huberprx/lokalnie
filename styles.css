@@ -5815,19 +5815,15 @@ body.avatar-preview-open {
   );
 }
 
-/* Pasek zdefiniowanej dostępności — cienka pionowa linia przy lewej krawędzi osi. */
+/* Pasek dostępności — jedna reguła dla dnia i wielu dni. */
 .gcal__avail {
   position: absolute;
-  left: 0;
-  width: 4px;
+  left: -2px;
+  width: 3px;
   z-index: 1;
-  border-radius: 0 2px 2px 0;
+  border-radius: 0;
   background: var(--accent-provider);
   pointer-events: none;
-}
-
-.gcal-week__track .gcal__avail {
-  width: 3px;
 }
 
 .gcal__empty {
