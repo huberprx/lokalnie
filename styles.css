@@ -6060,14 +6060,9 @@ body.prov-cal-dragging * {
 }
 
 /* Mocniejsze skrócenie osi (mały zoom) — chowamy klienta;
-   godzina + nazwa zostają w jednym wierszu. */
+   godzina + nazwa zostają w jednym wierszu, w tym samym rozmiarze co w pełnym kaflu. */
 .gcal__event--tiny .gcal__event-client {
   display: none;
-}
-
-.gcal__event--tiny .gcal__event-title,
-.gcal__event--tiny .gcal__event-time {
-  font-size: 0.76rem;
 }
 
 .gcal__event--mini {
