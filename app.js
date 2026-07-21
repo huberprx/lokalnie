@@ -3308,8 +3308,8 @@
             role="button" tabindex="0" aria-pressed="${selected ? "true" : "false"}"
             aria-label="Wolne ${mins} min, ${escapeHtml(fromLabel)}–${escapeHtml(toLabel)}">
             <div class="gcal__event-row">
-              <span class="gcal__event-title">Wolne · ${mins} min</span>
               <span class="gcal__event-time">${escapeHtml(fromLabel)}–${escapeHtml(toLabel)}</span>
+              <span class="gcal__event-title">Wolne · ${mins} min</span>
             </div>
           </article>`;
       })
@@ -3350,8 +3350,8 @@
             aria-pressed="${selected ? "true" : "false"}"
             aria-label="${escapeHtml(svc + ", " + client + ", " + b.from + "–" + b.to)}">
             <div class="gcal__event-row">
-              <span class="gcal__event-title">${escapeHtml(svc)}</span>
               <span class="gcal__event-time">${escapeHtml(b.from)}–${escapeHtml(b.to)}</span>
+              <span class="gcal__event-title">${escapeHtml(svc)}</span>
             </div>
             <span class="gcal__event-client">${escapeHtml(client)}</span>
           </article>`;
@@ -3381,7 +3381,7 @@
       </div>`;
   }
 
-  /** Widok wielodniowy: N kolumn (2–7) — same kolorowe bloki (bez usług / godzin / klientów). */
+  /** Widok wielodniowy: N kolumn (2–7) — te same kafle wizyt co w widoku dnia. */
   function renderProvCalGoogleWeek(selectedISO, visits) {
     const dayCount = ensureProvCalVisibleDays();
     const weekDays = provCalVisibleDayList(selectedISO, dayCount);
@@ -3438,7 +3438,7 @@
             const clampedTo = Math.max(dayStartMin, Math.min(dayEndMin, toM));
             if (clampedTo <= clampedFrom) return "";
             const top = ((clampedFrom - dayStartMin) / 60) * hourH + 1;
-            const height = Math.max(6, ((clampedTo - clampedFrom) / 60) * hourH - 2);
+            const height = Math.max(22, ((clampedTo - clampedFrom) / 60) * hourH - 3);
             const svc = (b.serviceNames || []).join(", ") || "Usługa";
             const client = b.clientName || "Klient";
             const hay = (svc + " " + client).toLowerCase();
@@ -3448,8 +3448,9 @@
               window.AppState.provCalSelection.kind === "booking" &&
               window.AppState.provCalSelection.bookingId === b.id
             );
+            const densityCls = provCalDensityCls(height);
             return `
-              <article class="gcal__event gcal__event--bare gcal__event--${escapeHtml(b.status)}${
+              <article class="gcal__event gcal__event--${escapeHtml(b.status)}${densityCls ? " " + densityCls : ""}${
                 dim ? " gcal__event--dim" : ""
               }${selected ? " gcal__event--selected" : ""}"
                 style="top:${top}px;height:${height}px"
@@ -3458,7 +3459,13 @@
                 data-from-min="${clampedFrom}" data-to-min="${clampedTo}"
                 data-search="${escapeHtml(hay)}" role="button" tabindex="0"
                 aria-pressed="${selected ? "true" : "false"}"
-                aria-label="${escapeHtml(svc + ", " + client)}"></article>`;
+                aria-label="${escapeHtml(svc + ", " + client + ", " + b.from + "–" + b.to)}">
+                <div class="gcal__event-row">
+                  <span class="gcal__event-time">${escapeHtml(b.from)}–${escapeHtml(b.to)}</span>
+                  <span class="gcal__event-title">${escapeHtml(svc)}</span>
+                </div>
+                <span class="gcal__event-client">${escapeHtml(client)}</span>
+              </article>`;
           })
           .join("");
 

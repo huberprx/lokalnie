@@ -5737,29 +5737,12 @@ body.avatar-preview-open {
   cursor: pointer;
 }
 
-.gcal__event--bare {
+/* Wąskie kolumny tygodnia — ten sam styl kafla co w dniu, ciaśniejszy padding. */
+.gcal-week__track .gcal__event {
   left: 1px;
   right: 1px;
-  padding: 0;
-  border-radius: 3px;
-  cursor: pointer;
-  /* Widok tygodnia: pełne wypełnienie (nie sama kreska) */
-  background: color-mix(in srgb, var(--accent-provider) 88%, #0d3d2a);
-  box-shadow: none;
-}
-
-.gcal__event--bare::before {
-  display: none;
-}
-
-.gcal__event--bare.gcal__event--selected {
-  background: color-mix(in srgb, var(--accent-provider) 100%, #0d3d2a);
-  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, #fff 55%, transparent);
-}
-
-.gcal__event--bare.gcal__event--proposed {
-  background: color-mix(in srgb, var(--accent-provider) 65%, #0d3d2a);
-  opacity: 0.9;
+  padding-left: 0.45rem;
+  padding-right: 0.2rem;
 }
 
 .gcal-week__track .gcal__now {
@@ -5971,9 +5954,6 @@ body.prov-cal-pinching .gcal__event[data-role="prov-cal-slot"] {
   .gcal__event[data-kind="booking"]:hover {
     background: color-mix(in srgb, var(--accent-provider) 22%, var(--surface));
   }
-  .gcal__event--bare[data-kind="booking"]:hover {
-    background: color-mix(in srgb, var(--accent-provider) 100%, #0d3d2a);
-  }
 }
 
 .gcal__event--dragging[data-kind="booking"] {
@@ -6031,8 +6011,8 @@ body.prov-cal-dragging * {
 .gcal__event-row {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 0.45rem;
+  justify-content: flex-start;
+  gap: 0;
   min-width: 0;
 }
 
@@ -6045,6 +6025,11 @@ body.prov-cal-dragging * {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.gcal__event-time + .gcal__event-title::before {
+  content: " - ";
+  font-weight: 650;
 }
 
 .gcal__event-time {
@@ -6071,14 +6056,14 @@ body.prov-cal-dragging * {
   display: none;
 }
 
-/* Mocniejsze skrócenie osi (mały zoom) — chowamy kolejne warstwy treści,
-   aby nic nie wystawało poza blok (standard jak w Google Calendar). */
-.gcal__event--tiny .gcal__event-client,
-.gcal__event--tiny .gcal__event-time {
+/* Mocniejsze skrócenie osi (mały zoom) — chowamy klienta;
+   godzina + nazwa zostają w jednym wierszu. */
+.gcal__event--tiny .gcal__event-client {
   display: none;
 }
 
-.gcal__event--tiny .gcal__event-title {
+.gcal__event--tiny .gcal__event-title,
+.gcal__event--tiny .gcal__event-time {
   font-size: 0.76rem;
 }
 
