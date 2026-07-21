@@ -2930,9 +2930,9 @@
     const dayStartMin = PROV_CAL_HOUR_START * 60;
     const isBare = el.classList.contains("gcal__event--bare");
     const isFree = el.classList.contains("gcal__event--free");
-    const top = ((fromMin - dayStartMin) / 60) * hourH + 1;
+    const top = ((fromMin - dayStartMin) / 60) * hourH;
     const minH = isBare ? 6 : isFree ? 18 : 22;
-    const height = Math.max(minH, ((toMin - fromMin) / 60) * hourH - (isBare ? 2 : 3));
+    const height = Math.max(minH, ((toMin - fromMin) / 60) * hourH);
     el.style.top = top + "px";
     el.style.height = height + "px";
     el.setAttribute("data-from-min", String(fromMin));
@@ -3060,9 +3060,9 @@
       if (isNaN(fromM) || isNaN(toM) || toM <= fromM) return;
       const isFree = el.classList.contains("gcal__event--free");
       const isBare = el.classList.contains("gcal__event--bare");
-      const top = ((fromM - dayStartMin) / 60) * hourH + 1;
+      const top = ((fromM - dayStartMin) / 60) * hourH;
       const minH = isBare ? 6 : isFree ? 18 : 22;
-      const height = Math.max(minH, ((toM - fromM) / 60) * hourH - (isBare ? 2 : 3));
+      const height = Math.max(minH, ((toM - fromM) / 60) * hourH);
       el.style.top = top + "px";
       el.style.height = height + "px";
       applyEventDensity(el, height, isBare);
@@ -3280,41 +3280,6 @@
         </div>`;
     }
 
-    const freeBlocks = providerFreeGapsForDate(dateISO, dayVisits)
-      .map(function (gap) {
-        const fromM = Math.max(dayStartMin, Math.min(dayEndMin, gap.from));
-        const toM = Math.max(dayStartMin, Math.min(dayEndMin, gap.to));
-        if (toM <= fromM) return "";
-        const mins = toM - fromM;
-        const top = ((fromM - dayStartMin) / 60) * hourH + 1;
-        const height = Math.max(18, ((toM - fromM) / 60) * hourH - 3);
-        const fromLabel = minToTime(fromM);
-        const toLabel = minToTime(toM);
-        const selected =
-          !!window.AppState.provCalSelection &&
-          window.AppState.provCalSelection.kind === "free" &&
-          window.AppState.provCalSelection.dateISO === dateISO &&
-          window.AppState.provCalSelection.fromMin === fromM &&
-          window.AppState.provCalSelection.toMin === toM;
-        const densityCls = provCalDensityCls(height);
-        return `
-          <article class="gcal__event gcal__event--free${densityCls ? " " + densityCls : ""}${
-            selected ? " gcal__event--selected" : ""
-          }"
-            style="top:${top}px;height:${height}px"
-            data-role="prov-cal-slot" data-kind="free" data-date="${escapeHtml(dateISO)}"
-            data-action="select-prov-cal-slot"
-            data-from-min="${fromM}" data-to-min="${toM}"
-            role="button" tabindex="0" aria-pressed="${selected ? "true" : "false"}"
-            aria-label="Wolne ${mins} min, ${escapeHtml(fromLabel)}–${escapeHtml(toLabel)}">
-            <div class="gcal__event-row">
-              <span class="gcal__event-time">${escapeHtml(fromLabel)}–${escapeHtml(toLabel)}</span>
-              <span class="gcal__event-title">Wolne · ${mins} min</span>
-            </div>
-          </article>`;
-      })
-      .join("");
-
     const events = (dayVisits || [])
       .map(function (b) {
         const fromM = timeToMinutes(b.from);
@@ -3323,8 +3288,8 @@
         const clampedFrom = Math.max(dayStartMin, Math.min(dayEndMin, fromM));
         const clampedTo = Math.max(dayStartMin, Math.min(dayEndMin, toM));
         if (clampedTo <= clampedFrom) return "";
-        const top = ((clampedFrom - dayStartMin) / 60) * hourH + 1;
-        const height = Math.max(22, ((clampedTo - clampedFrom) / 60) * hourH - 3);
+        const top = ((clampedFrom - dayStartMin) / 60) * hourH;
+        const height = Math.max(22, ((clampedTo - clampedFrom) / 60) * hourH);
         const svc = (b.serviceNames || []).join(", ") || "Usługa";
         const client = b.clientName || "Klient";
         const q = String(window.AppState.provCalSearchQ || "")
@@ -3368,14 +3333,13 @@
       }
     }
 
-    const trackContent = freeBlocks + events;
     return `
       <div class="gcal" data-role="prov-cal-gcal" data-prov-cal-day-swipe>
         <div class="gcal__timeline" style="height:${totalH}px;--gcal-hour-h:${hourH}px" data-role="prov-cal-timeline">
           <div class="gcal__hours">${hours}</div>
           <div class="gcal__track">
             ${nowLine}
-            ${trackContent || `<p class="gcal__empty">Brak dostępności w tym dniu</p>`}
+            ${events || `<p class="gcal__empty">Brak wizyt w tym dniu</p>`}
           </div>
         </div>
       </div>`;
@@ -3437,8 +3401,8 @@
             const clampedFrom = Math.max(dayStartMin, Math.min(dayEndMin, fromM));
             const clampedTo = Math.max(dayStartMin, Math.min(dayEndMin, toM));
             if (clampedTo <= clampedFrom) return "";
-            const top = ((clampedFrom - dayStartMin) / 60) * hourH + 1;
-            const height = Math.max(22, ((clampedTo - clampedFrom) / 60) * hourH - 3);
+            const top = ((clampedFrom - dayStartMin) / 60) * hourH;
+            const height = Math.max(22, ((clampedTo - clampedFrom) / 60) * hourH);
             const svc = (b.serviceNames || []).join(", ") || "Usługa";
             const client = b.clientName || "Klient";
             const hay = (svc + " " + client).toLowerCase();

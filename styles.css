@@ -5854,7 +5854,7 @@ body.avatar-preview-open {
   justify-content: flex-start;
   gap: 0.08rem;
   padding: 0.22rem 0.4rem 0.22rem 0.55rem;
-  border-radius: 3px;
+  border-radius: 0;
   overflow: hidden;
   /* Zarezerwowane: zawsze lekkie zielone tło (jak po zaznaczeniu) */
   background: color-mix(in srgb, var(--accent-provider) 16%, var(--surface));
@@ -5874,7 +5874,7 @@ body.avatar-preview-open {
   bottom: 0;
   left: 0;
   width: 3px;
-  border-radius: 3px 0 0 3px;
+  border-radius: 0;
   background: var(--accent-provider);
   pointer-events: none;
   transition: width 0.12s ease, background 0.12s ease;
@@ -5971,8 +5971,7 @@ body.prov-cal-dragging * {
   background: color-mix(in srgb, var(--text-muted) 14%, var(--surface));
   color: color-mix(in srgb, var(--text-muted) 88%, var(--text));
   border: 1px dashed color-mix(in srgb, var(--text-muted) 50%, var(--border));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-muted) 8%, transparent),
-    0 1px 3px color-mix(in srgb, var(--text-muted) 18%, transparent);
+  box-shadow: none;
   padding-left: 0.45rem;
 }
 
@@ -6012,7 +6011,7 @@ body.prov-cal-dragging * {
   display: flex;
   align-items: baseline;
   justify-content: flex-start;
-  gap: 0;
+  gap: 0.12em;
   min-width: 0;
 }
 
@@ -6027,19 +6026,17 @@ body.prov-cal-dragging * {
   text-overflow: ellipsis;
 }
 
-.gcal__event-time + .gcal__event-title::before {
-  content: " - ";
-  font-weight: 650;
-}
-
 .gcal__event-time {
-  flex: 0 0 auto;
+  /* Stała kolumna na „00:00–00:00” → nazwy usług wyrównane w pionie. */
+  flex: 0 0 11ch;
+  width: 11ch;
   font-size: 0.72rem;
   font-weight: 650;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
   opacity: 0.95;
   white-space: nowrap;
+  overflow: hidden;
 }
 
 .gcal__event-client {
