@@ -5985,6 +5985,18 @@ body.prov-cal-dragging .gcal__event[data-role="prov-cal-slot"] {
   touch-action: none;
 }
 
+/*
+ * Safari: obce sloty („Wolne”, inne wizyty) nie mogą brać udziału w hit-testach
+ * podczas przeciągania — inaczej pointercancel urywa gest.
+ */
+.gcal--drag-active .gcal__event[data-role="prov-cal-slot"]:not(.gcal__event--dragging) {
+  pointer-events: none;
+}
+
+.gcal--drag-active .gcal__event--dragging {
+  pointer-events: auto;
+}
+
 /* Pinch zoom osi — przeglądarka nie może przejąć gestu (scroll / page-zoom). */
 body.prov-cal-pinching,
 body.prov-cal-pinching .prov-cal-body,

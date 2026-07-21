@@ -5960,9 +5960,15 @@
       return window.AppState.provCalView === "week";
     }
 
+    function dragRootGcal() {
+      return (drag.el && drag.el.closest && drag.el.closest('[data-role="prov-cal-gcal"]')) || null;
+    }
+
     function trackForDate(dateISO) {
       if (isWeekView()) {
-        const col = document.querySelector('.gcal-week__col[data-date="' + dateISO + '"]');
+        const root = dragRootGcal();
+        const scope = root || document;
+        const col = scope.querySelector('.gcal-week__col[data-date="' + dateISO + '"]');
         return col ? col.querySelector(".gcal-week__track") : null;
       }
       return drag.el ? drag.el.closest(".gcal__track") : null;
@@ -5976,15 +5982,40 @@
       return PROV_CAL_HOUR_START * 60 + ((clientY - rect.top) / hourH) * 60;
     }
 
-    /** ISO dnia kolumny (widok tygodnia) pod wskaźnikiem — ignorując sam ciągnięty blok. */
+    /**
+     * ISO dnia kolumny (tydzień) z geometrii — bez elementFromPoint / pointer-events:none
+     * (Safari przy tym często emituje pointercancel i urywa drag).
+     */
     function columnDateUnderPoint(clientX, clientY) {
-      if (!drag.el) return null;
-      const prev = drag.el.style.pointerEvents;
-      drag.el.style.pointerEvents = "none";
-      const under = document.elementFromPoint(clientX, clientY);
-      drag.el.style.pointerEvents = prev;
-      const col = under && under.closest && under.closest(".gcal-week__col[data-date]");
-      return col ? col.getAttribute("data-date") : null;
+      const root = dragRootGcal();
+      if (!root) return null;
+      const cols = root.querySelectorAll(".gcal-week__col[data-date]");
+      let best = null;
+      let bestDist = Infinity;
+      for (let i = 0; i < cols.length; i++) {
+        const col = cols[i];
+        const r = col.getBoundingClientRect();
+        if (r.width <= 0 && r.height <= 0) continue;
+        // W pionie kolumna jest wysoka — bierzemy oś X; lekki margines gdy palec między kolumnami.
+        if (clientX >= r.left && clientX <= r.right) {
+          return col.getAttribute("data-date");
+        }
+        const dist = clientX < r.left ? r.left - clientX : clientX - r.right;
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = col;
+        }
+      }
+      return best && bestDist < 28 ? best.getAttribute("data-date") : null;
+    }
+
+    function captureDragPointer() {
+      if (!drag.el || drag.pointerId == null) return;
+      try {
+        drag.el.setPointerCapture(drag.pointerId);
+      } catch (err) {
+        /* ignore — Safari bywa kapryśny po reparent */
+      }
     }
 
     function clearHoldTimer() {
@@ -6009,6 +6040,9 @@
       clearProvCalDropTargets();
       hideProvCalDragTime();
       document.body.classList.remove("prov-cal-dragging");
+      document.querySelectorAll(".gcal--drag-active").forEach(function (el) {
+        el.classList.remove("gcal--drag-active");
+      });
       drag.active = false;
       drag.el = null;
       drag.pointerId = null;
@@ -6024,15 +6058,11 @@
       drag.armed = true;
       drag.weekView = isWeekView();
       drag.el.classList.add("gcal__event--dragging");
-      // Przechwyć wskaźnik i zablokuj natywny scroll dopiero teraz — wcześniej pozwalamy skrolować.
+      // Przechwyć wskaźnik i zablokuj natywny scroll / hit-test obcych slotów (Safari).
       document.body.classList.add("prov-cal-dragging");
-      if (drag.pointerId != null) {
-        try {
-          drag.el.setPointerCapture(drag.pointerId);
-        } catch (err) {
-          /* ignore */
-        }
-      }
+      const gcal = dragRootGcal();
+      if (gcal) gcal.classList.add("gcal--drag-active");
+      captureDragPointer();
       if (!isProvCalSlotSelected(drag.el)) {
         selectProvCalSlot(
           {
@@ -6073,6 +6103,8 @@
       if (targetDate !== drag.dateISO && track) {
         track.appendChild(drag.el);
         drag.dateISO = targetDate;
+        // Po przeniesieniu między kolumnami Safari gubi capture — odzyskaj.
+        captureDragPointer();
       }
 
       const rawFrom = pointerFromMin(drag.lastClientY, track) + drag.grabMinOffset;
@@ -6162,6 +6194,8 @@
       "pointerdown",
       function (event) {
         if (event.button != null && event.button !== 0) return;
+        // Trwający drag — nie przejmuj gestu przez „Wolne” / inny slot (Safari).
+        if (drag.armed) return;
         const el = event.target.closest && event.target.closest('[data-role="prov-cal-slot"]');
         if (!el) return;
         if (!el.closest('[data-role="prov-cal-body"]')) return;
@@ -6229,9 +6263,38 @@
       { capture: true, passive: false }
     );
 
+    // Fallback Safari: gdy Pointer Events umrą (pointercancel), kontynuuj przez touchmove.
+    document.addEventListener(
+      "touchmove",
+      function (event) {
+        if (!drag.armed || !drag.el || !drag.allowMove) return;
+        if (event.touches.length !== 1) return;
+        const t = event.touches[0];
+        drag.lastClientX = t.clientX;
+        drag.lastClientY = t.clientY;
+        event.preventDefault();
+        drag.moved = true;
+        updateDragLayout();
+        updateAutoScroll(t.clientY);
+      },
+      { capture: true, passive: false }
+    );
+
+    document.addEventListener(
+      "touchend",
+      function (event) {
+        if (!drag.armed || !drag.active) return;
+        if (event.touches.length > 0) return;
+        endPointer(event);
+      },
+      { capture: true, passive: false }
+    );
+
     function endPointer(event) {
       if (!drag.active || !drag.el) return;
-      if (drag.pointerId != null && event.pointerId !== drag.pointerId) return;
+      if (event && event.pointerId != null && drag.pointerId != null && event.pointerId !== drag.pointerId) {
+        return;
+      }
       stopAutoScroll();
       window._provCalSlotIgnoreClick = true;
       setTimeout(function () {
@@ -6254,12 +6317,13 @@
       function (event) {
         if (!drag.active) return;
         if (drag.pointerId != null && event.pointerId !== drag.pointerId) return;
-        if (drag.moved) {
-          resetDrag();
-          renderAll();
-        } else {
-          resetDrag();
+        // Safari: cancel przy najechaniu na „Wolne” / inną kolumnę — nie urywaj uzbrojonego dragu;
+        // touchmove fallback kontynuuje gest, a touchend/pointerup go domknie.
+        if (drag.armed) {
+          captureDragPointer();
+          return;
         }
+        resetDrag();
       },
       true
     );
