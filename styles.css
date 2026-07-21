@@ -5514,18 +5514,6 @@ body.avatar-preview-open {
   color: #fff;
 }
 
-.gcal__month-label {
-  display: inline-block;
-  margin: 0;
-  padding: 0 0 0.45rem;
-  color: var(--text-muted);
-  font-size: 0.92rem;
-  font-weight: 650;
-  line-height: 1.1;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-}
-
 /* Panel wyboru miesiąca / dnia */
 .gcal-month {
   margin: 0.35rem 0 0.15rem;
@@ -5543,43 +5531,6 @@ body.avatar-preview-open {
     opacity: 1;
     transform: translateY(0);
   }
-}
-
-.gcal-month__carousel {
-  display: flex;
-  gap: 0.35rem;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  touch-action: pan-x;
-  padding: 0.1rem 0 0.65rem;
-  scrollbar-width: none;
-}
-
-.gcal-month__carousel::-webkit-scrollbar {
-  display: none;
-}
-
-.gcal-month__chip {
-  appearance: none;
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 0.35rem 0.7rem;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 0.84rem;
-  font-weight: 650;
-  line-height: 1.1;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.gcal-month__chip--on {
-  background: color-mix(in srgb, var(--accent-provider) 14%, var(--surface));
-  border-color: color-mix(in srgb, var(--accent-provider) 35%, var(--border));
-  color: var(--accent-provider);
 }
 
 .gcal-month__cal {
@@ -5695,7 +5646,7 @@ body.avatar-preview-open {
 
 .gcal-week__days {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--gcal-days, 7), minmax(0, 1fr));
   min-width: 0;
 }
 
@@ -5763,7 +5714,7 @@ body.avatar-preview-open {
 
 .gcal-week__cols {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--gcal-days, 7), minmax(0, 1fr));
   min-width: 0;
   border-left: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
 }
