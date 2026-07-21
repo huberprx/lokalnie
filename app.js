@@ -3256,19 +3256,22 @@
 
   const PROV_CAL_DOW_SHORT = ["ND.", "PN.", "WT.", "ŚR.", "CZ.", "PT.", "SB."];
 
-  function renderProvCalDayHead(dateISO) {
+  /** Nagłówek dnia w stylu tygodnia (integralna część .gcal). */
+  function renderProvCalDayHeadButton(dateISO, selectedISO) {
     const d = new Date(dateISO + "T12:00:00");
     if (isNaN(d.getTime())) return "";
     const isToday = dateISO === demoTodayISO();
+    const isSel = dateISO === selectedISO;
+    const sun = d.getDay() === 0;
     return `
-      <div class="gcal__dayhead">
-        <div class="gcal__daybadge${isToday ? " gcal__daybadge--today" : ""}">
-          <div class="gcal__daybadge-date">
-            <span class="gcal__daybadge-dow">${PROV_CAL_DOW_SHORT[d.getDay()]}</span>
-            <span class="gcal__daybadge-num">${d.getDate()}</span>
-          </div>
-        </div>
-      </div>`;
+      <button type="button" class="gcal-week__dayhead${isToday ? " gcal-week__dayhead--today" : ""}${
+        isSel ? " gcal-week__dayhead--sel" : ""
+      }${sun ? " gcal-week__dayhead--sun" : ""}"
+        data-action="prov-cal-pick-date" data-date="${escapeHtml(dateISO)}"
+        aria-label="${escapeHtml(PROV_CAL_DOW_SHORT[d.getDay()] + " " + d.getDate())}">
+        <span class="gcal-week__dow">${PROV_CAL_DOW_SHORT[d.getDay()]}</span>
+        <span class="gcal-week__num">${d.getDate()}</span>
+      </button>`;
   }
 
   function renderProvCalMonthPanel(selectedISO, visits) {
@@ -3488,7 +3491,11 @@
     }
 
     return `
-      <div class="gcal" data-role="prov-cal-gcal" data-prov-cal-day-swipe>
+      <div class="gcal" data-role="prov-cal-gcal" data-prov-cal-day-swipe style="--gcal-days:1">
+        <div class="gcal-week__head">
+          <div class="gcal-week__corner" aria-hidden="true"></div>
+          <div class="gcal-week__days">${renderProvCalDayHeadButton(dateISO, dateISO)}</div>
+        </div>
         <div class="gcal__timeline" style="height:${totalH}px;--gcal-hour-h:${hourH}px" data-role="prov-cal-timeline">
           <div class="gcal__hours">${hours}</div>
           <div class="gcal__track">
@@ -3526,19 +3533,7 @@
 
     const headCols = weekDays
       .map(function (dateISO) {
-        const d = new Date(dateISO + "T12:00:00");
-        const isToday = dateISO === today;
-        const isSel = dateISO === selectedISO;
-        const sun = d.getDay() === 0;
-        return `
-          <button type="button" class="gcal-week__dayhead${isToday ? " gcal-week__dayhead--today" : ""}${
-            isSel ? " gcal-week__dayhead--sel" : ""
-          }${sun ? " gcal-week__dayhead--sun" : ""}"
-            data-action="prov-cal-pick-date" data-date="${escapeHtml(dateISO)}"
-            aria-label="${escapeHtml(PROV_CAL_DOW_SHORT[d.getDay()] + " " + d.getDate())}">
-            <span class="gcal-week__dow">${PROV_CAL_DOW_SHORT[d.getDay()]}</span>
-            <span class="gcal-week__num">${d.getDate()}</span>
-          </button>`;
+        return renderProvCalDayHeadButton(dateISO, selectedISO);
       })
       .join("");
 
@@ -3648,7 +3643,6 @@
     if (ensureProvCalHourH() < dynMinHourH) window.AppState.provCalHourH = clampProvCalHourH(dynMinHourH);
     const weekView = visibleDays > 1;
     const monthOpen = !!window.AppState.provCalMonthOpen;
-    const dayToolOn = !monthOpen && visibleDays <= 1;
     const searchOpen = !!window.AppState.provCalSearchOpen;
     const searchQ = window.AppState.provCalSearchQ || "";
     return `
@@ -3664,10 +3658,6 @@
               </div>
               <div class="prov-cal-head__actions">
                 <div class="prov-cal__tools" role="toolbar" aria-label="Narzędzia kalendarza">
-                  <button type="button" class="prov-cal__tool${dayToolOn ? " is-on" : ""}" data-action="prov-cal-view" data-view="day"
-                    aria-label="Widok dnia" aria-pressed="${dayToolOn ? "true" : "false"}">
-                    <span class="prov-cal__tool-icon prov-cal__tool-icon--day" aria-hidden="true"></span>
-                  </button>
                   <button type="button" class="prov-cal__tool${monthOpen ? " is-on" : ""}" data-action="prov-cal-view" data-view="month"
                     aria-label="Widok miesiąca" aria-pressed="${monthOpen ? "true" : "false"}">
                     <span class="prov-cal__tool-icon prov-cal__tool-icon--month" aria-hidden="true"></span>
@@ -3690,7 +3680,6 @@
                 : ""
             }
           </header>
-          ${weekView ? "" : renderProvCalDayHead(selected)}
           ${renderProvCalMonthPanel(selected, visits)}
         </div>
         <div class="prov-cal-body" data-role="prov-cal-body">
@@ -5899,11 +5888,7 @@
         break;
       case "prov-cal-view":
         event.preventDefault();
-        if (d.view === "day") {
-          setProvCalView("day");
-        } else if (d.view === "month") {
-          toggleProvCalMonthPanel();
-        }
+        if (d.view === "month") toggleProvCalMonthPanel();
         break;
       case "prov-cal-search":
         event.preventDefault();
