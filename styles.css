@@ -6039,6 +6039,12 @@ body.prov-cal-dragging * {
   overflow: hidden;
 }
 
+/* Wąska kolumna: tylko godzina startu (szerokość mierzona w JS). */
+.gcal__event--time-short .gcal__event-time {
+  flex: 0 0 5ch;
+  width: 5ch;
+}
+
 .gcal__event-client {
   font-size: 0.72rem;
   font-weight: 500;

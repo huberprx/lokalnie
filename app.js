@@ -2924,6 +2924,92 @@
     if (cls) el.classList.add(cls);
   }
 
+  /** Etykieta godzin wizyty: pełna „od–do” albo samo rozpoczęcie (wąska kolumna). */
+  function formatProvCalEventTimeLabel(fromMin, toMin, shortOnly) {
+    const from = minToTime(fromMin);
+    if (shortOnly) return from;
+    return from + "–" + minToTime(toMin);
+  }
+
+  /**
+   * Dostosuj tekst godzin do realnej szerokości kolumny/kafla (nie do liczby dni).
+   * Gdy „00:00–00:00” + minimalna nazwa się nie mieszczą → tylko godzina startu.
+   */
+  function syncProvCalEventTimeLabels(root) {
+    const scope = root && root.querySelectorAll ? root : document;
+    const columns = scope.querySelectorAll(
+      '.gcal-week__col, .gcal[data-role="prov-cal-gcal"]:not(.gcal--week) .gcal__track'
+    );
+    columns.forEach(function (col) {
+      const events = col.querySelectorAll('.gcal__event[data-kind="booking"][data-from-min]');
+      if (!events.length) return;
+      const sample = events[0];
+      const timeEl = sample.querySelector(".gcal__event-time");
+      if (!timeEl || !(sample.clientWidth > 0)) return;
+
+      const prevText = timeEl.textContent;
+      const prevFlex = timeEl.style.flex;
+      const prevWidth = timeEl.style.width;
+      sample.classList.remove("gcal__event--time-short");
+      timeEl.style.flex = "0 0 auto";
+      timeEl.style.width = "auto";
+      timeEl.textContent = "00:00–00:00";
+      const fullTimeW = timeEl.scrollWidth;
+      timeEl.textContent = prevText;
+      timeEl.style.flex = prevFlex;
+      timeEl.style.width = prevWidth;
+
+      const cs = getComputedStyle(sample);
+      const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+      const avail = sample.clientWidth - padX;
+      const minTitle = 28;
+      const gap = 2;
+      const short = fullTimeW + gap + minTitle > avail;
+
+      events.forEach(function (el) {
+        el.classList.toggle("gcal__event--time-short", short);
+        const t = el.querySelector(".gcal__event-time");
+        if (!t) return;
+        const fromMin = Number(el.getAttribute("data-from-min"));
+        const toMin = Number(el.getAttribute("data-to-min"));
+        if (isNaN(fromMin) || isNaN(toMin)) return;
+        t.textContent = formatProvCalEventTimeLabel(fromMin, toMin, short);
+      });
+    });
+  }
+
+  function bindProvCalTimeLabels() {
+    if (bindProvCalTimeLabels.done) return;
+    bindProvCalTimeLabels.done = true;
+    let raf = 0;
+    function schedule() {
+      if (raf) return;
+      raf = requestAnimationFrame(function () {
+        raf = 0;
+        syncProvCalEventTimeLabels();
+      });
+    }
+    window.addEventListener("resize", schedule, { passive: true });
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(schedule);
+      bindProvCalTimeLabels.observe = function () {
+        document.querySelectorAll('[data-role="prov-cal-body"]').forEach(function (body) {
+          ro.observe(body);
+        });
+        document
+          .querySelectorAll('.gcal-week__col, .gcal[data-role="prov-cal-gcal"]:not(.gcal--week) .gcal__track')
+          .forEach(function (el) {
+            ro.observe(el);
+          });
+      };
+    }
+  }
+
+  function refreshProvCalTimeLabels() {
+    if (typeof bindProvCalTimeLabels.observe === "function") bindProvCalTimeLabels.observe();
+    syncProvCalEventTimeLabels();
+  }
+
   function applyProvCalSlotLayout(el, fromMin, toMin) {
     if (!el) return;
     const hourH = ensureProvCalHourH();
@@ -2939,7 +3025,10 @@
     el.setAttribute("data-to-min", String(toMin));
     applyEventDensity(el, height, isBare);
     const timeEl = el.querySelector(".gcal__event-time");
-    if (timeEl) timeEl.textContent = minToTime(fromMin) + "–" + minToTime(toMin);
+    if (timeEl) {
+      const short = el.classList.contains("gcal__event--time-short");
+      timeEl.textContent = formatProvCalEventTimeLabel(fromMin, toMin, short);
+    }
     const titleEl = el.querySelector(".gcal__event-title");
     if (titleEl && isFree) titleEl.textContent = "Wolne · " + (toMin - fromMin) + " min";
   }
@@ -4721,6 +4810,7 @@
           body.scrollTop = Math.max(0, target.offsetTop - 48);
         }
       }
+      refreshProvCalTimeLabels();
     });
   }
 
@@ -6690,6 +6780,7 @@
     bindProvCalPinchZoom();
     bindProvCalDaySwipe();
     bindProvCalMonthSwipe();
+    bindProvCalTimeLabels();
     bindAvailWeekScrollBridge();
     loadState();
     renderAll();
