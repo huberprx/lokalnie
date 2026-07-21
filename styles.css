@@ -5972,15 +5972,45 @@ body.avatar-preview-open {
 }
 
 .gcal__event[data-role="prov-cal-slot"] {
-  touch-action: none;
+  /* Domyślnie pozwól skrolować oś pionowo przy przeciąganiu palcem po slocie;
+     tap zaznacza, a przytrzymanie uruchamia przeciąganie wizyty. */
+  touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* Dopiero uzbrojone przeciąganie blokuje natywny scroll (nasza logika przejmuje ruch). */
+body.prov-cal-dragging .gcal__timeline,
+body.prov-cal-dragging .gcal__event[data-role="prov-cal-slot"] {
+  touch-action: none;
 }
 
 .gcal__event--dragging {
   z-index: 9;
   opacity: 0.96;
   box-shadow: 0 6px 18px color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+/* Wizyty są chwytliwe — afordancja przeciągania (tylko wskaźnik precyzyjny). */
+@media (hover: hover) and (pointer: fine) {
+  .gcal__event[data-kind="booking"] {
+    cursor: grab;
+  }
+  .gcal__event[data-kind="booking"]:hover {
+    background: color-mix(in srgb, var(--accent-provider) 22%, var(--surface));
+  }
+  .gcal__event--bare[data-kind="booking"]:hover {
+    background: color-mix(in srgb, var(--accent-provider) 100%, #0d3d2a);
+  }
+}
+
+.gcal__event--dragging[data-kind="booking"] {
+  cursor: grabbing;
+}
+
+body.prov-cal-dragging,
+body.prov-cal-dragging * {
+  cursor: grabbing !important;
 }
 
 .gcal__event--free {
@@ -6019,7 +6049,8 @@ body.avatar-preview-open {
   opacity: 0.8;
 }
 
-.gcal__event--compact {
+.gcal__event--compact,
+.gcal__event--tiny {
   justify-content: center;
   padding-top: 0.15rem;
   padding-bottom: 0.15rem;
@@ -6065,6 +6096,26 @@ body.avatar-preview-open {
 }
 
 .gcal__event--compact .gcal__event-client {
+  display: none;
+}
+
+/* Mocniejsze skrócenie osi (mały zoom) — chowamy kolejne warstwy treści,
+   aby nic nie wystawało poza blok (standard jak w Google Calendar). */
+.gcal__event--tiny .gcal__event-client,
+.gcal__event--tiny .gcal__event-time {
+  display: none;
+}
+
+.gcal__event--tiny .gcal__event-title {
+  font-size: 0.76rem;
+}
+
+.gcal__event--mini {
+  padding: 0;
+}
+
+.gcal__event--mini .gcal__event-row,
+.gcal__event--mini .gcal__event-client {
   display: none;
 }
 

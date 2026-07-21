@@ -2798,44 +2798,6 @@
     });
   }
 
-  function canPlaceBooking(bookingId, dateISO, fromMin, toMin) {
-    const dayStart = PROV_CAL_HOUR_START * 60;
-    const dayEnd = PROV_CAL_HOUR_END * 60;
-    if (!(toMin > fromMin) || fromMin < dayStart || toMin > dayEnd) return false;
-    return !activeDayBookings(dateISO, bookingId).some(function (b) {
-      return fromMin < timeToMinutes(b.to) && timeToMinutes(b.from) < toMin;
-    });
-  }
-
-  /** Luki wolne jakby ta wizyta już nie zajmowała miejsca (do przenoszenia). */
-  function freeGapsForBookingMove(bookingId, dateISO) {
-    return providerFreeGapsForDate(dateISO, activeDayBookings(dateISO, bookingId));
-  }
-
-  function canPlaceBookingInFree(bookingId, dateISO, fromMin, toMin) {
-    if (!canPlaceBooking(bookingId, dateISO, fromMin, toMin)) return false;
-    return freeGapsForBookingMove(bookingId, dateISO).some(function (g) {
-      return fromMin >= g.from && toMin <= g.to;
-    });
-  }
-
-  /** Dopasuj start wizyty do luki wolnej (snap), albo null gdy się nie mieści. */
-  function fitBookingIntoFreeGap(gapFrom, gapTo, preferFrom, duration) {
-    if (!(duration > 0) || duration > gapTo - gapFrom) return null;
-    let fromMin = snapProvCalMin(preferFrom);
-    fromMin = Math.max(gapFrom, Math.min(fromMin, gapTo - duration));
-    if (fromMin < gapFrom) fromMin = gapFrom;
-    if (fromMin + duration > gapTo) fromMin = gapTo - duration;
-    fromMin = snapProvCalMin(fromMin);
-    if (fromMin < gapFrom) fromMin = gapFrom;
-    if (fromMin + duration > gapTo) return null;
-    return { from: fromMin, to: fromMin + duration };
-  }
-
-  function clampBookingIntoFreeGap(preferFrom, duration, gapFrom, gapTo) {
-    return fitBookingIntoFreeGap(gapFrom, gapTo, preferFrom, duration);
-  }
-
   function clearProvCalDropTargets() {
     document.querySelectorAll(".gcal__event--drop-target").forEach(function (el) {
       el.classList.remove("gcal__event--drop-target");
@@ -2852,14 +2814,44 @@
     });
   }
 
-  function moveBookingTimes(bookingId, fromMin, toMin) {
+  function moveBookingTimes(bookingId, fromMin, toMin, dateISO) {
     const bk = (window.AppState.bookings || []).find(function (b) {
       return b.id === bookingId;
     });
     if (!bk) return false;
     bk.from = minToTime(fromMin);
     bk.to = minToTime(toMin);
+    if (dateISO) bk.dateISO = dateISO;
     return true;
+  }
+
+  /** Kolizja wizyty z inną aktywną wizytą w danym dniu (poza samą sobą). */
+  function bookingOverlapsOthers(bookingId, dateISO, fromMin, toMin) {
+    return activeDayBookings(dateISO, bookingId).some(function (b) {
+      return fromMin < timeToMinutes(b.to) && timeToMinutes(b.from) < toMin;
+    });
+  }
+
+  // Progi „gęstości" treści wizyty wg wysokości (px) — standard jak w Google Calendar:
+  // im mocniej skrócona oś (mały zoom), tym mniej treści się mieści.
+  const PROV_CAL_H_MINI = 15; // sam pasek, bez tekstu
+  const PROV_CAL_H_TINY = 26; // tylko tytuł
+  const PROV_CAL_H_COMPACT = 42; // tytuł + godziny (bez klienta)
+
+  /** Zwraca klasę gęstości dla danej wysokości bloku (pusty string = pełna treść). */
+  function provCalDensityCls(height) {
+    if (height < PROV_CAL_H_MINI) return "gcal__event--mini";
+    if (height < PROV_CAL_H_TINY) return "gcal__event--tiny";
+    if (height < PROV_CAL_H_COMPACT) return "gcal__event--compact";
+    return "";
+  }
+
+  /** Ustaw właściwą klasę gęstości na elemencie (bare/tygodniowe pomijamy). */
+  function applyEventDensity(el, height, isBare) {
+    el.classList.remove("gcal__event--compact", "gcal__event--tiny", "gcal__event--mini");
+    if (isBare) return;
+    const cls = provCalDensityCls(height);
+    if (cls) el.classList.add(cls);
   }
 
   function applyProvCalSlotLayout(el, fromMin, toMin) {
@@ -2875,7 +2867,7 @@
     el.style.height = height + "px";
     el.setAttribute("data-from-min", String(fromMin));
     el.setAttribute("data-to-min", String(toMin));
-    el.classList.toggle("gcal__event--compact", !isBare && height < 40);
+    applyEventDensity(el, height, isBare);
     const timeEl = el.querySelector(".gcal__event-time");
     if (timeEl) timeEl.textContent = minToTime(fromMin) + "–" + minToTime(toMin);
     const titleEl = el.querySelector(".gcal__event-title");
@@ -3005,7 +2997,7 @@
       const height = Math.max(minH, ((toM - fromM) / 60) * hourH - (isBare ? 2 : 3));
       el.style.top = top + "px";
       el.style.height = height + "px";
-      el.classList.toggle("gcal__event--compact", !isBare && height < 40);
+      applyEventDensity(el, height, isBare);
     });
 
     timeline.querySelectorAll(".gcal__now[data-now-min]").forEach(function (nowEl) {
@@ -3223,8 +3215,9 @@
           window.AppState.provCalSelection.dateISO === dateISO &&
           window.AppState.provCalSelection.fromMin === fromM &&
           window.AppState.provCalSelection.toMin === toM;
+        const densityCls = provCalDensityCls(height);
         return `
-          <article class="gcal__event gcal__event--free${height < 40 ? " gcal__event--compact" : ""}${
+          <article class="gcal__event gcal__event--free${densityCls ? " " + densityCls : ""}${
             selected ? " gcal__event--selected" : ""
           }"
             style="top:${top}px;height:${height}px"
@@ -3263,8 +3256,9 @@
           window.AppState.provCalSelection.kind === "booking" &&
           window.AppState.provCalSelection.bookingId === b.id
         );
+        const densityCls = provCalDensityCls(height);
         return `
-          <article class="gcal__event gcal__event--${escapeHtml(b.status)}${height < 40 ? " gcal__event--compact" : ""}${
+          <article class="gcal__event gcal__event--${escapeHtml(b.status)}${densityCls ? " " + densityCls : ""}${
             dim ? " gcal__event--dim" : ""
           }${selected ? " gcal__event--selected" : ""}"
             style="top:${top}px;height:${height}px"
@@ -5430,6 +5424,16 @@
         event.preventDefault();
         selectProvCalSlot(selectionFromSlotEl(slot));
       }
+      return;
+    }
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      const t = event.target;
+      const tag = (t && t.tagName) || "";
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || (t && t.isContentEditable)) return;
+      if (!document.querySelector(".app-screen--prov-cal")) return;
+      if (window.AppState.provCalMonthOpen) return;
+      event.preventDefault();
+      shiftProvCalDate(event.key === "ArrowLeft" ? -1 : 1);
     }
   });
 
@@ -5886,23 +5890,66 @@
   function bindProvCalEventDrag() {
     if (bindProvCalEventDrag.done) return;
     bindProvCalEventDrag.done = true;
+    const HOLD_MS = 300;
+    const MOUSE_THRESHOLD = 4;
+    const AUTO_EDGE = 52;
+    const AUTO_STEP = 14;
     const drag = {
       active: false,
       el: null,
       kind: null,
       bookingId: null,
       dateISO: null,
+      startDate: null,
       startFrom: 0,
       startTo: 0,
       duration: 0,
+      originX: 0,
       originY: 0,
+      lastClientX: 0,
+      lastClientY: 0,
+      grabMinOffset: 0,
       pointerId: null,
+      pointerType: "mouse",
       moved: false,
-      lastFrom: 0,
       allowMove: false,
       armed: false,
+      weekView: false,
       holdTimer: 0,
+      autoRAF: 0,
+      autoDir: 0,
     };
+
+    function isWeekView() {
+      return window.AppState.provCalView === "week";
+    }
+
+    function trackForDate(dateISO) {
+      if (isWeekView()) {
+        const col = document.querySelector('.gcal-week__col[data-date="' + dateISO + '"]');
+        return col ? col.querySelector(".gcal-week__track") : null;
+      }
+      return drag.el ? drag.el.closest(".gcal__track") : null;
+    }
+
+    /** Minuty osi czasu odpowiadające pozycji Y wskaźnika w danym torze. */
+    function pointerFromMin(clientY, track) {
+      if (!track) return PROV_CAL_HOUR_START * 60;
+      const hourH = ensureProvCalHourH();
+      const rect = track.getBoundingClientRect();
+      return PROV_CAL_HOUR_START * 60 + ((clientY - rect.top) / hourH) * 60;
+    }
+
+    /** ISO dnia kolumny (widok tygodnia) pod wskaźnikiem — ignorując sam ciągnięty blok. */
+    function columnDateUnderPoint(clientX, clientY) {
+      if (!drag.el) return null;
+      const prev = drag.el.style.pointerEvents;
+      drag.el.style.pointerEvents = "none";
+      const under = document.elementFromPoint(clientX, clientY);
+      drag.el.style.pointerEvents = prev;
+      const col = under && under.closest && under.closest(".gcal-week__col[data-date]");
+      return col ? col.getAttribute("data-date") : null;
+    }
 
     function clearHoldTimer() {
       if (drag.holdTimer) {
@@ -5911,24 +5958,45 @@
       }
     }
 
+    function stopAutoScroll() {
+      if (drag.autoRAF) {
+        cancelAnimationFrame(drag.autoRAF);
+        drag.autoRAF = 0;
+      }
+      drag.autoDir = 0;
+    }
+
     function resetDrag() {
       clearHoldTimer();
-      if (drag.el) drag.el.classList.remove("gcal__event--dragging");
+      stopAutoScroll();
+      if (drag.el) drag.el.classList.remove("gcal__event--dragging", "gcal__event--invalid");
       clearProvCalDropTargets();
       hideProvCalDragTime();
+      document.body.classList.remove("prov-cal-dragging");
       drag.active = false;
       drag.el = null;
       drag.pointerId = null;
       drag.moved = false;
       drag.allowMove = false;
       drag.armed = false;
+      drag.weekView = false;
     }
 
     function armBookingDrag() {
       drag.holdTimer = 0;
       if (!drag.active || !drag.allowMove || !drag.el) return;
       drag.armed = true;
+      drag.weekView = isWeekView();
       drag.el.classList.add("gcal__event--dragging");
+      // Przechwyć wskaźnik i zablokuj natywny scroll dopiero teraz — wcześniej pozwalamy skrolować.
+      document.body.classList.add("prov-cal-dragging");
+      if (drag.pointerId != null) {
+        try {
+          drag.el.setPointerCapture(drag.pointerId);
+        } catch (err) {
+          /* ignore */
+        }
+      }
       if (!isProvCalSlotSelected(drag.el)) {
         selectProvCalSlot(
           {
@@ -5943,64 +6011,108 @@
       } else {
         hapticTap(16);
       }
-      highlightProvCalDropTargets(drag.bookingId, drag.dateISO, drag.duration);
-      updateProvCalDragTime(drag.startFrom);
-    }
-
-    function resolveDropOnFree(clientX, clientY, preferredFrom) {
-      if (!drag.el) return null;
-      drag.el.style.pointerEvents = "none";
-      const under = document.elementFromPoint(clientX, clientY);
-      drag.el.style.pointerEvents = "";
-      const freeEl = under && under.closest && under.closest('[data-role="prov-cal-slot"][data-kind="free"]');
-      if (!freeEl) return null;
-      if ((freeEl.getAttribute("data-date") || "") !== drag.dateISO) return null;
-      const gapFrom = Number(freeEl.getAttribute("data-from-min"));
-      const gapTo = Number(freeEl.getAttribute("data-to-min"));
-      return clampBookingIntoFreeGap(preferredFrom, drag.duration, gapFrom, gapTo);
-    }
-
-    function commitBookingDrag(event) {
-      if (!drag.el) return;
-      let newFrom = Number(drag.el.getAttribute("data-from-min"));
-      let newTo = Number(drag.el.getAttribute("data-to-min"));
-      const drop = event ? resolveDropOnFree(event.clientX, event.clientY, newFrom) : null;
-      if (drop) {
-        newFrom = drop.from;
-        newTo = drop.to;
+      if (!drag.weekView) {
+        highlightProvCalDropTargets(drag.bookingId, drag.dateISO, drag.duration);
+        updateProvCalDragTime(drag.startFrom);
       }
-      if (!(newTo > newFrom) || (newFrom === drag.startFrom && newTo === drag.startTo)) {
+    }
+
+    /** Przelicz pozycję wskaźnika na czas/dzień i zaktualizuj blok (obsługa scrolla i kolumn). */
+    function updateDragLayout() {
+      if (!drag.armed || !drag.el) return;
+      const dayStart = PROV_CAL_HOUR_START * 60;
+      const dayEnd = PROV_CAL_HOUR_END * 60;
+
+      let targetDate = drag.dateISO;
+      let track;
+      if (drag.weekView) {
+        const d = columnDateUnderPoint(drag.lastClientX, drag.lastClientY);
+        if (d) targetDate = d;
+        track = trackForDate(targetDate) || drag.el.parentElement;
+      } else {
+        track = drag.el.closest(".gcal__track");
+      }
+      if (!track) return;
+
+      if (targetDate !== drag.dateISO && track) {
+        track.appendChild(drag.el);
+        drag.dateISO = targetDate;
+      }
+
+      const rawFrom = pointerFromMin(drag.lastClientY, track) + drag.grabMinOffset;
+      let newFrom = snapProvCalMin(rawFrom);
+      let newTo = newFrom + drag.duration;
+      if (newFrom < dayStart) {
+        newFrom = dayStart;
+        newTo = newFrom + drag.duration;
+      }
+      if (newTo > dayEnd) {
+        newTo = dayEnd;
+        newFrom = newTo - drag.duration;
+      }
+      applyProvCalSlotLayout(drag.el, newFrom, newTo);
+      if (!drag.weekView) updateProvCalDragTime(newFrom);
+      drag.el.classList.toggle(
+        "gcal__event--invalid",
+        bookingOverlapsOthers(drag.bookingId, drag.dateISO, newFrom, newTo)
+      );
+    }
+
+    function autoScrollTick() {
+      drag.autoRAF = 0;
+      if (!drag.armed || !drag.autoDir) return;
+      const body = document.querySelector('[data-role="prov-cal-body"]');
+      if (!body) return;
+      const before = body.scrollTop;
+      const max = body.scrollHeight - body.clientHeight;
+      body.scrollTop = Math.max(0, Math.min(max, before + AUTO_STEP * drag.autoDir));
+      if (body.scrollTop !== before) updateDragLayout();
+      drag.autoRAF = requestAnimationFrame(autoScrollTick);
+    }
+
+    function updateAutoScroll(clientY) {
+      const body = document.querySelector('[data-role="prov-cal-body"]');
+      if (!body) {
+        stopAutoScroll();
+        return;
+      }
+      const rect = body.getBoundingClientRect();
+      let dir = 0;
+      if (clientY < rect.top + AUTO_EDGE) dir = -1;
+      else if (clientY > rect.bottom - AUTO_EDGE) dir = 1;
+      drag.autoDir = dir;
+      if (dir === 0) {
+        stopAutoScroll();
+        return;
+      }
+      if (!drag.autoRAF) drag.autoRAF = requestAnimationFrame(autoScrollTick);
+    }
+
+    function commitBookingDrag() {
+      if (!drag.el) return;
+      const newFrom = Number(drag.el.getAttribute("data-from-min"));
+      const newTo = Number(drag.el.getAttribute("data-to-min"));
+      const targetDate = drag.dateISO;
+      const unchanged =
+        targetDate === drag.startDate && newFrom === drag.startFrom && newTo === drag.startTo;
+      if (!(newTo > newFrom) || unchanged) {
         resetDrag();
         renderAll();
         return;
       }
-      if (!canPlaceBookingInFree(drag.bookingId, drag.dateISO, newFrom, newTo)) {
-        // Spróbuj dopasować do najbliższej wolnej luki pod kursorem / pozycją
-        const gaps = freeGapsForBookingMove(drag.bookingId, drag.dateISO).filter(function (g) {
-          return g.to - g.from >= drag.duration;
-        });
-        let fitted = null;
-        for (let i = 0; i < gaps.length; i++) {
-          const g = gaps[i];
-          if (newFrom < g.to && newTo > g.from) {
-            fitted = clampBookingIntoFreeGap(newFrom, drag.duration, g.from, g.to);
-            if (fitted) break;
-          }
-        }
-        if (!fitted) {
-          showToast("Upuść wizytę na wolny termin.");
-          resetDrag();
-          renderAll();
-          return;
-        }
-        newFrom = fitted.from;
-        newTo = fitted.to;
+      const overlap = bookingOverlapsOthers(drag.bookingId, targetDate, newFrom, newTo);
+      moveBookingTimes(drag.bookingId, newFrom, newTo, targetDate);
+      const bk = (window.AppState.bookings || []).find(function (b) {
+        return b.id === drag.bookingId;
+      });
+      if (overlap && bk && bk.status === "confirmed") {
+        bk.status = "proposed";
+        showToast('Nakłada się na inną wizytę — ustawiono „na akceptację”.');
       }
-      moveBookingTimes(drag.bookingId, newFrom, newTo);
       window.AppState.provCalSelection = normalizeProvCalSelection({
         kind: "booking",
         bookingId: drag.bookingId,
-        dateISO: drag.dateISO,
+        dateISO: targetDate,
         fromMin: newFrom,
         toMin: newTo,
       });
@@ -6027,22 +6139,26 @@
         drag.allowMove = kind === "booking";
         drag.bookingId = el.getAttribute("data-booking-id");
         drag.dateISO = el.getAttribute("data-date") || ensureProvCalDate();
+        drag.startDate = drag.dateISO;
         drag.startFrom = fromMin;
         drag.startTo = toMin;
         drag.duration = toMin - fromMin;
+        drag.originX = event.clientX;
         drag.originY = event.clientY;
+        drag.lastClientX = event.clientX;
+        drag.lastClientY = event.clientY;
         drag.pointerId = event.pointerId;
+        drag.pointerType = event.pointerType || "mouse";
         drag.moved = false;
-        drag.lastFrom = fromMin;
         drag.armed = false;
+        const startTrack = isWeekView() ? el.closest(".gcal-week__track") : el.closest(".gcal__track");
+        drag.grabMinOffset = fromMin - pointerFromMin(event.clientY, startTrack);
         clearHoldTimer();
-        if (drag.allowMove) {
-          drag.holdTimer = setTimeout(armBookingDrag, 300);
-        }
-        try {
-          el.setPointerCapture(event.pointerId);
-        } catch (err) {
-          /* ignore */
+        stopAutoScroll();
+        // Dotyk/pióro: hold 300 ms (nie koliduje ze scrollem). Mysz: brak holdu — próg ruchu.
+        // Nie przechwytujemy wskaźnika tutaj — inaczej blokowalibyśmy natywne skrolowanie osi.
+        if (drag.allowMove && drag.pointerType !== "mouse") {
+          drag.holdTimer = setTimeout(armBookingDrag, HOLD_MS);
         }
       },
       true
@@ -6053,36 +6169,26 @@
       function (event) {
         if (!drag.active || !drag.el || !drag.allowMove) return;
         if (drag.pointerId != null && event.pointerId !== drag.pointerId) return;
-        const hourH = ensureProvCalHourH();
-        const dayStart = PROV_CAL_HOUR_START * 60;
-        const dayEnd = PROV_CAL_HOUR_END * 60;
+        drag.lastClientX = event.clientX;
+        drag.lastClientY = event.clientY;
+        const dx = event.clientX - drag.originX;
         const dy = event.clientY - drag.originY;
         if (!drag.armed) {
-          if (Math.abs(dy) > 10) resetDrag();
-          return;
+          if (drag.pointerType === "mouse") {
+            // Mysz: uzbrój po przekroczeniu progu ruchu (klik nadal zaznacza).
+            if (Math.abs(dx) < MOUSE_THRESHOLD && Math.abs(dy) < MOUSE_THRESHOLD) return;
+            armBookingDrag();
+          } else {
+            // Dotyk przed upływem holdu = scroll/swipe — porzuć przeciąganie.
+            if (Math.abs(dx) > 10 || Math.abs(dy) > 10) resetDrag();
+            return;
+          }
         }
+        if (!drag.armed) return;
         event.preventDefault();
-        if (!drag.moved && Math.abs(dy) < 3) return;
-        if (!drag.moved) {
-          drag.moved = true;
-        }
-        const deltaMin = snapProvCalMin((dy / hourH) * 60);
-        let newFrom = snapProvCalMin(drag.startFrom + deltaMin);
-        let newTo = newFrom + drag.duration;
-        if (newFrom < dayStart) {
-          newFrom = dayStart;
-          newTo = newFrom + drag.duration;
-        }
-        if (newTo > dayEnd) {
-          newTo = dayEnd;
-          newFrom = newTo - drag.duration;
-        }
-        if (newFrom === drag.lastFrom) return;
-        drag.lastFrom = newFrom;
-        applyProvCalSlotLayout(drag.el, newFrom, newTo);
-        updateProvCalDragTime(newFrom);
-        const ok = canPlaceBookingInFree(drag.bookingId, drag.dateISO, newFrom, newTo);
-        drag.el.classList.toggle("gcal__event--invalid", !ok);
+        drag.moved = true;
+        updateDragLayout();
+        updateAutoScroll(event.clientY);
       },
       { capture: true, passive: false }
     );
@@ -6090,12 +6196,13 @@
     function endPointer(event) {
       if (!drag.active || !drag.el) return;
       if (drag.pointerId != null && event.pointerId !== drag.pointerId) return;
+      stopAutoScroll();
       window._provCalSlotIgnoreClick = true;
       setTimeout(function () {
         window._provCalSlotIgnoreClick = false;
       }, 0);
       if (drag.moved && drag.allowMove && drag.armed) {
-        commitBookingDrag(event);
+        commitBookingDrag();
       } else if (drag.armed) {
         resetDrag();
       } else {
@@ -6117,6 +6224,20 @@
         } else {
           resetDrag();
         }
+      },
+      true
+    );
+
+    // Escape w trakcie przeciągania — anuluj i przywróć pierwotną pozycję.
+    document.addEventListener(
+      "keydown",
+      function (event) {
+        if (event.key !== "Escape" || !drag.active) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const wasMoved = drag.moved && drag.armed;
+        resetDrag();
+        if (wasMoved) renderAll();
       },
       true
     );
