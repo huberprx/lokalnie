@@ -3195,6 +3195,14 @@
       applyEventDensity(el, height, isBare);
     });
 
+    timeline.querySelectorAll(".gcal__avail[data-from-min]").forEach(function (el) {
+      const fromM = Number(el.getAttribute("data-from-min"));
+      const toM = Number(el.getAttribute("data-to-min"));
+      if (isNaN(fromM) || isNaN(toM) || toM <= fromM) return;
+      el.style.top = ((fromM - dayStartMin) / 60) * hourH + "px";
+      el.style.height = Math.max(2, ((toM - fromM) / 60) * hourH) + "px";
+    });
+
     timeline.querySelectorAll(".gcal__now[data-now-min]").forEach(function (nowEl) {
       const nowMin = Number(nowEl.getAttribute("data-now-min"));
       if (!isNaN(nowMin)) nowEl.style.top = ((nowMin - dayStartMin) / 60) * hourH + "px";
@@ -3390,6 +3398,23 @@
     });
   }
 
+  /** Pionowe paski zdefiniowanej dostępności dnia (lewy gutter osi). */
+  function renderProvCalAvailBars(dateISO, hourH, dayStartMin, dayEndMin) {
+    return providerAvailBlocksForDate(dateISO)
+      .map(function (block) {
+        const f = timeToMinutes(block.from);
+        const t = timeToMinutes(block.to);
+        if (isNaN(f) || isNaN(t) || t <= f) return "";
+        const from = Math.max(dayStartMin, Math.min(dayEndMin, f));
+        const to = Math.max(dayStartMin, Math.min(dayEndMin, t));
+        if (to <= from) return "";
+        const top = ((from - dayStartMin) / 60) * hourH;
+        const height = Math.max(2, ((to - from) / 60) * hourH);
+        return `<div class="gcal__avail" style="top:${top}px;height:${height}px" data-from-min="${from}" data-to-min="${to}" aria-hidden="true"></div>`;
+      })
+      .join("");
+  }
+
   /** Widok dnia jak Google Calendar: oś godzin + bloki wizyt i wolnych. */
   function renderProvCalGoogleDay(dateISO, dayVisits) {
     const isToday = dateISO === demoTodayISO();
@@ -3467,6 +3492,7 @@
         <div class="gcal__timeline" style="height:${totalH}px;--gcal-hour-h:${hourH}px" data-role="prov-cal-timeline">
           <div class="gcal__hours">${hours}</div>
           <div class="gcal__track">
+            ${renderProvCalAvailBars(dateISO, hourH, dayStartMin, dayEndMin)}
             ${nowLine}
             ${events || `<p class="gcal__empty">Brak wizyt w tym dniu</p>`}
           </div>
@@ -3575,6 +3601,7 @@
         return `
           <div class="gcal-week__col${isToday ? " gcal-week__col--today" : ""}" data-date="${escapeHtml(dateISO)}">
             <div class="gcal__track gcal-week__track" data-action="prov-cal-pick-date" data-date="${escapeHtml(dateISO)}">
+              ${renderProvCalAvailBars(dateISO, hourH, dayStartMin, dayEndMin)}
               ${nowLine}
               ${events}
             </div>
