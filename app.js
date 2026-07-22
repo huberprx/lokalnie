@@ -4234,6 +4234,7 @@
     const delta = Number(deltaWeeks) || 0;
     if (!delta) return;
     const focus = ensureAvailFocusDate() || demoTodayISO();
+    const prevMonth = ensureAvailPickerMonth();
     const d = new Date(focus + "T12:00:00");
     if (isNaN(d.getTime())) return;
     d.setDate(d.getDate() + delta * 7);
@@ -4243,7 +4244,8 @@
     window.AppState.availPickerMonth = next.slice(0, 7);
     window.AppState.availEditDate = null;
     saveState();
-    renderAll();
+    // Soft refresh — bez renderAll, żeby siatka miesiąca nie migała i pasek mógł się animować.
+    refreshAvailWeekView({ rebuildMonth: prevMonth !== window.AppState.availPickerMonth });
   }
 
   /** Panel miesiąca (jak w kalendarzu wizyt) — kropki = dni z ustawioną dostępnością. */
@@ -4269,6 +4271,62 @@
     renderAll();
   }
 
+  // Poprzedni top (px) podświetlenia — przeżywa re-render, żeby tydzień „jechał” animacją.
+  let availWeekHlPrevTopPx = null;
+
+  /** Wiersz siatki miesiąca (0..5) dla poniedziałku tygodnia listy; -1 = poza widokiem. */
+  function availMonthWeekRow(year, month, startPad, weekMondayISO) {
+    const monday = new Date(String(weekMondayISO) + "T12:00:00");
+    if (isNaN(monday.getTime())) return -1;
+    const gridStart = new Date(year, month - 1, 1 - startPad, 12, 0, 0);
+    const days = Math.round((monday.getTime() - gridStart.getTime()) / 86400000);
+    const row = Math.floor(days / 7);
+    if (row < 0 || row > 5) return -1;
+    return row;
+  }
+
+  /** Płynne przesunięcie podświetlenia tygodnia — pozycja z realnej geometrii komórek. */
+  function animateAvailWeekHighlight() {
+    const nodes = document.querySelectorAll('[data-role="avail-week-highlight"]');
+    let applied = false;
+    nodes.forEach(function (hl) {
+      const grid = hl.parentElement;
+      // Pomiń ukryte instancje (telefon w tle) — inaczej offsetHeight=0 psuje fullscreen.
+      if (!grid || grid.offsetWidth < 8) return;
+      const row = Number(hl.getAttribute("data-row"));
+      if (isNaN(row) || row < 0) {
+        hl.style.opacity = "0";
+        return;
+      }
+      const cells = grid.querySelectorAll('.gcal-month__day[data-grid-row="' + row + '"]');
+      let cell = null;
+      for (let i = 0; i < cells.length; i++) {
+        if (cells[i].offsetHeight > 0) {
+          cell = cells[i];
+          break;
+        }
+      }
+      if (!cell) {
+        hl.style.opacity = "0";
+        return;
+      }
+      const top = cell.offsetTop;
+      const prev = availWeekHlPrevTopPx == null || isNaN(availWeekHlPrevTopPx) ? top : availWeekHlPrevTopPx;
+      hl.style.height = cell.offsetHeight + "px";
+      hl.style.opacity = "1";
+      hl.style.transition = "none";
+      hl.style.transform = "translateY(" + prev + "px)";
+      void hl.offsetHeight;
+      hl.style.transition = "";
+      hl.style.transform = "translateY(" + top + "px)";
+      if (!applied) {
+        availWeekHlPrevTopPx = top;
+        applied = true;
+      }
+    });
+    if (!applied) availWeekHlPrevTopPx = null;
+  }
+
   function renderAvailMonthPanel(provider, selectedISO, availByDate) {
     if (!window.AppState.availMonthOpen) return "";
     const pickerMonth = ensureAvailPickerMonth();
@@ -4280,13 +4338,18 @@
     const daysInMonth = new Date(year, month, 0).getDate();
     const startPad = (first.getDay() + 6) % 7;
     const totalCells = 42;
+    // Tydzień z listy poniżej (Pn–Nd), nie „dzień w środku miesiąca”.
+    const weekStartISO = mondayISOFrom(selectedISO || ensureAvailFocusDate() || today);
+    const weekRow = availMonthWeekRow(year, month, startPad, weekStartISO);
     let cells = "";
     for (let i = 0; i < startPad; i++) {
-      cells += `<span class="gcal-month__day gcal-month__day--pad" aria-hidden="true"></span>`;
+      const padRow = Math.floor(i / 7);
+      cells += `<span class="gcal-month__day gcal-month__day--pad" data-grid-row="${padRow}" aria-hidden="true"></span>`;
     }
     for (let day = 1; day <= daysInMonth; day++) {
       const dateISO = year + "-" + pad(month) + "-" + pad(day);
       const selected = dateISO === selectedISO;
+      const inWeek = mondayISOFrom(dateISO) === weekStartISO;
       const isToday = dateISO === today;
       const blocks = (availByDate && availByDate[dateISO]) || [];
       const hasAvail = blocks.length > 0;
@@ -4297,10 +4360,11 @@
           return `<span class="gcal-month__day-dot${tone ? " is-on " + tone : ""}" aria-hidden="true"></span>`;
         })
         .join("");
+      const cellRow = Math.floor((startPad + day - 1) / 7);
       cells += `
         <button type="button"
-          class="gcal-month__day${selected ? " gcal-month__day--on" : ""}${isToday && !selected ? " gcal-month__day--today" : ""}${hasAvail ? " gcal-month__day--busy" : ""}${red ? " gcal-month__day--red" : ""}"
-          data-action="avail-jump-date" data-date="${escapeHtml(dateISO)}"
+          class="gcal-month__day${selected ? " gcal-month__day--on" : ""}${isToday && !selected ? " gcal-month__day--today" : ""}${hasAvail ? " gcal-month__day--busy" : ""}${inWeek ? " gcal-month__day--week" : ""}${red ? " gcal-month__day--red" : ""}"
+          data-action="avail-jump-date" data-date="${escapeHtml(dateISO)}" data-grid-row="${cellRow}"
           aria-pressed="${selected ? "true" : "false"}"
           aria-label="${day}${hasAvail ? ", dostępność" : ""}">
           <span class="gcal-month__day-num">${day}</span>
@@ -4309,7 +4373,8 @@
     }
     const filled = startPad + daysInMonth;
     for (let i = filled; i < totalCells; i++) {
-      cells += `<span class="gcal-month__day gcal-month__day--pad" aria-hidden="true"></span>`;
+      const padRow = Math.floor(i / 7);
+      cells += `<span class="gcal-month__day gcal-month__day--pad" data-grid-row="${padRow}" aria-hidden="true"></span>`;
     }
     return `
       <div class="gcal-month gcal-month--avail" data-role="avail-month-panel">
@@ -4317,7 +4382,10 @@
           <div class="gcal-month__weekdays">${CAL_WEEKDAYS.map(function (w) {
             return `<span>${w}</span>`;
           }).join("")}</div>
-          <div class="gcal-month__grid">${cells}</div>
+          <div class="gcal-month__grid" data-role="avail-month-grid" data-month="${escapeHtml(pickerMonth)}" data-week-start="${escapeHtml(weekStartISO)}">
+            <span class="gcal-month__wk" data-role="avail-week-highlight" data-row="${weekRow}" data-week-start="${escapeHtml(weekStartISO)}" aria-hidden="true"></span>
+            ${cells}
+          </div>
         </div>
       </div>`;
   }
@@ -4699,19 +4767,28 @@
     return draft;
   }
 
-  function writeAvailDayBlocks(dateISO, blocks) {
+  function addDaysISO(dateISO, deltaDays) {
+    const d = new Date(String(dateISO) + "T12:00:00");
+    if (isNaN(d.getTime())) return dateISO;
+    d.setDate(d.getDate() + Number(deltaDays || 0));
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+
+  /** Zapis bloków dnia bez ruszania stanu edytora. */
+  function setAvailDayBlocks(dateISO, blocks) {
     const p = myProvider();
     if (!p || !dateISO) return;
     if (!p.availability) p.availability = [];
     const existing = p.availability.findIndex(function (d) {
       return d.dateISO === dateISO;
     });
-    if (!blocks.length) {
+    const nextBlocks = Array.isArray(blocks) ? blocks : [];
+    if (!nextBlocks.length) {
       if (existing !== -1) p.availability.splice(existing, 1);
     } else if (existing !== -1) {
-      p.availability[existing].blocks = blocks;
+      p.availability[existing].blocks = nextBlocks;
     } else {
-      p.availability.push({ dateISO: dateISO, blocks: blocks });
+      p.availability.push({ dateISO: dateISO, blocks: nextBlocks });
       p.availability.sort(function (a, b) {
         return a.dateISO.localeCompare(b.dateISO);
       });
@@ -4719,10 +4796,74 @@
     if (window.AppState.availEditDrafts) {
       window.AppState.availEditDrafts[dateISO] = buildAvailDraftFromProvider(p, dateISO);
     }
+  }
+
+  function writeAvailDayBlocks(dateISO, blocks) {
+    setAvailDayBlocks(dateISO, blocks);
+    const p = myProvider();
     window.AppState.availEditDraft = window.AppState.availEditDrafts
       ? window.AppState.availEditDrafts[dateISO]
       : null;
     window.AppState.availEditDate = dateISO;
+    if (p && window.AppState.availEditDrafts && !window.AppState.availEditDrafts[dateISO]) {
+      window.AppState.availEditDrafts[dateISO] = buildAvailDraftFromProvider(p, dateISO);
+      window.AppState.availEditDraft = window.AppState.availEditDrafts[dateISO];
+    }
+  }
+
+  const AVAIL_REPEAT_HORIZON_DAYS = 90;
+
+  function cloneAvailBlockForDate(p, dateISO, block, idx) {
+    const repeat = normalizeAvailRepeat(block);
+    return {
+      id: "blk-" + (p && p.id ? p.id : "p") + "-" + dateISO + "-" + idx,
+      from: block.from,
+      to: block.to,
+      locationId: block.locationId || defaultAvailBlock(p).locationId,
+      repeat: repeat,
+      recurring: repeat !== "none",
+    };
+  }
+
+  /**
+   * Rozszerza bloki „Co tydzień” / „Co drugi tydzień” na kolejne daty w oknie ~90 dni.
+   * Na dniach docelowych podmienia bloki o tym samym typie powtórzenia; one-off zostają.
+   */
+  function expandAvailRepeats(sourceDateISO, blocks) {
+    const p = myProvider();
+    if (!p || !sourceDateISO || !blocks || !blocks.length) return;
+
+    const horizonEnd = addDaysISO(sourceDateISO, AVAIL_REPEAT_HORIZON_DAYS);
+    const seriesByType = {
+      weekly: blocks.filter(function (b) {
+        return normalizeAvailRepeat(b) === "weekly";
+      }),
+      biweekly: blocks.filter(function (b) {
+        return normalizeAvailRepeat(b) === "biweekly";
+      }),
+    };
+
+    Object.keys(seriesByType).forEach(function (repeatType) {
+      const series = seriesByType[repeatType];
+      if (!series.length) return;
+      const step = repeatType === "biweekly" ? 14 : 7;
+      let target = addDaysISO(sourceDateISO, step);
+      while (target <= horizonEnd) {
+        const existing = providerAvailBlocksForDate(target).map(function (b) {
+          return Object.assign({}, b);
+        });
+        const kept = existing.filter(function (b) {
+          return normalizeAvailRepeat(b) !== repeatType;
+        });
+        const merged = kept.concat(
+          series.map(function (b, idx) {
+            return cloneAvailBlockForDate(p, target, b, kept.length + idx);
+          })
+        );
+        setAvailDayBlocks(target, merged);
+        target = addDaysISO(target, step);
+      }
+    });
   }
 
   function blocksFromAvailForm(dateISO) {
@@ -4804,6 +4945,12 @@
     ensureAvailDraft(dateISO);
     const blocks = blocksFromAvailForm(dateISO);
     writeAvailDayBlocks(dateISO, blocks);
+    expandAvailRepeats(dateISO, blocks);
+    // Po ekspansji przywróć draft/edycję źródłowego dnia (expand pisał inne daty).
+    if (window.AppState.availEditDrafts) {
+      window.AppState.availEditDraft = window.AppState.availEditDrafts[dateISO] || null;
+    }
+    window.AppState.availEditDate = dateISO;
     saveState();
     const scroller = document.querySelector('[data-role="avail-body"]');
     const scrollTop = scroller ? scroller.scrollTop : 0;
@@ -4815,7 +4962,16 @@
       });
     }
     if (!opts.quiet) {
-      showToast(blocks.length ? "Dostępność zapisana." : "Dzień oznaczony jako zamknięty.");
+      const hasRepeat = blocks.some(function (b) {
+        return normalizeAvailRepeat(b) !== "none";
+      });
+      showToast(
+        !blocks.length
+          ? "Dzień oznaczony jako zamknięty."
+          : hasRepeat
+            ? "Dostępność zapisana i powtórzona w kolejnych tygodniach."
+            : "Dostępność zapisana."
+      );
     }
   }
 
@@ -4877,10 +5033,12 @@
 
   function renderAvailDayEditor(p, dateISO, draft) {
     const locs = p.locations || [];
-    const rows = (draft.blocks || [])
+    const blockList = draft.blocks || [];
+    const rows = blockList
       .map(function (b, i) {
         const locTone = locationToneClass(p, b.locationId);
         const locLabel = locationLabel(p, b.locationId) || "—";
+        const isLast = i === blockList.length - 1;
         const locMenu = (locs.length
           ? locs
           : [{ id: b.locationId || "", label: locLabel }]
@@ -4949,12 +5107,21 @@
               </span>
             </label>
             <div class="avail-edit__footer">
-              <button type="button" class="avail-edit__remove avail-edit__remove--in-group" data-action="remove-avail-block" data-date="${escapeHtml(
-                dateISO
-              )}" data-index="${i}" aria-label="Usuń blok">Usuń</button>
-              <button type="button" class="avail-edit__save avail-edit__save--in-group" data-action="save-avail-day" data-date="${escapeHtml(
-                dateISO
-              )}">Zapisz</button>
+              <div class="avail-edit__footer-row">
+                <button type="button" class="avail-edit__remove avail-edit__remove--in-group" data-action="remove-avail-block" data-date="${escapeHtml(
+                  dateISO
+                )}" data-index="${i}" aria-label="Usuń blok">Usuń</button>
+                <button type="button" class="avail-edit__save avail-edit__save--in-group" data-action="save-avail-day" data-date="${escapeHtml(
+                  dateISO
+                )}">Zapisz</button>
+              </div>
+              ${
+                isLast
+                  ? `<button type="button" class="avail-edit__add-hours" data-action="add-avail-block" data-date="${escapeHtml(
+                      dateISO
+                    )}">Dodaj godziny dostępności</button>`
+                  : ""
+              }
             </div>
           </div>
         </div>`;
@@ -4967,27 +5134,20 @@
       </form>`;
   }
 
-  function renderAvailability() {
-    const p = myProvider();
-    const focusDate = ensureAvailFocusDate();
-    const weekStart = mondayISOFrom(focusDate);
-    window.AppState.availWeekStart = weekStart;
-    const pickerMonth = ensureAvailPickerMonth();
+  function collectAvailByDate(p) {
     const availByDate = {};
     (p ? p.availability || [] : []).forEach(function (d) {
       availByDate[d.dateISO] = d.blocks || [];
     });
+    return availByDate;
+  }
 
-    const monthLabel = monthLabelFromISO(pickerMonth + "-01");
-    const monthOpen = !!window.AppState.availMonthOpen;
-    const editDate = window.AppState.availEditDate || null;
-    const listDates = availWeekDays(weekStart);
-
+  function renderAvailWeekListHtml(p, weekStart, availByDate, editDate) {
     const AVAIL_DOW_PRINT = ["ND", "PN", "WT", "ŚR", "CZ", "PT", "SB"];
-    const list = listDates
+    return availWeekDays(weekStart)
       .map(function (dateISO) {
         const dt = new Date(dateISO + "T12:00:00");
-        const blocks = availByDate[dateISO] || [];
+        const blocks = (availByDate && availByDate[dateISO]) || [];
         const red = isSunday(dateISO);
         const has = blocks.length > 0;
         const isEditing = editDate === dateISO;
@@ -5030,6 +5190,119 @@
         </div>`;
       })
       .join("");
+  }
+
+  /** Aktualizacja zaznaczenia tygodnia na istniejącej siatce (bez przebudowy DOM). */
+  function syncAvailMonthWeekChrome(focusDate) {
+    const weekStart = mondayISOFrom(focusDate);
+    const today = demoTodayISO();
+    document.querySelectorAll('[data-role="avail-month-grid"]').forEach(function (grid) {
+      if (grid.offsetWidth < 8) return;
+      grid.setAttribute("data-week-start", weekStart);
+      grid.querySelectorAll(".gcal-month__day[data-date]").forEach(function (btn) {
+        const iso = btn.getAttribute("data-date");
+        const selected = iso === focusDate;
+        const inWeek = mondayISOFrom(iso) === weekStart;
+        btn.classList.toggle("gcal-month__day--on", selected);
+        btn.classList.toggle("gcal-month__day--today", !selected && iso === today);
+        btn.classList.toggle("gcal-month__day--week", inWeek);
+        btn.setAttribute("aria-pressed", selected ? "true" : "false");
+      });
+      let row = -1;
+      availWeekDays(weekStart).some(function (iso) {
+        const btn = grid.querySelector('.gcal-month__day[data-date="' + iso + '"]');
+        if (!btn) return false;
+        const r = Number(btn.getAttribute("data-grid-row"));
+        if (isNaN(r)) return false;
+        row = r;
+        return true;
+      });
+      const hl = grid.querySelector('[data-role="avail-week-highlight"]');
+      if (hl) {
+        hl.setAttribute("data-row", String(row));
+        hl.setAttribute("data-week-start", weekStart);
+      }
+    });
+    requestAnimationFrame(function () {
+      requestAnimationFrame(animateAvailWeekHighlight);
+    });
+  }
+
+  /**
+   * Lekkie odświeżenie widoku dostępności przy zmianie tygodnia:
+   * lista + pasek (animacja), opcjonalnie przebudowa miesiąca gdy zmiana miesiąca.
+   */
+  function refreshAvailWeekView(opts) {
+    const rebuildMonth = !!(opts && opts.rebuildMonth);
+    const p = myProvider();
+    if (!p) {
+      renderAll();
+      return;
+    }
+    const focusDate = ensureAvailFocusDate();
+    const weekStart = mondayISOFrom(focusDate);
+    window.AppState.availWeekStart = weekStart;
+    const pickerMonth = ensureAvailPickerMonth();
+    const availByDate = collectAvailByDate(p);
+    const listHtml = renderAvailWeekListHtml(p, weekStart, availByDate, window.AppState.availEditDate || null);
+    const monthLabel = monthLabelFromISO(pickerMonth + "-01");
+
+    document.querySelectorAll('[data-role="avail-list"]').forEach(function (el) {
+      el.innerHTML = listHtml;
+    });
+    document.querySelectorAll('[data-role="avail-week-month"]').forEach(function (el) {
+      el.textContent = monthLabel;
+      const btn = el.closest(".prov-cal__tool--month-label");
+      if (btn) btn.setAttribute("aria-label", monthLabel);
+    });
+
+    const existingGrids = document.querySelectorAll('[data-role="avail-month-grid"]');
+    const canPatchGrid = !rebuildMonth && existingGrids.length > 0;
+    if (canPatchGrid) {
+      syncAvailMonthWeekChrome(focusDate);
+      return;
+    }
+
+    // Zmiana miesiąca (lub brak siatki): podmień tylko panel miesiąca, nie cały ekran.
+    availWeekHlPrevTopPx = null;
+    const panelHtml = renderAvailMonthPanel(p, focusDate, availByDate);
+    const panels = document.querySelectorAll('[data-role="avail-month-panel"]');
+    if (panels.length) {
+      panels.forEach(function (panel) {
+        if (!panelHtml) {
+          panel.remove();
+          return;
+        }
+        const host = document.createElement("div");
+        host.innerHTML = panelHtml;
+        const next = host.firstElementChild;
+        if (next && panel.parentNode) panel.parentNode.replaceChild(next, panel);
+      });
+    } else if (panelHtml) {
+      document.querySelectorAll(".app-screen--avail .avail-top").forEach(function (top) {
+        const host = document.createElement("div");
+        host.innerHTML = panelHtml;
+        const next = host.firstElementChild;
+        if (next) top.appendChild(next);
+      });
+    }
+    requestAnimationFrame(function () {
+      requestAnimationFrame(animateAvailWeekHighlight);
+    });
+  }
+
+  function renderAvailability() {
+    const p = myProvider();
+    const focusDate = ensureAvailFocusDate();
+    const weekStart = mondayISOFrom(focusDate);
+    window.AppState.availWeekStart = weekStart;
+    const pickerMonth = ensureAvailPickerMonth();
+    const availByDate = collectAvailByDate(p);
+
+    const monthLabel = monthLabelFromISO(pickerMonth + "-01");
+    const monthOpen = !!window.AppState.availMonthOpen;
+    const editDate = window.AppState.availEditDate || null;
+    const list = renderAvailWeekListHtml(p, weekStart, availByDate, editDate);
 
     return `
       <div class="app-screen app-screen--provider app-screen--avail">
@@ -5157,6 +5430,8 @@
         }
       }
       refreshProvCalTimeLabels();
+      // Drugi frame — po layoutcie siatki miesiąca (inaczej pasek pada na top:0).
+      requestAnimationFrame(animateAvailWeekHighlight);
     });
   }
 

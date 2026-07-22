@@ -5506,8 +5506,29 @@ body.avatar-preview-open {
   padding-left: 0;
 }
 
+/* Dostępność: podświetlenie aktualnego tygodnia (jeden wiersz siatki) */
+.gcal-month--avail .gcal-month__grid {
+  position: relative;
+}
+
+.gcal-month--avail .gcal-month__wk {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2rem;
+  z-index: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  pointer-events: none;
+  will-change: transform;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 /* Dostępność: 3 sloty kropek przed datą (niewidoczne, gdy puste) */
 .gcal-month--avail .gcal-month__day {
+  position: relative;
+  z-index: 1;
   flex-direction: row;
   align-items: center;
   justify-content: center;
@@ -8170,12 +8191,48 @@ body.prov-cal-dragging * {
 
 .avail-edit__footer {
   display: flex;
+  flex-direction: column;
   align-items: stretch;
-  gap: 0.55rem;
+  gap: 0.45rem;
   margin: 0;
   padding: 0.7rem;
   border-top: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
   background: var(--surface);
+}
+
+.avail-edit__footer-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.55rem;
+}
+
+.avail-edit__add-hours {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 2.45rem;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1.5px dashed color-mix(in srgb, var(--accent-provider) 45%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent-provider) 6%, var(--surface));
+  color: var(--accent-provider);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+}
+
+.avail-edit__add-hours:hover {
+  background: color-mix(in srgb, var(--accent-provider) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-provider) 65%, var(--border));
+}
+
+.avail-edit__add-hours:active {
+  transform: scale(0.98);
 }
 
 .avail-edit__remove--in-group,
