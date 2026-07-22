@@ -5468,29 +5468,42 @@ body.avatar-preview-open {
 .gcal-month__cal {
   touch-action: pan-y;
   user-select: none;
-  /* Ten sam gutter co .gcal-week__head (oś godzin), żeby 7 kolumn miało tę samą szerokość */
+}
+
+/* W kalendarzu wizyt: wyrównanie kolumn do paska tygodnia (gutter godzin) */
+.app-screen--prov-cal .gcal-month__cal {
   padding-left: 3.1rem;
 }
 
 @media (max-width: 899px) {
-  .app-fullscreen .gcal-month {
-    /* Wyrównanie do .gcal: lewa jak padding-left 0.1rem, prawa do krawędzi */
+  .app-fullscreen .app-screen--prov-cal .gcal-month {
     margin-left: calc(-1 * var(--app-pad-x) + 0.1rem);
     margin-right: calc(-1 * var(--app-pad-x));
   }
 
-  .app-fullscreen .gcal-month__cal {
+  .app-fullscreen .app-screen--prov-cal .gcal-month__cal {
     padding-left: 2.45rem;
   }
 }
 
-.device-frame[data-view="mobile"] .gcal-month {
+.device-frame[data-view="mobile"] .app-screen--prov-cal .gcal-month {
   margin-left: calc(-1 * var(--app-pad-x) + 0.1rem);
   margin-right: calc(-1 * var(--app-pad-x));
 }
 
-.device-frame[data-view="mobile"] .gcal-month__cal {
+.device-frame[data-view="mobile"] .app-screen--prov-cal .gcal-month__cal {
   padding-left: 2.45rem;
+}
+
+/* Dostępność: pełna szerokość miesiąca w .avail-top */
+.gcal-month--avail {
+  margin: 0.2rem 0 0;
+  padding: 0.35rem 0 0.45rem;
+  border-top: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+}
+
+.gcal-month--avail .gcal-month__cal {
+  padding-left: 0;
 }
 
 .gcal-month__weekdays {
@@ -7066,14 +7079,15 @@ body.prov-cal-dragging * {
 
 .avail-top {
   flex-shrink: 0;
-  padding: 0.55rem var(--app-pad-x) 0.65rem;
+  padding: 0.55rem var(--app-pad-x) 0.35rem;
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 0;
   z-index: 2;
+  box-shadow: 0 4px 10px -4px color-mix(in srgb, var(--text) 16%, transparent);
 }
 
 .app-screen--avail .avail-top .screen-head--prov-cal {
-  margin-bottom: 0.55rem;
+  margin-bottom: 0;
 }
 
 .avail-body {
@@ -7476,13 +7490,19 @@ body.prov-cal-dragging * {
   background: var(--accent-provider);
 }
 
-.avail-day__edit-icon {
+.avail-day__toggle-icon {
   display: block;
-  width: 0.95rem;
-  height: 0.95rem;
+  width: 0.75rem;
+  height: 0.75rem;
   background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20h9'/%3E%3Cpath d='M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z'/%3E%3C/svg%3E") center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20h9'/%3E%3Cpath d='M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  opacity: 0.9;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") center / contain no-repeat;
+  transition: transform 0.15s ease;
+}
+
+.avail-day__edit-btn.is-on .avail-day__toggle-icon {
+  transform: rotate(180deg);
 }
 
 .avail-day__dow {
@@ -7657,12 +7677,12 @@ body.prov-cal-dragging * {
   --loc-soft: color-mix(in srgb, #1f9d6a 16%, #fff);
 }
 .loc-tone-1 {
-  --loc: #2f6fdb;
-  --loc-soft: color-mix(in srgb, #2f6fdb 14%, #fff);
+  --loc: #e67a22;
+  --loc-soft: color-mix(in srgb, #e67a22 16%, #fff);
 }
 .loc-tone-2 {
-  --loc: #c47a1a;
-  --loc-soft: color-mix(in srgb, #c47a1a 16%, #fff);
+  --loc: #2f6fdb;
+  --loc-soft: color-mix(in srgb, #2f6fdb 14%, #fff);
 }
 .loc-tone-3 {
   --loc: #c24b6e;
@@ -7908,9 +7928,8 @@ body.prov-cal-dragging * {
   height: 0.62rem;
   border-radius: 50%;
   flex-shrink: 0;
-  --loc: var(--accent-provider);
-  background: var(--loc);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--loc) 35%, transparent);
+  background: var(--loc, var(--accent-provider));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--loc, var(--accent-provider)) 35%, transparent);
 }
 
 .avail-edit__val--menu select,

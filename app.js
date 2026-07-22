@@ -88,6 +88,7 @@
       provCalSelection: null,
       availWeekStart: null,
       availStripScrollLeft: null,
+      availPickerMonth: null,
       availListOnlySet: true,
       availFocusDate: null,
       availEditDate: null,
@@ -1049,10 +1050,11 @@
     const fav = window.AppState.favorites.indexOf(p.slug) !== -1;
     const dist = p.address ? p.distanceKm.toFixed(1) + " km" : "Online";
     const hours = p.openHoursToday || "";
-    const metaParts = [dist];
+    const metaParts = [];
     if (hours) metaParts.push(hours);
     if (p.bookingMode === "approval") metaParts.push("na akceptację");
     const metaLine = metaParts.join(" · ");
+    const addrLine = p.address ? p.address + " · " + dist : dist;
 
     const nameHtml = opts.staticMain
       ? `<span class="provider-card__name">${escapeHtml(p.name)}</span>`
@@ -1060,8 +1062,8 @@
 
     const detailsInner = `
             ${opts.bookingHeader ? "" : `<span class="provider-card__cat">${escapeHtml(providerCategoryLine(p))}</span>`}
-            <span class="provider-card__meta">${escapeHtml(metaLine)}</span>
-            ${p.address ? `<span class="provider-card__addr">${escapeHtml(p.address)}</span>` : ""}`;
+            ${metaLine ? `<span class="provider-card__meta">${escapeHtml(metaLine)}</span>` : ""}
+            <span class="provider-card__addr">${escapeHtml(addrLine)}</span>`;
 
     const detailsBlock = opts.staticMain
       ? `<div class="provider-card__details">${detailsInner}</div>`
@@ -1263,6 +1265,8 @@
         availWeekStart: typeof stored.availWeekStart === "string" ? stored.availWeekStart : base.availWeekStart,
         availStripScrollLeft:
           typeof stored.availStripScrollLeft === "number" ? stored.availStripScrollLeft : base.availStripScrollLeft,
+        availPickerMonth:
+          typeof stored.availPickerMonth === "string" ? stored.availPickerMonth : base.availPickerMonth,
         availListOnlySet:
           typeof stored.availListOnlySet === "boolean" ? stored.availListOnlySet : base.availListOnlySet,
         availFocusDate: typeof stored.availFocusDate === "string" ? stored.availFocusDate : base.availFocusDate,
@@ -4143,6 +4147,7 @@
     window.AppState.availFocusDate = focus;
     window.AppState.availWeekStart = mondayISOFrom(focus);
     window.AppState.availStripScrollLeft = null;
+    window.AppState.availPickerMonth = String(focus).slice(0, 7);
     window.AppState.availEditDate = null;
     navigate("provider", "availability", {});
   }
@@ -4189,24 +4194,78 @@
     handleAvailStripScroll(grid);
   }
 
+  function ensureAvailPickerMonth() {
+    if (window.AppState.availPickerMonth) return window.AppState.availPickerMonth;
+    const focus = ensureAvailFocusDate() || demoTodayISO();
+    window.AppState.availPickerMonth = String(focus).slice(0, 7);
+    return window.AppState.availPickerMonth;
+  }
+
+  function shiftAvailPickerMonth(delta) {
+    const cur = ensureAvailPickerMonth();
+    const parts = cur.split("-");
+    const y = Number(parts[0]) || 2026;
+    const m = Number(parts[1]) || 1;
+    const d = new Date(y, m - 1 + Number(delta || 0), 1);
+    window.AppState.availPickerMonth = d.getFullYear() + "-" + pad(d.getMonth() + 1);
+    saveState();
+    renderAll();
+  }
+
   function goAvailToday() {
     const today = demoTodayISO();
     window.AppState.availFocusDate = today;
     window.AppState.availWeekStart = mondayISOFrom(today);
-    scrollAvailStripToDate(today);
+    window.AppState.availPickerMonth = today.slice(0, 7);
+    saveState();
+    renderAll();
     scrollAvailListToDate(today);
   }
 
-  /** Skocz do 1. dnia miesiąca widocznego na pasku (jak etykieta miesiąca w kalendarzu). */
-  function goAvailMonthStart() {
-    const grid = document.querySelector('[data-role="avail-week-grid"]');
-    const iso = (grid && updateAvailMonthLabel(grid)) || ensureAvailFocusDate() || demoTodayISO();
-    const d = new Date(String(iso) + "T12:00:00");
-    if (isNaN(d.getTime())) return;
-    const start = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-01";
-    window.AppState.availFocusDate = start;
-    scrollAvailStripToDate(start);
-    scrollAvailListToDate(start);
+  /** Panel miesiąca (jak w kalendarzu wizyt) — kropki = dni z ustawioną dostępnością. */
+  function renderAvailMonthPanel(selectedISO, availByDate) {
+    const pickerMonth = ensureAvailPickerMonth();
+    const parts = pickerMonth.split("-");
+    const year = Number(parts[0]) || 2026;
+    const month = Number(parts[1]) || 1;
+    const today = demoTodayISO();
+    const first = new Date(year, month - 1, 1);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const startPad = (first.getDay() + 6) % 7;
+    const totalCells = 42;
+    let cells = "";
+    for (let i = 0; i < startPad; i++) {
+      cells += `<span class="gcal-month__day gcal-month__day--pad" aria-hidden="true"></span>`;
+    }
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateISO = year + "-" + pad(month) + "-" + pad(day);
+      const selected = dateISO === selectedISO;
+      const isToday = dateISO === today;
+      const hasAvail = !!(availByDate && availByDate[dateISO] && availByDate[dateISO].length);
+      const red = isSunday(dateISO) || isRedCalendarDay(dateISO);
+      cells += `
+        <button type="button"
+          class="gcal-month__day${selected ? " gcal-month__day--on" : ""}${isToday && !selected ? " gcal-month__day--today" : ""}${hasAvail ? " gcal-month__day--busy" : ""}${red ? " gcal-month__day--red" : ""}"
+          data-action="avail-jump-date" data-date="${escapeHtml(dateISO)}"
+          aria-pressed="${selected ? "true" : "false"}"
+          aria-label="${day}${hasAvail ? ", dostępność" : ""}">
+          <span class="gcal-month__day-num">${day}</span>
+          ${hasAvail ? `<span class="gcal-month__day-dot" aria-hidden="true"></span>` : ""}
+        </button>`;
+    }
+    const filled = startPad + daysInMonth;
+    for (let i = filled; i < totalCells; i++) {
+      cells += `<span class="gcal-month__day gcal-month__day--pad" aria-hidden="true"></span>`;
+    }
+    return `
+      <div class="gcal-month gcal-month--avail" data-role="avail-month-panel">
+        <div class="gcal-month__cal" data-role="avail-month-swipe">
+          <div class="gcal-month__weekdays">${CAL_WEEKDAYS.map(function (w) {
+            return `<span>${w}</span>`;
+          }).join("")}</div>
+          <div class="gcal-month__grid">${cells}</div>
+        </div>
+      </div>`;
   }
 
   function initAvailStripScroll(grid) {
@@ -4266,16 +4325,6 @@
       const group = document.querySelector('.avail-day-group[data-date="' + dateISO + '"]');
       if (!body || !group) return;
 
-      document.querySelectorAll(".avail-week__col--target, .avail-week__col--current").forEach(function (el) {
-        el.classList.remove("avail-week__col--target");
-        el.classList.remove("avail-week__col--current");
-      });
-      const col = document.querySelector('.avail-week__col[data-date="' + dateISO + '"]');
-      if (col) {
-        col.classList.add("avail-week__col--target");
-        col.classList.add("avail-week__col--current");
-      }
-
       const bodyRect = body.getBoundingClientRect();
       const groupRect = group.getBoundingClientRect();
       const nextTop = body.scrollTop + (groupRect.top - bodyRect.top) - 10;
@@ -4287,7 +4336,6 @@
       window.clearTimeout(scrollAvailListToDate._flashTimer);
       scrollAvailListToDate._flashTimer = window.setTimeout(function () {
         group.classList.remove("avail-day-group--flash");
-        if (col) col.classList.remove("avail-week__col--target");
       }, 1100);
     }
 
@@ -4784,58 +4832,22 @@
 
   function renderAvailability() {
     const p = myProvider();
-    const weekStart = ensureAvailWeekStart();
     const focusDate = ensureAvailFocusDate();
-    const weekDates = availWeekDays(weekStart);
-    const stripDates = availStripDays();
+    const pickerMonth = ensureAvailPickerMonth();
     const availByDate = {};
     (p ? p.availability || [] : []).forEach(function (d) {
       availByDate[d.dateISO] = d.blocks || [];
     });
 
-    const monthLabel = monthLabelFromISO(focusDate || weekDates[0] || stripDates[0]);
-    // Indeks jak w Date#getDay(): 0=Nd … 6=Sb
-    const AVAIL_DOW = ["Nd", "Pn", "Wt", "Śr", "Cz", "Pt", "Sb"];
-
-    const weekCols = stripDates
-      .map(function (dateISO) {
-        const dt = new Date(dateISO + "T12:00:00");
-        const blocks = availByDate[dateISO] || [];
-        const sunday = isSunday(dateISO);
-        const has = blocks.length > 0;
-        const monthStart = dt.getDate() === 1;
-        const body = has
-          ? blocks
-              .map(function (b) {
-                const tone = locationToneClass(p, b.locationId);
-                return `
-              <div class="avail-week__slot ${tone}">
-                <span class="avail-week__slot-time">${escapeHtml(b.from)}</span>
-                <span class="avail-week__slot-time">${escapeHtml(b.to)}</span>
-              </div>`;
-              })
-              .join("")
-          : `<span class="avail-week__empty-mark" aria-hidden="true">—</span>`;
-        const cardTone =
-          has && blocks.length === 1 ? " " + locationToneClass(p, blocks[0].locationId) : has ? " avail-week__card--mixed" : "";
-        const isFocus = dateISO === focusDate;
-        return `
-        <div class="avail-week__col${has ? " avail-week__col--open" : " avail-week__col--closed"}${sunday ? " avail-week__col--sunday" : ""}${monthStart ? " avail-week__col--month-start" : ""}${isFocus ? " avail-week__col--current" : ""}"
-          data-date="${escapeHtml(dateISO)}" data-action="avail-jump-date" role="button" tabindex="0"
-          aria-label="${has ? "Pokaż" : "Ustaw"} ${escapeHtml(String(dt.getDate()))} ${escapeHtml(MONTHS[dt.getMonth()])} na liście">
-          <span class="avail-week__dow${sunday ? " avail-week__dow--red" : ""}">${AVAIL_DOW[dt.getDay()]}</span>
-          <span class="avail-week__day${sunday ? " avail-week__day--red" : ""}">${dt.getDate()}</span>
-          <div class="avail-week__card${cardTone}" aria-label="${has ? "Dostępność" : "Brak dostępności"}">
-            ${body}
-          </div>
-        </div>`;
-      })
-      .join("");
-
+    const monthLabel = monthLabelFromISO(pickerMonth + "-01");
     const editDate = window.AppState.availEditDate || null;
-    const listDates = stripDates.filter(function (dateISO) {
-      return (availByDate[dateISO] || []).length > 0 || dateISO === editDate;
-    });
+    const listDates = Object.keys(availByDate)
+      .filter(function (dateISO) {
+        return (availByDate[dateISO] || []).length > 0 || dateISO === editDate;
+      })
+      .sort();
+    if (editDate && listDates.indexOf(editDate) === -1) listDates.push(editDate);
+    listDates.sort();
 
     const AVAIL_DOW_PRINT = ["ND", "PN", "WT", "ŚR", "CZ", "PT", "SB"];
     const list = listDates
@@ -4873,9 +4885,9 @@
             <button type="button" class="avail-day__edit-btn${isEditing ? " is-on" : ""}"
               data-action="toggle-avail-day-edit" data-date="${escapeHtml(dateISO)}"
               aria-expanded="${isEditing ? "true" : "false"}"
-              aria-label="${isEditing ? "Zwiń edycję" : "Edytuj dostępność"}"
-              title="${isEditing ? "Zwiń" : "Edytuj"}">
-              <span class="avail-day__edit-icon" aria-hidden="true"></span>
+              aria-label="${isEditing ? "Zwiń" : "Rozwiń"}"
+              title="${isEditing ? "Zwiń" : "Rozwiń"}">
+              <span class="avail-day__toggle-icon" aria-hidden="true"></span>
             </button>
           </div>
           ${editor}
@@ -4896,8 +4908,9 @@
               </div>
               <div class="prov-cal-head__actions">
                 <div class="prov-cal__tools" role="toolbar" aria-label="Narzędzia dostępności">
-                  <button type="button" class="prov-cal__tool prov-cal__tool--month-label" data-action="avail-month-start"
-                    aria-label="${escapeHtml(monthLabel)}">
+                  <button type="button" class="prov-cal__tool prov-cal__tool--month-label is-on"
+                    data-action="avail-month-next"
+                    aria-label="${escapeHtml(monthLabel)} — następny miesiąc" aria-pressed="true">
                     <span class="prov-cal__month-name" data-role="avail-week-month">${escapeHtml(monthLabel)}</span>
                     <span class="prov-cal__month-chevron" aria-hidden="true"></span>
                   </button>
@@ -4906,9 +4919,7 @@
               </div>
             </div>
           </header>
-          <section class="avail-week" aria-label="Kalendarz dostępności">
-            <div class="avail-week__grid" data-role="avail-week-grid" tabindex="0" aria-label="Kalendarz, przewijaj w poziomie">${weekCols}</div>
-          </section>
+          ${renderAvailMonthPanel(focusDate, availByDate)}
         </div>
         <div class="avail-body" data-role="avail-body">
           <div class="avail-list__head">
@@ -5949,13 +5960,20 @@
         event.preventDefault();
         goAvailToday();
         break;
-      case "avail-month-start":
+      case "avail-month-next":
         event.preventDefault();
-        goAvailMonthStart();
+        shiftAvailPickerMonth(1);
         break;
       case "avail-jump-date":
         event.preventDefault();
-        scrollAvailListToDate(d.date);
+        if (d.date) {
+          window.AppState.availFocusDate = d.date;
+          window.AppState.availPickerMonth = String(d.date).slice(0, 7);
+          window.AppState.availWeekStart = mondayISOFrom(d.date);
+          saveState();
+          renderAll();
+          scrollAvailListToDate(d.date);
+        }
         break;
       case "toggle-avail-day-edit":
         event.preventDefault();
@@ -6891,15 +6909,19 @@
   function bindProvCalMonthSwipe() {
     if (bindProvCalMonthSwipe.done) return;
     bindProvCalMonthSwipe.done = true;
-    const swipe = { active: false, startX: 0, startY: 0, locked: false };
+    const swipe = { active: false, startX: 0, startY: 0, locked: false, kind: null };
 
     document.addEventListener(
       "touchstart",
       function (event) {
         if (event.touches.length !== 1) return;
-        if (!event.target.closest || !event.target.closest('[data-role="prov-cal-month-swipe"]')) return;
+        if (!event.target.closest) return;
+        const prov = event.target.closest('[data-role="prov-cal-month-swipe"]');
+        const avail = event.target.closest('[data-role="avail-month-swipe"]');
+        if (!prov && !avail) return;
         swipe.active = true;
         swipe.locked = false;
+        swipe.kind = avail ? "avail" : "prov";
         swipe.startX = event.touches[0].clientX;
         swipe.startY = event.touches[0].clientY;
       },
@@ -6931,9 +6953,15 @@
         const t = event.changedTouches && event.changedTouches[0];
         const dx = t ? t.clientX - swipe.startX : 0;
         const wasLocked = swipe.locked;
+        const kind = swipe.kind;
         swipe.active = false;
         swipe.locked = false;
+        swipe.kind = null;
         if (!wasLocked || Math.abs(dx) < 48) return;
+        if (kind === "avail") {
+          shiftAvailPickerMonth(dx < 0 ? 1 : -1);
+          return;
+        }
         if (!window.AppState.provCalMonthOpen) return;
         shiftProvCalPickerMonth(dx < 0 ? 1 : -1);
       },
@@ -6945,6 +6973,7 @@
       function () {
         swipe.active = false;
         swipe.locked = false;
+        swipe.kind = null;
       },
       { passive: true }
     );
