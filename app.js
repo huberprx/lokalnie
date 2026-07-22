@@ -2717,9 +2717,10 @@
     if (!dateISO) return;
     window.AppState.provCalDate = dateISO;
     window.AppState.provCalPickerMonth = dateISO.slice(0, 7);
-    window.AppState.provCalMonthOpen = false;
+    // Panel miesiąca zostaje otwarty — zamyka go tylko toggle / Escape.
+    if (opts.closeMonth) window.AppState.provCalMonthOpen = false;
     // Zachowaj zoom poziomy (liczbę dni), chyba że wymuszono widok dnia.
-    if (opts.forceDay) applyProvCalVisibleDays(1, { render: false, persist: false });
+    if (opts.forceDay) applyProvCalVisibleDays(1, { render: false, persist: false, closeMonth: false });
     else ensureProvCalVisibleDays();
     if (!opts.keepSelection) window.AppState.provCalSelection = null;
     saveState();
@@ -4259,12 +4260,20 @@
   }
 
   /**
-   * Desktop: kółko / trackpad nad kalendarzem przesuwa pasek dni w poziomie.
-   * Dotyk (telefon) obsługuje natywne przewijanie paska — bez ingerencji JS.
+   * Poziome przewijanie paska dni: kółko/trackpad, przeciąganie wskaźnikiem i natywny swipe.
    */
   function bindAvailWeekScrollBridge() {
     if (bindAvailWeekScrollBridge.done) return;
     bindAvailWeekScrollBridge.done = true;
+
+    const availDrag = {
+      active: false,
+      el: null,
+      startX: 0,
+      startScroll: 0,
+      moved: false,
+      pointerId: null,
+    };
 
     document.addEventListener(
       "wheel",
@@ -4280,6 +4289,75 @@
         handleAvailStripScroll(grid);
       },
       { passive: false }
+    );
+
+    document.addEventListener(
+      "pointerdown",
+      function (event) {
+        if (event.button !== 0) return;
+        const grid = event.target.closest('[data-role="avail-week-grid"]');
+        if (!grid) return;
+        availDrag.active = true;
+        availDrag.el = grid;
+        availDrag.startX = event.clientX;
+        availDrag.startScroll = grid.scrollLeft;
+        availDrag.moved = false;
+        availDrag.pointerId = event.pointerId;
+        grid.classList.add("avail-week__grid--dragging");
+        try {
+          grid.setPointerCapture(event.pointerId);
+        } catch (err) {
+          /* ignore */
+        }
+      },
+      true
+    );
+
+    document.addEventListener(
+      "pointermove",
+      function (event) {
+        if (!availDrag.active || !availDrag.el) return;
+        const dx = event.clientX - availDrag.startX;
+        if (Math.abs(dx) > 4) availDrag.moved = true;
+        if (!availDrag.moved) return;
+        event.preventDefault();
+        availDrag.el.scrollLeft = availDrag.startScroll - dx;
+        handleAvailStripScroll(availDrag.el);
+      },
+      { capture: true, passive: false }
+    );
+
+    function endAvailDrag() {
+      if (!availDrag.active) return;
+      if (availDrag.el) {
+        availDrag.el.classList.remove("avail-week__grid--dragging");
+        try {
+          if (availDrag.pointerId != null) availDrag.el.releasePointerCapture(availDrag.pointerId);
+        } catch (err) {
+          /* ignore */
+        }
+      }
+      availDrag.active = false;
+      availDrag.el = null;
+      availDrag.pointerId = null;
+    }
+
+    document.addEventListener("pointerup", endAvailDrag, true);
+    document.addEventListener("pointercancel", endAvailDrag, true);
+
+    document.addEventListener(
+      "click",
+      function (event) {
+        if (!availDrag.moved) return;
+        if (!event.target.closest || !event.target.closest('[data-role="avail-week-grid"]')) {
+          availDrag.moved = false;
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        availDrag.moved = false;
+      },
+      true
     );
   }
 
