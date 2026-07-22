@@ -4215,7 +4215,8 @@
     const d = new Date(y, m - 1 + Number(delta || 0), 1);
     window.AppState.availPickerMonth = d.getFullYear() + "-" + pad(d.getMonth() + 1);
     saveState();
-    renderAll();
+    // Tylko panel miesiąca — slide, bez pełnego renderAll (bez błysku).
+    refreshAvailMonthOnly({ monthDir: Number(delta) > 0 ? 1 : -1 });
   }
 
   function goAvailToday() {
@@ -4244,8 +4245,14 @@
     window.AppState.availPickerMonth = next.slice(0, 7);
     window.AppState.availEditDate = null;
     saveState();
+    const nextMonth = window.AppState.availPickerMonth;
+    const monthChanged = prevMonth !== nextMonth;
     // Soft refresh — bez renderAll, żeby siatka miesiąca nie migała i pasek mógł się animować.
-    refreshAvailWeekView({ rebuildMonth: prevMonth !== window.AppState.availPickerMonth });
+    refreshAvailWeekView({
+      rebuildMonth: monthChanged,
+      monthDir: monthChanged ? (nextMonth > prevMonth ? 1 : -1) : 0,
+      weekDir: delta > 0 ? 1 : -1,
+    });
   }
 
   /** Panel miesiąca (jak w kalendarzu wizyt) — kropki = dni z ustawioną dostępnością. */
@@ -4335,59 +4342,175 @@
     const month = Number(parts[1]) || 1;
     const today = demoTodayISO();
     const first = new Date(year, month - 1, 1);
-    const daysInMonth = new Date(year, month, 0).getDate();
     const startPad = (first.getDay() + 6) % 7;
-    const totalCells = 42;
+    const totalCells = 42; // zawsze 6 tygodni
     // Tydzień z listy poniżej (Pn–Nd), nie „dzień w środku miesiąca”.
     const weekStartISO = mondayISOFrom(selectedISO || ensureAvailFocusDate() || today);
     const weekRow = availMonthWeekRow(year, month, startPad, weekStartISO);
+    const gridStart = new Date(year, month - 1, 1 - startPad, 12, 0, 0);
     let cells = "";
-    for (let i = 0; i < startPad; i++) {
-      const padRow = Math.floor(i / 7);
-      cells += `<span class="gcal-month__day gcal-month__day--pad" data-grid-row="${padRow}" aria-hidden="true"></span>`;
-    }
-    for (let day = 1; day <= daysInMonth; day++) {
-      const dateISO = year + "-" + pad(month) + "-" + pad(day);
-      const selected = dateISO === selectedISO;
+    for (let i = 0; i < totalCells; i++) {
+      const cellDate = new Date(gridStart);
+      cellDate.setDate(gridStart.getDate() + i);
+      const cellYear = cellDate.getFullYear();
+      const cellMonth = cellDate.getMonth() + 1;
+      const day = cellDate.getDate();
+      const dateISO = cellYear + "-" + pad(cellMonth) + "-" + pad(day);
+      const outside = cellYear !== year || cellMonth !== month;
       const inWeek = mondayISOFrom(dateISO) === weekStartISO;
       const isToday = dateISO === today;
       const blocks = (availByDate && availByDate[dateISO]) || [];
       const hasAvail = blocks.length > 0;
       const tones = availDayToneSlots(provider, blocks);
-      const red = isSunday(dateISO) || isRedCalendarDay(dateISO);
+      const red = !outside && (isSunday(dateISO) || isRedCalendarDay(dateISO));
       const dotsHtml = tones
         .map(function (tone) {
           return `<span class="gcal-month__day-dot${tone ? " is-on " + tone : ""}" aria-hidden="true"></span>`;
         })
         .join("");
-      const cellRow = Math.floor((startPad + day - 1) / 7);
+      const cellRow = Math.floor(i / 7);
       cells += `
         <button type="button"
-          class="gcal-month__day${selected ? " gcal-month__day--on" : ""}${isToday && !selected ? " gcal-month__day--today" : ""}${hasAvail ? " gcal-month__day--busy" : ""}${inWeek ? " gcal-month__day--week" : ""}${red ? " gcal-month__day--red" : ""}"
+          class="gcal-month__day${outside ? " gcal-month__day--outside" : ""}${isToday ? " gcal-month__day--today" : ""}${hasAvail ? " gcal-month__day--busy" : ""}${inWeek ? " gcal-month__day--week" : ""}${red ? " gcal-month__day--red" : ""}"
           data-action="avail-jump-date" data-date="${escapeHtml(dateISO)}" data-grid-row="${cellRow}"
-          aria-pressed="${selected ? "true" : "false"}"
-          aria-label="${day}${hasAvail ? ", dostępność" : ""}">
+          aria-label="${day}${outside ? ", inny miesiąc" : ""}${hasAvail ? ", dostępność" : ""}${inWeek ? ", wybrany tydzień" : ""}">
           <span class="gcal-month__day-num">${day}</span>
           <span class="gcal-month__day-dots" aria-hidden="true">${dotsHtml}</span>
         </button>`;
     }
-    const filled = startPad + daysInMonth;
-    for (let i = filled; i < totalCells; i++) {
-      const padRow = Math.floor(i / 7);
-      cells += `<span class="gcal-month__day gcal-month__day--pad" data-grid-row="${padRow}" aria-hidden="true"></span>`;
-    }
     return `
       <div class="gcal-month gcal-month--avail" data-role="avail-month-panel">
-        <div class="gcal-month__cal" data-role="avail-month-swipe">
-          <div class="gcal-month__weekdays">${CAL_WEEKDAYS.map(function (w) {
-            return `<span>${w}</span>`;
-          }).join("")}</div>
-          <div class="gcal-month__grid" data-role="avail-month-grid" data-month="${escapeHtml(pickerMonth)}" data-week-start="${escapeHtml(weekStartISO)}">
-            <span class="gcal-month__wk" data-role="avail-week-highlight" data-row="${weekRow}" data-week-start="${escapeHtml(weekStartISO)}" aria-hidden="true"></span>
-            ${cells}
+        <div class="gcal-month__viewport" data-role="avail-month-viewport">
+          <div class="gcal-month__cal" data-role="avail-month-swipe">
+            <div class="gcal-month__weekdays">${CAL_WEEKDAYS.map(function (w) {
+              return `<span>${w}</span>`;
+            }).join("")}</div>
+            <div class="gcal-month__grid" data-role="avail-month-grid" data-month="${escapeHtml(pickerMonth)}" data-week-start="${escapeHtml(weekStartISO)}">
+              <span class="gcal-month__wk" data-role="avail-week-highlight" data-row="${weekRow}" data-week-start="${escapeHtml(weekStartISO)}" aria-hidden="true"></span>
+              ${cells}
+            </div>
           </div>
         </div>
       </div>`;
+  }
+
+  function updateAvailMonthLabels(pickerMonth) {
+    const monthLabel = monthLabelFromISO(pickerMonth + "-01");
+    document.querySelectorAll('[data-role="avail-week-month"]').forEach(function (el) {
+      el.textContent = monthLabel;
+      const btn = el.closest(".prov-cal__tool--month-label");
+      if (btn) btn.setAttribute("aria-label", monthLabel);
+    });
+  }
+
+  /**
+   * Podmiana siatki miesiąca ze slide (dir: 1 = następny z prawej, -1 = poprzedni z lewej).
+   * dir 0 = crosfade bez slide.
+   */
+  function swapAvailMonthPanels(panelHtml, direction) {
+    const dir = Number(direction) || 0;
+    const panels = document.querySelectorAll('[data-role="avail-month-panel"]');
+    if (!panels.length) {
+      if (!panelHtml) return;
+      document.querySelectorAll(".app-screen--avail .avail-top").forEach(function (top) {
+        const host = document.createElement("div");
+        host.innerHTML = panelHtml;
+        const next = host.firstElementChild;
+        if (next) top.appendChild(next);
+      });
+      requestAnimationFrame(function () {
+        requestAnimationFrame(animateAvailWeekHighlight);
+      });
+      return;
+    }
+
+    panels.forEach(function (panel) {
+      if (!panelHtml) {
+        panel.remove();
+        return;
+      }
+      if (panel.offsetWidth < 8) {
+        const host = document.createElement("div");
+        host.innerHTML = panelHtml;
+        const next = host.firstElementChild;
+        if (next && panel.parentNode) panel.parentNode.replaceChild(next, panel);
+        return;
+      }
+
+      const viewport = panel.querySelector('[data-role="avail-month-viewport"]') || panel;
+      const oldCal = panel.querySelector('[data-role="avail-month-swipe"]');
+      const host = document.createElement("div");
+      host.innerHTML = panelHtml;
+      const nextPanel = host.firstElementChild;
+      const newCal = nextPanel && nextPanel.querySelector('[data-role="avail-month-swipe"]');
+      if (!oldCal || !newCal) {
+        if (nextPanel && panel.parentNode) panel.parentNode.replaceChild(nextPanel, panel);
+        return;
+      }
+
+      // Bez kierunku — krótki fade zamiast twardego blink.
+      if (!dir) {
+        panel.classList.add("gcal-month--avail-fade");
+        window.setTimeout(function () {
+          if (panel.parentNode) panel.parentNode.replaceChild(nextPanel, panel);
+          requestAnimationFrame(function () {
+            requestAnimationFrame(animateAvailWeekHighlight);
+          });
+        }, 140);
+        return;
+      }
+
+      const height = oldCal.offsetHeight;
+      viewport.style.height = height + "px";
+      viewport.classList.add("gcal-month__viewport--slide");
+      newCal.classList.add("gcal-month__cal--incoming");
+      newCal.style.transform = "translateX(" + (dir > 0 ? "100%" : "-100%") + ")";
+      // newCal wychodzi z nextPanel — po animacji wstawiamy świeży HTML, nie pusty nextPanel.
+      viewport.appendChild(newCal);
+      void viewport.offsetWidth;
+      oldCal.classList.add("gcal-month__cal--outgoing");
+      oldCal.style.transform = "translateX(" + (dir > 0 ? "-100%" : "100%") + ")";
+      newCal.style.transform = "translateX(0)";
+
+      let done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        if (!panel.parentNode) return;
+        // Świeży markup — nextPanel jest już bez siatki (przeniesionej do animacji).
+        const cleanHost = document.createElement("div");
+        cleanHost.innerHTML = panelHtml;
+        const cleanPanel = cleanHost.firstElementChild;
+        if (cleanPanel) panel.parentNode.replaceChild(cleanPanel, panel);
+        else panel.remove();
+        // Upewnij się, że panel miesiąca zostaje otwarty po swipe.
+        window.AppState.availMonthOpen = true;
+        requestAnimationFrame(function () {
+          requestAnimationFrame(animateAvailWeekHighlight);
+        });
+      }
+      newCal.addEventListener(
+        "transitionend",
+        function (event) {
+          if (event.propertyName && event.propertyName.indexOf("transform") === -1) return;
+          finish();
+        },
+        { once: true }
+      );
+      window.setTimeout(finish, 420);
+    });
+  }
+
+  /** Tylko etykieta + siatka miesiąca (swipe miesiąca), bez przebudowy listy. */
+  function refreshAvailMonthOnly(opts) {
+    const p = myProvider();
+    if (!p) return;
+    const focusDate = ensureAvailFocusDate();
+    const pickerMonth = ensureAvailPickerMonth();
+    const availByDate = collectAvailByDate(p);
+    updateAvailMonthLabels(pickerMonth);
+    availWeekHlPrevTopPx = null;
+    swapAvailMonthPanels(renderAvailMonthPanel(p, focusDate, availByDate), opts && opts.monthDir);
   }
 
   function initAvailStripScroll(grid) {
@@ -4467,40 +4590,16 @@
   }
 
   /**
-   * Lista dostępności: kółko / swipe góra–dół przełącza cały tydzień.
-   * (Stary mostek do poziomego paska tygodnia — zostawiony dla kompatybilności.)
+   * Stary mostek do poziomego paska tygodnia (jeśli jeszcze w DOM).
+   * Zmiana tygodnia dostępności — tylko klik w kalendarz miesiąca, nie gest na liście.
    */
   function bindAvailWeekScrollBridge() {
     if (bindAvailWeekScrollBridge.done) return;
     bindAvailWeekScrollBridge.done = true;
 
-    let weekNavLockUntil = 0;
-    let wheelAcc = 0;
-    const listSwipe = { active: false, startX: 0, startY: 0, locked: false };
-
-    function shiftAvailWeekFromGesture(dir) {
-      if (!dir) return;
-      const now = Date.now();
-      if (now < weekNavLockUntil) return;
-      weekNavLockUntil = now + 420;
-      wheelAcc = 0;
-      shiftAvailListWeek(dir);
-    }
-
     document.addEventListener(
       "wheel",
       function (event) {
-        const body = event.target.closest && event.target.closest('[data-role="avail-body"]');
-        if (body) {
-          if (event.target.closest("input, select, textarea")) return;
-          const dy = event.deltaY;
-          if (!dy) return;
-          event.preventDefault();
-          wheelAcc += dy;
-          if (Math.abs(wheelAcc) < 48) return;
-          shiftAvailWeekFromGesture(wheelAcc > 0 ? 1 : -1);
-          return;
-        }
         const week = event.target.closest(".avail-week");
         if (!week) return;
         const grid = week.querySelector('[data-role="avail-week-grid"]');
@@ -4512,64 +4611,6 @@
         handleAvailStripScroll(grid);
       },
       { passive: false }
-    );
-
-    document.addEventListener(
-      "touchstart",
-      function (event) {
-        if (event.touches.length !== 1) return;
-        if (!event.target.closest) return;
-        if (!event.target.closest('[data-role="avail-body"]')) return;
-        if (event.target.closest("input, select, textarea, button, .avail-edit")) return;
-        listSwipe.active = true;
-        listSwipe.locked = false;
-        listSwipe.startX = event.touches[0].clientX;
-        listSwipe.startY = event.touches[0].clientY;
-      },
-      { passive: true }
-    );
-
-    document.addEventListener(
-      "touchmove",
-      function (event) {
-        if (!listSwipe.active || listSwipe.locked) return;
-        const t = event.touches[0];
-        if (!t) return;
-        const dx = t.clientX - listSwipe.startX;
-        const dy = t.clientY - listSwipe.startY;
-        if (Math.abs(dy) < 12 && Math.abs(dx) < 12) return;
-        if (Math.abs(dy) <= Math.abs(dx)) {
-          listSwipe.active = false;
-          return;
-        }
-        listSwipe.locked = true;
-        event.preventDefault();
-      },
-      { passive: false }
-    );
-
-    document.addEventListener(
-      "touchend",
-      function (event) {
-        if (!listSwipe.active) return;
-        const t = event.changedTouches && event.changedTouches[0];
-        const dy = t ? t.clientY - listSwipe.startY : 0;
-        const wasLocked = listSwipe.locked;
-        listSwipe.active = false;
-        listSwipe.locked = false;
-        if (!wasLocked || Math.abs(dy) < 48) return;
-        shiftAvailWeekFromGesture(dy < 0 ? 1 : -1);
-      },
-      { passive: true }
-    );
-
-    document.addEventListener(
-      "touchcancel",
-      function () {
-        listSwipe.active = false;
-        listSwipe.locked = false;
-      },
-      { passive: true }
     );
 
     const availDrag = {
@@ -5201,12 +5242,11 @@
       grid.setAttribute("data-week-start", weekStart);
       grid.querySelectorAll(".gcal-month__day[data-date]").forEach(function (btn) {
         const iso = btn.getAttribute("data-date");
-        const selected = iso === focusDate;
         const inWeek = mondayISOFrom(iso) === weekStart;
-        btn.classList.toggle("gcal-month__day--on", selected);
-        btn.classList.toggle("gcal-month__day--today", !selected && iso === today);
+        btn.classList.remove("gcal-month__day--on");
+        btn.classList.toggle("gcal-month__day--today", iso === today);
         btn.classList.toggle("gcal-month__day--week", inWeek);
-        btn.setAttribute("aria-pressed", selected ? "true" : "false");
+        btn.removeAttribute("aria-pressed");
       });
       let row = -1;
       availWeekDays(weekStart).some(function (iso) {
@@ -5229,11 +5269,77 @@
   }
 
   /**
+   * Pionowy slide listy tygodnia (dir: 1 = następny tydzień z dołu, -1 = poprzedni z góry).
+   */
+  function swapAvailWeekLists(listHtml, direction) {
+    const dir = Number(direction) || 0;
+    const viewports = document.querySelectorAll('[data-role="avail-list-viewport"]');
+    if (!viewports.length) {
+      document.querySelectorAll('[data-role="avail-list"]').forEach(function (el) {
+        el.innerHTML = listHtml;
+      });
+      return;
+    }
+
+    viewports.forEach(function (viewport) {
+      if (viewport.offsetWidth < 8) {
+        const track = viewport.querySelector('[data-role="avail-list"]');
+        if (track) track.innerHTML = listHtml;
+        return;
+      }
+      const oldTrack = viewport.querySelector('[data-role="avail-list"]');
+      if (!oldTrack) {
+        viewport.innerHTML = `<div class="avail-list" data-role="avail-list">${listHtml}</div>`;
+        return;
+      }
+      if (!dir) {
+        oldTrack.innerHTML = listHtml;
+        return;
+      }
+
+      const newTrack = document.createElement("div");
+      newTrack.className = "avail-list avail-list--incoming";
+      newTrack.setAttribute("data-role", "avail-list");
+      newTrack.innerHTML = listHtml;
+
+      const height = Math.max(oldTrack.offsetHeight, 1);
+      viewport.style.height = height + "px";
+      viewport.classList.add("avail-list-viewport--slide");
+      newTrack.style.transform = "translateY(" + (dir > 0 ? "100%" : "-100%") + ")";
+      viewport.appendChild(newTrack);
+      void viewport.offsetWidth;
+      oldTrack.classList.add("avail-list--outgoing");
+      oldTrack.style.transform = "translateY(" + (dir > 0 ? "-100%" : "100%") + ")";
+      newTrack.style.transform = "translateY(0)";
+
+      let done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        viewport.classList.remove("avail-list-viewport--slide");
+        viewport.style.height = "";
+        viewport.innerHTML = `<div class="avail-list" data-role="avail-list">${listHtml}</div>`;
+      }
+      newTrack.addEventListener(
+        "transitionend",
+        function (event) {
+          if (event.propertyName && event.propertyName.indexOf("transform") === -1) return;
+          finish();
+        },
+        { once: true }
+      );
+      window.setTimeout(finish, 420);
+    });
+  }
+
+  /**
    * Lekkie odświeżenie widoku dostępności przy zmianie tygodnia:
    * lista + pasek (animacja), opcjonalnie przebudowa miesiąca gdy zmiana miesiąca.
    */
   function refreshAvailWeekView(opts) {
     const rebuildMonth = !!(opts && opts.rebuildMonth);
+    const monthDir = opts && typeof opts.monthDir === "number" ? opts.monthDir : 0;
+    const weekDir = opts && typeof opts.weekDir === "number" ? opts.weekDir : 0;
     const p = myProvider();
     if (!p) {
       renderAll();
@@ -5245,16 +5351,9 @@
     const pickerMonth = ensureAvailPickerMonth();
     const availByDate = collectAvailByDate(p);
     const listHtml = renderAvailWeekListHtml(p, weekStart, availByDate, window.AppState.availEditDate || null);
-    const monthLabel = monthLabelFromISO(pickerMonth + "-01");
 
-    document.querySelectorAll('[data-role="avail-list"]').forEach(function (el) {
-      el.innerHTML = listHtml;
-    });
-    document.querySelectorAll('[data-role="avail-week-month"]').forEach(function (el) {
-      el.textContent = monthLabel;
-      const btn = el.closest(".prov-cal__tool--month-label");
-      if (btn) btn.setAttribute("aria-label", monthLabel);
-    });
+    swapAvailWeekLists(listHtml, weekDir);
+    updateAvailMonthLabels(pickerMonth);
 
     const existingGrids = document.querySelectorAll('[data-role="avail-month-grid"]');
     const canPatchGrid = !rebuildMonth && existingGrids.length > 0;
@@ -5263,32 +5362,9 @@
       return;
     }
 
-    // Zmiana miesiąca (lub brak siatki): podmień tylko panel miesiąca, nie cały ekran.
+    // Zmiana miesiąca: slide zamiast twardego blink.
     availWeekHlPrevTopPx = null;
-    const panelHtml = renderAvailMonthPanel(p, focusDate, availByDate);
-    const panels = document.querySelectorAll('[data-role="avail-month-panel"]');
-    if (panels.length) {
-      panels.forEach(function (panel) {
-        if (!panelHtml) {
-          panel.remove();
-          return;
-        }
-        const host = document.createElement("div");
-        host.innerHTML = panelHtml;
-        const next = host.firstElementChild;
-        if (next && panel.parentNode) panel.parentNode.replaceChild(next, panel);
-      });
-    } else if (panelHtml) {
-      document.querySelectorAll(".app-screen--avail .avail-top").forEach(function (top) {
-        const host = document.createElement("div");
-        host.innerHTML = panelHtml;
-        const next = host.firstElementChild;
-        if (next) top.appendChild(next);
-      });
-    }
-    requestAnimationFrame(function () {
-      requestAnimationFrame(animateAvailWeekHighlight);
-    });
+    swapAvailMonthPanels(renderAvailMonthPanel(p, focusDate, availByDate), monthDir);
   }
 
   function renderAvailability() {
@@ -5334,7 +5410,9 @@
           <div class="avail-list__head">
             <h3 class="avail-list__heading">Lista dostępności</h3>
           </div>
-          <div class="avail-list" data-role="avail-list">${list}</div>
+          <div class="avail-list-viewport" data-role="avail-list-viewport">
+            <div class="avail-list" data-role="avail-list">${list}</div>
+          </div>
         </div>
         ${providerBottomNav("availability")}
       </div>`;
@@ -6378,11 +6456,21 @@
       case "avail-jump-date":
         event.preventDefault();
         if (d.date) {
+          const prevMonth = ensureAvailPickerMonth();
+          const prevWeek = mondayISOFrom(ensureAvailFocusDate() || d.date);
           window.AppState.availFocusDate = d.date;
           window.AppState.availPickerMonth = String(d.date).slice(0, 7);
           window.AppState.availWeekStart = mondayISOFrom(d.date);
+          const nextMonth = window.AppState.availPickerMonth;
+          const nextWeek = window.AppState.availWeekStart;
+          const monthChanged = prevMonth !== nextMonth;
+          const weekChanged = prevWeek !== nextWeek;
           saveState();
-          renderAll();
+          refreshAvailWeekView({
+            rebuildMonth: monthChanged,
+            monthDir: monthChanged ? (nextMonth > prevMonth ? 1 : -1) : 0,
+            weekDir: weekChanged ? (nextWeek > prevWeek ? 1 : -1) : 0,
+          });
           scrollAvailListToDate(d.date);
         }
         break;

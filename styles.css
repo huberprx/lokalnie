@@ -5502,8 +5502,39 @@ body.avatar-preview-open {
   border-top: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
 }
 
+.gcal-month--avail .gcal-month__viewport {
+  position: relative;
+  overflow: hidden;
+}
+
 .gcal-month--avail .gcal-month__cal {
   padding-left: 0;
+  will-change: transform;
+}
+
+.gcal-month--avail .gcal-month__viewport--slide .gcal-month__cal {
+  transition: transform 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.gcal-month--avail .gcal-month__cal--incoming {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  width: 100%;
+}
+
+.gcal-month--avail.gcal-month--avail-fade {
+  animation: avail-month-fade 0.14s ease;
+}
+
+@keyframes avail-month-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.35;
+  }
 }
 
 /* Dostępność: podświetlenie aktualnego tygodnia (jeden wiersz siatki) */
@@ -5560,8 +5591,30 @@ body.avatar-preview-open {
   opacity: 1;
 }
 
-.gcal-month--avail .gcal-month__day--on .gcal-month__day-dot.is-on {
-  box-shadow: 0 0 0 1px color-mix(in srgb, #fff 55%, transparent);
+/* Dostępność: dziś bez wypełnionego kółka „wybranego dnia” — wybór to tydzień */
+.gcal-month--avail .gcal-month__day--today .gcal-month__day-num {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent-provider) 45%, transparent);
+  background: transparent;
+  color: var(--accent-provider);
+}
+
+/* Dni poprzedniego / następnego miesiąca — zawsze 6 tygodni */
+.gcal-month--avail .gcal-month__day--outside {
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+
+.gcal-month--avail .gcal-month__day--outside .gcal-month__day-num {
+  color: inherit;
+  font-weight: 600;
+}
+
+.gcal-month--avail .gcal-month__day--outside.gcal-month__day--red {
+  color: color-mix(in srgb, var(--danger) 55%, var(--text-muted));
+}
+
+.gcal-month--avail .gcal-month__day--outside .gcal-month__day-dot.is-on {
+  opacity: 0.55;
 }
 
 .gcal-month__weekdays {
@@ -7421,6 +7474,24 @@ body.prov-cal-dragging * {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+.avail-list-viewport {
+  position: relative;
+  overflow: hidden;
+}
+
+.avail-list-viewport--slide .avail-list {
+  transition: transform 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
+}
+
+.avail-list--incoming {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  width: 100%;
 }
 
 .avail-list {
