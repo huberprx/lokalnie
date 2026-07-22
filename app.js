@@ -3256,6 +3256,18 @@
 
   const PROV_CAL_DOW_SHORT = ["ND.", "PN.", "WT.", "ŚR.", "CZ.", "PT.", "SB."];
 
+  /** Sticky nagłówki dni — ukryte, gdy otwarty panel miesiąca (duplikat siatki). */
+  function renderProvCalStickyDayHeads(daysHtml) {
+    if (window.AppState.provCalMonthOpen) return "";
+    return `
+      <div class="gcal-week__sticky">
+        <div class="gcal-week__head">
+          <div class="gcal-week__corner" aria-hidden="true"></div>
+          <div class="gcal-week__days">${daysHtml}</div>
+        </div>
+      </div>`;
+  }
+
   /** Nagłówek dnia w stylu tygodnia (integralna część .gcal). */
   function renderProvCalDayHeadButton(dateISO, selectedISO) {
     const d = new Date(dateISO + "T12:00:00");
@@ -3492,10 +3504,7 @@
 
     return `
       <div class="gcal" data-role="prov-cal-gcal" data-prov-cal-day-swipe style="--gcal-days:1">
-        <div class="gcal-week__head">
-          <div class="gcal-week__corner" aria-hidden="true"></div>
-          <div class="gcal-week__days">${renderProvCalDayHeadButton(dateISO, dateISO)}</div>
-        </div>
+        ${renderProvCalStickyDayHeads(renderProvCalDayHeadButton(dateISO, dateISO))}
         <div class="gcal__timeline" style="height:${totalH}px;--gcal-hour-h:${hourH}px" data-role="prov-cal-timeline">
           <div class="gcal__hours">${hours}</div>
           <div class="gcal__track">
@@ -3604,26 +3613,9 @@
       })
       .join("");
 
-    const startD = new Date(weekDays[0] + "T12:00:00");
-    const endD = new Date(weekDays[weekDays.length - 1] + "T12:00:00");
-    const rangeLabel =
-      startD.getMonth() === endD.getMonth()
-        ? startD.getDate() + "–" + endD.getDate() + " " + (MONTHS_NOM[startD.getMonth()] || "").toLowerCase()
-        : startD.getDate() +
-          " " +
-          (MONTHS_NOM[startD.getMonth()] || "").toLowerCase().slice(0, 3) +
-          " – " +
-          endD.getDate() +
-          " " +
-          (MONTHS_NOM[endD.getMonth()] || "").toLowerCase().slice(0, 3);
-
     return `
       <div class="gcal gcal--week" data-role="prov-cal-gcal" style="--gcal-days:${weekDays.length}">
-        <div class="gcal-week__range">${escapeHtml(rangeLabel)}</div>
-        <div class="gcal-week__head">
-          <div class="gcal-week__corner" aria-hidden="true"></div>
-          <div class="gcal-week__days">${headCols}</div>
-        </div>
+        ${renderProvCalStickyDayHeads(headCols)}
         <div class="gcal__timeline gcal-week__timeline" style="height:${totalH}px;--gcal-hour-h:${hourH}px" data-role="prov-cal-timeline">
           <div class="gcal__hours">${hours}</div>
           <div class="gcal-week__cols">${cols}</div>
@@ -3643,8 +3635,10 @@
     if (ensureProvCalHourH() < dynMinHourH) window.AppState.provCalHourH = clampProvCalHourH(dynMinHourH);
     const weekView = visibleDays > 1;
     const monthOpen = !!window.AppState.provCalMonthOpen;
-    const searchOpen = !!window.AppState.provCalSearchOpen;
-    const searchQ = window.AppState.provCalSearchQ || "";
+    const selectedD = new Date(selected + "T12:00:00");
+    const monthLabel = isNaN(selectedD.getTime())
+      ? "Miesiąc"
+      : MONTHS_NOM[selectedD.getMonth()] || "Miesiąc";
     return `
       <div class="app-screen app-screen--provider app-screen--prov-cal">
         <div class="prov-cal-top">
@@ -3658,27 +3652,15 @@
               </div>
               <div class="prov-cal-head__actions">
                 <div class="prov-cal__tools" role="toolbar" aria-label="Narzędzia kalendarza">
-                  <button type="button" class="prov-cal__tool${monthOpen ? " is-on" : ""}" data-action="prov-cal-view" data-view="month"
-                    aria-label="Widok miesiąca" aria-pressed="${monthOpen ? "true" : "false"}">
-                    <span class="prov-cal__tool-icon prov-cal__tool-icon--month" aria-hidden="true"></span>
-                  </button>
-                  <button type="button" class="prov-cal__tool${searchOpen ? " is-on" : ""}" data-action="prov-cal-search"
-                    aria-label="Szukaj" aria-pressed="${searchOpen ? "true" : "false"}">
-                    <span class="prov-cal__tool-icon prov-cal__tool-icon--search" aria-hidden="true"></span>
+                  <button type="button" class="prov-cal__tool prov-cal__tool--month-label${monthOpen ? " is-on" : ""}" data-action="prov-cal-view" data-view="month"
+                    aria-label="${escapeHtml(monthLabel)}" aria-pressed="${monthOpen ? "true" : "false"}">
+                    <span class="prov-cal__month-name">${escapeHtml(monthLabel)}</span>
+                    <span class="prov-cal__month-chevron" aria-hidden="true"></span>
                   </button>
                 </div>
                 <button type="button" class="prov-cal__today-btn" data-action="prov-cal-today">Dzisiaj</button>
               </div>
             </div>
-            ${
-              searchOpen
-                ? `<div class="prov-cal__search">
-              <input type="search" class="prov-cal__search-input" data-role="prov-cal-search-input"
-                placeholder="Szukaj klienta lub usługi…" value="${escapeHtml(searchQ)}"
-                aria-label="Szukaj w kalendarzu" />
-            </div>`
-                : ""
-            }
           </header>
           ${renderProvCalMonthPanel(selected, visits)}
         </div>
@@ -5890,19 +5872,6 @@
         event.preventDefault();
         if (d.view === "month") toggleProvCalMonthPanel();
         break;
-      case "prov-cal-search":
-        event.preventDefault();
-        window.AppState.provCalSearchOpen = !window.AppState.provCalSearchOpen;
-        if (!window.AppState.provCalSearchOpen) window.AppState.provCalSearchQ = "";
-        saveState();
-        renderAll();
-        if (window.AppState.provCalSearchOpen) {
-          requestAnimationFrame(function () {
-            const input = document.querySelector('[data-role="prov-cal-search-input"]');
-            if (input) input.focus();
-          });
-        }
-        break;
       case "prov-cal-pick-date":
         event.preventDefault();
         pickProvCalDate(d.date);
@@ -6017,21 +5986,6 @@
       return;
     }
 
-    const calSearch = event.target.closest('[data-role="prov-cal-search-input"]');
-    if (calSearch) {
-      const q = String(calSearch.value || "")
-        .trim()
-        .toLowerCase();
-      window.AppState.provCalSearchQ = calSearch.value;
-      document.querySelectorAll(".gcal__event[data-search]").forEach(function (el) {
-        const hay = el.getAttribute("data-search") || "";
-        el.classList.toggle("gcal__event--dim", !!(q && hay.indexOf(q) === -1));
-      });
-      clearTimeout(document._provCalSearchSave);
-      document._provCalSearchSave = setTimeout(function () {
-        saveState();
-      }, 250);
-    }
   });
 
   document.addEventListener("change", function (event) {
