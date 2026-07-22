@@ -5032,7 +5032,8 @@
     }
   }
 
-  function clearAvailDay(dateISO) {
+  function clearAvailDay(dateISO, options) {
+    const opts = options || {};
     const p = myProvider();
     if (!p || !p.availability) return;
     p.availability = p.availability.filter(function (d) {
@@ -5041,14 +5042,19 @@
     if (window.AppState.availEditDrafts) {
       window.AppState.availEditDrafts[dateISO] = buildAvailDraftFromProvider(p, dateISO);
     }
-    window.AppState.availEditDraft = window.AppState.availEditDrafts
-      ? window.AppState.availEditDrafts[dateISO]
-      : null;
-    window.AppState.availEditDate = dateISO;
+    if (opts.closeEdit) {
+      window.AppState.availEditDate = null;
+      window.AppState.availEditDraft = null;
+    } else {
+      window.AppState.availEditDraft = window.AppState.availEditDrafts
+        ? window.AppState.availEditDrafts[dateISO]
+        : null;
+      window.AppState.availEditDate = dateISO;
+    }
     saveState();
     refreshAvailListOnly();
     patchAvailMonthBusyDots();
-    showToast("Usunięto dostępność w tym dniu.");
+    if (!opts.quiet) showToast("Usunięto dostępność w tym dniu.");
   }
 
   /** Odśwież kropki dostępności w siatce miesiąca bez animacji / przebudowy panelu. */
@@ -5276,25 +5282,35 @@
                 })
                 .join("")
             : `<span class="avail-day__hours-row avail-day__hours-row--empty">—</span>`;
+        const swipeLocked = !has || isEditing;
         return `
         <div class="avail-day-group${has ? "" : " avail-day-group--closed"}${isEditing ? " avail-day-group--open" : ""}" data-date="${escapeHtml(dateISO)}" id="avail-day-${escapeHtml(dateISO)}">
-          <div class="avail-day__sep">
-            <div class="avail-day__sep-main">
-              <span class="avail-day__dow${red ? " avail-day__dow--red" : ""}">${AVAIL_DOW_PRINT[dt.getDay()]}</span>
-              <span class="avail-day__date${red ? " avail-day__date--red" : ""}">${dateNum}</span>
-              ${hoursHtml ? `<span class="avail-day__hours">${hoursHtml}</span>` : ""}
-            </div>
-            <button type="button" class="avail-day__edit-btn${isEditing ? " is-on avail-day__edit-btn--save" : ""}"
-              data-action="toggle-avail-day-edit" data-date="${escapeHtml(dateISO)}"
-              aria-expanded="${isEditing ? "true" : "false"}"
-              aria-label="${isEditing ? "Zapisz" : "Edytuj"}"
-              title="${isEditing ? "Zapisz" : "Edytuj"}">
-              ${
-                isEditing
-                  ? `<span class="avail-day__edit-label">Zapisz</span>`
-                  : `<span class="avail-day__toggle-icon avail-day__toggle-icon--edit" aria-hidden="true"></span>`
-              }
+          <div class="avail-day__swipe${swipeLocked ? " avail-day__swipe--locked" : ""}" data-role="avail-day-swipe" data-date="${escapeHtml(dateISO)}">
+            <button type="button" class="avail-day__swipe-action" data-action="swipe-clear-avail-day" data-date="${escapeHtml(dateISO)}"
+              tabindex="${swipeLocked ? "-1" : "0"}" aria-hidden="${swipeLocked ? "true" : "false"}"
+              aria-label="Usuń dostępność w dniu ${escapeHtml(dateNum)}">
+              <span class="avail-day__swipe-trash" aria-hidden="true"></span>
             </button>
+            <div class="avail-day__swipe-front" data-role="avail-day-swipe-front">
+              <div class="avail-day__sep">
+                <div class="avail-day__sep-main">
+                  <span class="avail-day__dow${red ? " avail-day__dow--red" : ""}">${AVAIL_DOW_PRINT[dt.getDay()]}</span>
+                  <span class="avail-day__date${red ? " avail-day__date--red" : ""}">${dateNum}</span>
+                  ${hoursHtml ? `<span class="avail-day__hours">${hoursHtml}</span>` : ""}
+                </div>
+                <button type="button" class="avail-day__edit-btn${isEditing ? " is-on avail-day__edit-btn--save" : ""}"
+                  data-action="toggle-avail-day-edit" data-date="${escapeHtml(dateISO)}"
+                  aria-expanded="${isEditing ? "true" : "false"}"
+                  aria-label="${isEditing ? "Zapisz" : "Edytuj"}"
+                  title="${isEditing ? "Zapisz" : "Edytuj"}">
+                  ${
+                    isEditing
+                      ? `<span class="avail-day__edit-label">Zapisz</span>`
+                      : `<span class="avail-day__toggle-icon avail-day__toggle-icon--edit" aria-hidden="true"></span>`
+                  }
+                </button>
+              </div>
+            </div>
           </div>
           ${editor}
         </div>`;
@@ -6587,6 +6603,10 @@
         event.preventDefault();
         clearAvailDay(d.date);
         break;
+      case "swipe-clear-avail-day":
+        event.preventDefault();
+        clearAvailDay(d.date, { closeEdit: true });
+        break;
       case "confirm-booking": confirmBooking(); break;
       case "accept-proposal": acceptProposal(d.bookingId); break;
       case "reject-proposal": rejectProposal(d.bookingId); break;
@@ -7547,6 +7567,149 @@
     );
   }
 
+  /**
+   * Swipe-to-delete na wierszu dnia (odsłoń kosz w lewo; dalej = usuń dostępności).
+   */
+  function bindAvailDaySwipe() {
+    if (bindAvailDaySwipe.done) return;
+    bindAvailDaySwipe.done = true;
+
+    const REVEAL = 72;
+    const DELETE_RATIO = 0.42;
+    let drag = null;
+
+    function frontOf(swipe) {
+      return swipe && swipe.querySelector('[data-role="avail-day-swipe-front"]');
+    }
+
+    function setOffset(swipe, x, animate) {
+      const front = frontOf(swipe);
+      if (!front) return;
+      front.style.transition = animate ? "transform 0.22s ease" : "none";
+      front.style.transform = x ? "translate3d(" + x + "px,0,0)" : "";
+      swipe.classList.toggle("is-open", x <= -REVEAL + 1);
+      swipe.classList.toggle("is-dragging", !animate && !!drag);
+    }
+
+    function closeAll(except) {
+      document.querySelectorAll('[data-role="avail-day-swipe"].is-open, [data-role="avail-day-swipe"].is-dragging').forEach(function (el) {
+        if (except && el === except) return;
+        setOffset(el, 0, true);
+      });
+    }
+
+    function finishDelete(swipe) {
+      const dateISO = swipe.getAttribute("data-date");
+      const front = frontOf(swipe);
+      if (!dateISO || !front) return;
+      swipe.classList.add("is-deleting");
+      front.style.transition = "transform 0.2s ease";
+      front.style.transform = "translate3d(-110%,0,0)";
+      window.setTimeout(function () {
+        clearAvailDay(dateISO, { closeEdit: true });
+      }, 180);
+    }
+
+    document.addEventListener(
+      "pointerdown",
+      function (event) {
+        if (event.pointerType === "mouse" && event.button !== 0) return;
+        const swipe = event.target.closest('[data-role="avail-day-swipe"]');
+        if (!swipe || swipe.classList.contains("avail-day__swipe--locked")) return;
+        if (event.target.closest(".avail-day__swipe-action")) return;
+        if (event.target.closest(".avail-day__edit-btn")) return;
+        closeAll(swipe);
+        const front = frontOf(swipe);
+        if (!front) return;
+        const opened = swipe.classList.contains("is-open");
+        drag = {
+          swipe: swipe,
+          front: front,
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          base: opened ? -REVEAL : 0,
+          dx: 0,
+          locked: false,
+          moved: false,
+        };
+        try {
+          swipe.setPointerCapture(event.pointerId);
+        } catch (err) {
+          /* ignore */
+        }
+      },
+      true
+    );
+
+    document.addEventListener(
+      "pointermove",
+      function (event) {
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        const dx = event.clientX - drag.startX;
+        const dy = event.clientY - drag.startY;
+        if (!drag.locked) {
+          if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+          if (Math.abs(dy) > Math.abs(dx)) {
+            drag = null;
+            return;
+          }
+          drag.locked = true;
+        }
+        event.preventDefault();
+        drag.moved = true;
+        let x = drag.base + dx;
+        if (x > 0) x = x * 0.2;
+        const min = -Math.max(REVEAL * 2.2, drag.swipe.offsetWidth * DELETE_RATIO);
+        if (x < min) x = min + (x - min) * 0.15;
+        drag.dx = x;
+        setOffset(drag.swipe, x, false);
+        drag.swipe.classList.toggle("is-armed", x <= -drag.swipe.offsetWidth * DELETE_RATIO);
+      },
+      { passive: false, capture: true }
+    );
+
+    function endDrag(event) {
+      if (!drag || (event && event.pointerId !== drag.pointerId)) return;
+      const swipe = drag.swipe;
+      const x = drag.dx;
+      const width = Math.max(swipe.offsetWidth, 1);
+      const moved = drag.moved;
+      drag = null;
+      swipe.classList.remove("is-armed", "is-dragging");
+      if (!moved) {
+        setOffset(swipe, swipe.classList.contains("is-open") ? -REVEAL : 0, true);
+        return;
+      }
+      if (x <= -width * DELETE_RATIO) {
+        finishDelete(swipe);
+        return;
+      }
+      if (x <= -REVEAL * 0.45) {
+        setOffset(swipe, -REVEAL, true);
+        return;
+      }
+      setOffset(swipe, 0, true);
+    }
+
+    document.addEventListener("pointerup", endDrag, true);
+    document.addEventListener("pointercancel", endDrag, true);
+
+    document.addEventListener(
+      "click",
+      function (event) {
+        const swipe = event.target.closest('[data-role="avail-day-swipe"]');
+        if (!swipe) {
+          closeAll();
+          return;
+        }
+        if (event.target.closest(".avail-day__swipe-action")) return;
+        if (!swipe.classList.contains("is-open")) closeAll(swipe);
+      },
+      true
+    );
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     bindFilterScroll();
     bindProvCalEventDrag();
@@ -7555,6 +7718,7 @@
     bindProvCalMonthSwipe();
     bindProvCalTimeLabels();
     bindAvailWeekScrollBridge();
+    bindAvailDaySwipe();
     loadState();
     renderAll();
     showPage("home");

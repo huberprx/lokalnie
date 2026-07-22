@@ -7534,6 +7534,71 @@ body.prov-cal-dragging * {
   opacity: 1;
 }
 
+/* Swipe-to-delete: wiersz dnia → czerwony kosz po prawej */
+.avail-day__swipe {
+  position: relative;
+  overflow: hidden;
+  touch-action: pan-y;
+  border-radius: 0;
+}
+
+.avail-day__swipe--locked {
+  touch-action: auto;
+}
+
+.avail-day__swipe-action {
+  appearance: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 4.5rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--danger, #e25555);
+  color: #fff;
+  cursor: pointer;
+}
+
+.avail-day__swipe.is-armed .avail-day__swipe-action {
+  background: color-mix(in srgb, var(--danger, #e25555) 88%, #000);
+}
+
+.avail-day__swipe-trash {
+  display: block;
+  width: 1.25rem;
+  height: 1.25rem;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='3 6 5 6 21 6'/%3E%3Cpath d='M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'/%3E%3Cpath d='M10 11v6M14 11v6'/%3E%3Cpath d='M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='3 6 5 6 21 6'/%3E%3Cpath d='M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'/%3E%3Cpath d='M10 11v6M14 11v6'/%3E%3Cpath d='M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.avail-day__swipe-front {
+  position: relative;
+  z-index: 1;
+  background: var(--surface, #fff);
+  will-change: transform;
+}
+
+.app-screen--avail .avail-day__swipe-front {
+  background: var(--surface, #fff);
+}
+
+.avail-day__swipe.is-deleting {
+  pointer-events: none;
+}
+
+.avail-day__swipe--locked .avail-day__swipe-action {
+  visibility: hidden;
+}
+
 .avail-day__sep {
   display: flex;
   align-items: center;
