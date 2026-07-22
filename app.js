@@ -4692,6 +4692,8 @@
     );
   }
 
+  const AVAIL_MAX_BLOCKS_PER_DAY = 3;
+
   const AVAIL_REPEAT_OPTIONS = [
     { id: "none", label: "Nie powtarzaj" },
     { id: "weekly", label: "Co tydzień" },
@@ -4755,6 +4757,25 @@
     return window.AppState.availEditDrafts[dateISO];
   }
 
+  /** Tylko lista dni — bez ruszania kalendarza miesiąca (żadnego „odświeżenia” / animacji). */
+  function refreshAvailListOnly() {
+    const p = myProvider();
+    const listEl = document.querySelector('[data-role="avail-list"]');
+    if (!p || !listEl) {
+      renderAll();
+      return;
+    }
+    const weekStart =
+      window.AppState.availWeekStart || mondayISOFrom(ensureAvailFocusDate() || demoTodayISO());
+    const listHtml = renderAvailWeekListHtml(
+      p,
+      weekStart,
+      collectAvailByDate(p),
+      window.AppState.availEditDate || null
+    );
+    swapAvailWeekLists(listHtml, 0);
+  }
+
   /** Otwórz edycję dnia na liście (pozostałe wiersze zostają zwinięte). */
   function openAvailDayEdit(dateISO) {
     if (!dateISO) return;
@@ -4764,17 +4785,20 @@
       draft.blocks.push(defaultAvailBlock(p));
     }
     window.AppState.availEditDate = dateISO;
-    window.AppState.availFocusDate = dateISO;
+    // Nie ruszaj availFocusDate — inaczej kalendarz „mruga” animacją tygodnia.
     saveState();
-    renderAll();
+    refreshAvailListOnly();
   }
 
   function toggleAvailDayEdit(dateISO) {
     if (!dateISO) return;
     if (window.AppState.availEditDate === dateISO) {
+      // Przycisk w stanie otwartym = Zapisz i zamknij.
+      saveAvailDayEdit(dateISO, { quiet: true });
       window.AppState.availEditDate = null;
       saveState();
-      renderAll();
+      refreshAvailListOnly();
+      patchAvailMonthBusyDots();
       return;
     }
     openAvailDayEdit(dateISO);
@@ -4840,7 +4864,8 @@
   }
 
   function writeAvailDayBlocks(dateISO, blocks) {
-    setAvailDayBlocks(dateISO, blocks);
+    const capped = Array.isArray(blocks) ? blocks.slice(0, AVAIL_MAX_BLOCKS_PER_DAY) : [];
+    setAvailDayBlocks(dateISO, capped);
     const p = myProvider();
     window.AppState.availEditDraft = window.AppState.availEditDrafts
       ? window.AppState.availEditDrafts[dateISO]
@@ -4963,10 +4988,11 @@
     window.AppState.availEditDate = dateISO;
     const draft = syncAvailDraftFromForm(dateISO) || ensureAvailDraft(dateISO);
     if (!draft) return;
+    if ((draft.blocks || []).length >= AVAIL_MAX_BLOCKS_PER_DAY) return;
     draft.blocks.push(defaultAvailBlock(p));
     persistAvailDraft(dateISO);
     saveState();
-    renderAll();
+    refreshAvailListOnly();
   }
 
   function removeAvailEditBlock(dateISO, index) {
@@ -4977,7 +5003,7 @@
     draft.blocks.splice(i, 1);
     persistAvailDraft(dateISO);
     saveState();
-    renderAll();
+    refreshAvailListOnly();
   }
 
   function saveAvailDayEdit(dateISO, options) {
@@ -4995,24 +5021,14 @@
     saveState();
     const scroller = document.querySelector('[data-role="avail-body"]');
     const scrollTop = scroller ? scroller.scrollTop : 0;
-    renderAll();
-    if (opts.quiet && scrollTop) {
+    refreshAvailListOnly();
+    // Kropki w kalendarzu — cicha aktualizacja bez animacji paska tygodnia.
+    patchAvailMonthBusyDots();
+    if (scrollTop) {
       requestAnimationFrame(function () {
         const again = document.querySelector('[data-role="avail-body"]');
         if (again) again.scrollTop = scrollTop;
       });
-    }
-    if (!opts.quiet) {
-      const hasRepeat = blocks.some(function (b) {
-        return normalizeAvailRepeat(b) !== "none";
-      });
-      showToast(
-        !blocks.length
-          ? "Dzień oznaczony jako zamknięty."
-          : hasRepeat
-            ? "Dostępność zapisana i powtórzona w kolejnych tygodniach."
-            : "Dostępność zapisana."
-      );
     }
   }
 
@@ -5030,8 +5046,33 @@
       : null;
     window.AppState.availEditDate = dateISO;
     saveState();
-    renderAll();
+    refreshAvailListOnly();
+    patchAvailMonthBusyDots();
     showToast("Usunięto dostępność w tym dniu.");
+  }
+
+  /** Odśwież kropki dostępności w siatce miesiąca bez animacji / przebudowy panelu. */
+  function patchAvailMonthBusyDots() {
+    const p = myProvider();
+    if (!p) return;
+    const availByDate = collectAvailByDate(p);
+    document.querySelectorAll('[data-role="avail-month-grid"]').forEach(function (grid) {
+      if (grid.offsetWidth < 8) return;
+      grid.querySelectorAll(".gcal-month__day[data-date]").forEach(function (btn) {
+        const iso = btn.getAttribute("data-date");
+        const blocks = (availByDate && availByDate[iso]) || [];
+        const hasAvail = blocks.length > 0;
+        btn.classList.toggle("gcal-month__day--busy", hasAvail);
+        const tones = availDayToneSlots(p, blocks);
+        const dots = btn.querySelector('[aria-hidden="true"].gcal-month__day-dots') || btn.querySelector(".gcal-month__day-dots");
+        if (!dots) return;
+        dots.innerHTML = tones
+          .map(function (tone) {
+            return `<span class="gcal-month__day-dot${tone ? " is-on " + tone : ""}" aria-hidden="true"></span>`;
+          })
+          .join("");
+      });
+    });
   }
 
   function closeAvailLocMenus(except) {
@@ -5057,11 +5098,20 @@
     const labelEl = pick && pick.querySelector('[data-role="avail-loc-label"]');
     const tone = locationToneClass(p, locationId);
     if (input) input.value = locationId;
-    if (labelEl) labelEl.textContent = locationLabel(p, locationId) || "—";
-    const dot = pick && pick.querySelector('[data-role="avail-loc-dot"]');
-    if (dot) dot.className = "avail-edit__loc-dot " + tone;
+    if (labelEl) {
+      const nextLabel = locationLabel(p, locationId) || "wybierz lokalizację";
+      labelEl.textContent = nextLabel;
+      labelEl.classList.toggle("avail-loc-pick__label--placeholder", !locationId);
+    }
+    const toneDot = pick && pick.querySelector('[data-role="avail-loc-tone-dot"]');
+    if (toneDot) {
+      toneDot.className = "avail-edit__loc-dot " + tone + (locationId ? "" : " is-hidden");
+      toneDot.hidden = !locationId;
+    }
     const times = row.querySelector('[data-role="avail-edit-times"]');
-    if (times) times.className = "avail-edit__group avail-edit__group--times " + tone;
+    if (times) {
+      times.className = times.className.replace(/\bloc-tone-\d+\b/g, "").trim() + " " + tone;
+    }
     pick &&
       pick.querySelectorAll("[data-action=pick-avail-loc]").forEach(function (opt) {
         const on = opt.getAttribute("data-location-id") === locationId;
@@ -5072,23 +5122,36 @@
     saveAvailDayEdit(dateISO, { quiet: true });
   }
 
+  /** Edytor dnia w stylu Calendly: [od]–[do] ×  +  oraz miejsce / powtarzaj. */
   function renderAvailDayEditor(p, dateISO, draft) {
     const locs = p.locations || [];
     const blockList = draft.blocks || [];
-    const rows = blockList
+    const dateAttr = escapeHtml(dateISO);
+
+    if (!blockList.length) {
+      return `
+      <form class="avail-edit avail-edit--day" data-role="avail-edit-form" data-date="${dateAttr}" onsubmit="return false;">
+        <div class="avail-edit__unavailable">
+          <span class="avail-edit__unavailable-label">Niedostępne</span>
+          <button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--add" data-action="add-avail-block" data-date="${dateAttr}" aria-label="Dodaj godziny dostępności" title="Dodaj">
+            <span aria-hidden="true">+</span>
+          </button>
+        </div>
+      </form>`;
+    }
+
+    const slots = blockList
       .map(function (b, i) {
         const locTone = locationToneClass(p, b.locationId);
-        const locLabel = locationLabel(p, b.locationId) || "—";
+        const hasLoc = !!(b.locationId && locationLabel(p, b.locationId));
+        const locLabel = hasLoc ? locationLabel(p, b.locationId) : "wybierz lokalizację";
         const isLast = i === blockList.length - 1;
-        const locMenu = (locs.length
-          ? locs
-          : [{ id: b.locationId || "", label: locLabel }]
-        )
+        const locMenu = (locs.length ? locs : [{ id: b.locationId || "", label: locLabel }])
           .map(function (l) {
             const tone = locationToneClass(p, l.id);
             const on = l.id === b.locationId;
-            return `<button type="button" class="avail-loc-pick__opt${on ? " is-selected" : ""}" role="option"
-              data-action="pick-avail-loc" data-date="${escapeHtml(dateISO)}" data-index="${i}"
+            return `<button type="button" class="avail-loc-pick__opt ${tone}${on ? " is-selected" : ""}" role="option"
+              data-action="pick-avail-loc" data-date="${dateAttr}" data-index="${i}"
               data-location-id="${escapeHtml(l.id)}" aria-selected="${on ? "true" : "false"}">
               <span class="avail-edit__loc-dot ${tone}" aria-hidden="true"></span>
               <span class="avail-loc-pick__opt-label">${escapeHtml(l.label)}</span>
@@ -5096,39 +5159,54 @@
           })
           .join("");
         return `
-        <div class="avail-edit__row" data-avail-block data-index="${i}">
-          <div class="avail-edit__group avail-edit__group--times ${locTone}" data-role="avail-edit-times">
-            <span class="avail-edit__clock" aria-hidden="true"></span>
-            <label class="avail-edit__line">
-              <span class="avail-edit__key">Od</span>
-              <span class="avail-edit__val">
-                <input class="avail-edit__pill" type="time" name="from" value="${escapeHtml(b.from)}" required step="300" />
+        <div class="avail-edit__slot" data-avail-block data-index="${i}">
+          <div class="avail-edit__slot-row">
+            <div class="avail-edit__slot-times ${locTone}" data-role="avail-edit-times">
+              <span class="avail-edit__time-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3.2 1.8" />
+                </svg>
               </span>
-            </label>
-            <label class="avail-edit__line">
-              <span class="avail-edit__key">Do</span>
-              <span class="avail-edit__val">
-                <input class="avail-edit__pill" type="time" name="to" value="${escapeHtml(b.to)}" required step="300" />
-              </span>
-            </label>
-          </div>
-          <div class="avail-edit__group">
-            <div class="avail-edit__line">
-              <span class="avail-edit__pin" aria-hidden="true"></span>
-              <span class="avail-edit__key">Miejsce</span>
-              <span class="avail-edit__val avail-edit__val--menu avail-edit__val--loc">
-                <div class="avail-loc-pick" data-role="avail-loc-pick">
-                  <input type="hidden" name="locationId" value="${escapeHtml(b.locationId || "")}" />
-                  <button type="button" class="avail-loc-pick__btn" data-action="toggle-avail-loc"
-                    aria-haspopup="listbox" aria-expanded="false" aria-label="Wybierz miejsce">
-                    <span class="avail-edit__loc-dot ${locTone}" data-role="avail-loc-dot" aria-hidden="true"></span>
-                    <span class="avail-loc-pick__label" data-role="avail-loc-label">${escapeHtml(locLabel)}</span>
-                  </button>
-                  <div class="avail-loc-pick__menu" data-role="avail-loc-menu" role="listbox" hidden>${locMenu}</div>
-                </div>
-              </span>
+              <input class="avail-edit__time" type="time" name="from" value="${escapeHtml(b.from)}" required step="300" aria-label="Od" />
+              <span class="avail-edit__dash" aria-hidden="true">–</span>
+              <input class="avail-edit__time" type="time" name="to" value="${escapeHtml(b.to)}" required step="300" aria-label="Do" />
             </div>
-            <label class="avail-edit__line">
+            <button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--remove" data-action="remove-avail-block" data-date="${dateAttr}" data-index="${i}" aria-label="Usuń godziny" title="Usuń">
+              <span aria-hidden="true">×</span>
+            </button>
+            ${
+              isLast && blockList.length < AVAIL_MAX_BLOCKS_PER_DAY
+                ? `<button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--add" data-action="add-avail-block" data-date="${dateAttr}" aria-label="Dodaj godziny dostępności" title="Dodaj">
+              <span aria-hidden="true">+</span>
+            </button>`
+                : `<span class="avail-edit__icon-spacer" aria-hidden="true"></span>`
+            }
+          </div>
+          <div class="avail-edit__slot-loc">
+            <div class="avail-loc-pick avail-loc-pick--compact" data-role="avail-loc-pick">
+              <input type="hidden" name="locationId" value="${escapeHtml(b.locationId || "")}" />
+              <button type="button" class="avail-loc-pick__btn" data-action="toggle-avail-loc"
+                aria-haspopup="listbox" aria-expanded="false" aria-label="Wybierz lokalizację">
+                <span class="avail-edit__loc-lead" aria-hidden="true">
+                  <span class="avail-edit__loc-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 21s-6.5-5.4-6.5-10.2A6.5 6.5 0 0 1 12 4.3a6.5 6.5 0 0 1 6.5 6.5C18.5 15.6 12 21 12 21z" />
+                      <circle cx="12" cy="10.5" r="2.2" />
+                    </svg>
+                  </span>
+                </span>
+                <span class="avail-edit__loc-content">
+                  <span class="avail-edit__loc-dot ${locTone}${hasLoc ? "" : " is-hidden"}" data-role="avail-loc-tone-dot" aria-hidden="true"${hasLoc ? "" : " hidden"}></span>
+                  <span class="avail-loc-pick__label${hasLoc ? "" : " avail-loc-pick__label--placeholder"}" data-role="avail-loc-label">${escapeHtml(locLabel)}</span>
+                </span>
+                <span class="avail-loc-pick__chevron" aria-hidden="true"></span>
+              </button>
+              <div class="avail-loc-pick__menu" data-role="avail-loc-menu" role="listbox" hidden>${locMenu}</div>
+            </div>
+          </div>
+          <div class="avail-edit__slot-meta">
+            <label class="avail-edit__repeat">
               <span class="avail-edit__repeat-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M21 12a9 9 0 0 0-15.4-6.4" />
@@ -5137,41 +5215,21 @@
                   <path d="M21 19.5v-5h-5" />
                 </svg>
               </span>
-              <span class="avail-edit__key">Powtarzaj</span>
-              <span class="avail-edit__val avail-edit__val--menu">
-                <select name="repeat">
-                  ${AVAIL_REPEAT_OPTIONS.map(function (opt) {
-                    const selected = normalizeAvailRepeat(b) === opt.id ? " selected" : "";
-                    return `<option value="${escapeHtml(opt.id)}"${selected}>${escapeHtml(opt.label)}</option>`;
-                  }).join("")}
-                </select>
-              </span>
+              <select name="repeat" aria-label="Powtarzaj">
+                ${AVAIL_REPEAT_OPTIONS.map(function (opt) {
+                  const selected = normalizeAvailRepeat(b) === opt.id ? " selected" : "";
+                  return `<option value="${escapeHtml(opt.id)}"${selected}>${escapeHtml(opt.label)}</option>`;
+                }).join("")}
+              </select>
             </label>
-            <div class="avail-edit__footer">
-              <div class="avail-edit__footer-row">
-                <button type="button" class="avail-edit__remove avail-edit__remove--in-group" data-action="remove-avail-block" data-date="${escapeHtml(
-                  dateISO
-                )}" data-index="${i}" aria-label="Usuń blok">Usuń</button>
-                <button type="button" class="avail-edit__save avail-edit__save--in-group" data-action="save-avail-day" data-date="${escapeHtml(
-                  dateISO
-                )}">Zapisz</button>
-              </div>
-              ${
-                isLast
-                  ? `<button type="button" class="avail-edit__add-hours" data-action="add-avail-block" data-date="${escapeHtml(
-                      dateISO
-                    )}">Dodaj godziny dostępności</button>`
-                  : ""
-              }
-            </div>
           </div>
         </div>`;
       })
       .join("");
 
     return `
-      <form class="avail-edit" data-role="avail-edit-form" data-date="${escapeHtml(dateISO)}" onsubmit="return false;">
-        ${rows}
+      <form class="avail-edit avail-edit--day" data-role="avail-edit-form" data-date="${dateAttr}" onsubmit="return false;">
+        <div class="avail-edit__slots">${slots}</div>
       </form>`;
   }
 
@@ -5188,43 +5246,54 @@
     return availWeekDays(weekStart)
       .map(function (dateISO) {
         const dt = new Date(dateISO + "T12:00:00");
-        const blocks = (availByDate && availByDate[dateISO]) || [];
-        const red = isSunday(dateISO);
-        const has = blocks.length > 0;
         const isEditing = editDate === dateISO;
         const draft = isEditing ? ensureAvailDraft(dateISO) : null;
+        // Przy otwartej edycji nagłówek pokazuje draft (aktualne godziny), nie stary zapis.
+        const blocks =
+          isEditing && draft && Array.isArray(draft.blocks)
+            ? draft.blocks
+            : (availByDate && availByDate[dateISO]) || [];
+        const red = isSunday(dateISO);
+        const has = blocks.length > 0;
         const editor =
           isEditing && draft
             ? `<div class="avail-day avail-day--editing">${renderAvailDayEditor(p, dateISO, draft)}</div>`
             : "";
         const dateNum = pad(dt.getDate()) + "." + pad(dt.getMonth() + 1);
-        const hoursHtml = has
-          ? blocks
-              .map(function (b) {
-                const tone = locationToneClass(p, b.locationId);
-                return `<span class="avail-day__hours-row">
+        // Przy otwartej edycji godziny tylko w formularzu — w nagłówku po zamknięciu panelu.
+        const hoursHtml = isEditing
+          ? ""
+          : has
+            ? blocks
+                .map(function (b) {
+                  const tone = locationToneClass(p, b.locationId);
+                  return `<span class="avail-day__hours-row">
                   <span class="avail-day__loc-dot ${tone}" aria-hidden="true"></span>
-                  <span class="avail-day__from">${escapeHtml(b.from)}</span>
+                  <span class="avail-day__from">${escapeHtml(b.from || "—")}</span>
                   <span class="avail-day__hours-sep" aria-hidden="true">–</span>
-                  <span class="avail-day__to">${escapeHtml(b.to)}</span>
+                  <span class="avail-day__to">${escapeHtml(b.to || "—")}</span>
                 </span>`;
-              })
-              .join("")
-          : `<span class="avail-day__hours-row avail-day__hours-row--empty">—</span>`;
+                })
+                .join("")
+            : `<span class="avail-day__hours-row avail-day__hours-row--empty">—</span>`;
         return `
         <div class="avail-day-group${has ? "" : " avail-day-group--closed"}${isEditing ? " avail-day-group--open" : ""}" data-date="${escapeHtml(dateISO)}" id="avail-day-${escapeHtml(dateISO)}">
           <div class="avail-day__sep">
             <div class="avail-day__sep-main">
               <span class="avail-day__dow${red ? " avail-day__dow--red" : ""}">${AVAIL_DOW_PRINT[dt.getDay()]}</span>
               <span class="avail-day__date${red ? " avail-day__date--red" : ""}">${dateNum}</span>
-              <span class="avail-day__hours">${hoursHtml}</span>
+              ${hoursHtml ? `<span class="avail-day__hours">${hoursHtml}</span>` : ""}
             </div>
-            <button type="button" class="avail-day__edit-btn${isEditing ? " is-on" : ""}"
+            <button type="button" class="avail-day__edit-btn${isEditing ? " is-on avail-day__edit-btn--save" : ""}"
               data-action="toggle-avail-day-edit" data-date="${escapeHtml(dateISO)}"
               aria-expanded="${isEditing ? "true" : "false"}"
-              aria-label="${isEditing ? "Zwiń" : "Rozwiń"}"
-              title="${isEditing ? "Zwiń" : "Rozwiń"}">
-              <span class="avail-day__toggle-icon" aria-hidden="true"></span>
+              aria-label="${isEditing ? "Zapisz" : "Edytuj"}"
+              title="${isEditing ? "Zapisz" : "Edytuj"}">
+              ${
+                isEditing
+                  ? `<span class="avail-day__edit-label">Zapisz</span>`
+                  : `<span class="avail-day__toggle-icon avail-day__toggle-icon--edit" aria-hidden="true"></span>`
+              }
             </button>
           </div>
           ${editor}

@@ -5349,12 +5349,26 @@ body.avatar-preview-open {
   width: auto;
   height: auto;
   min-height: 2rem;
-  padding: 0.3rem 0.5rem;
-  border-radius: 10px;
+  padding: 0.3rem 0.15rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   font-size: 0.95rem;
   font-weight: 650;
   letter-spacing: -0.01em;
-  color: var(--text);
+  color: rgba(28, 35, 51, 0.42);
+}
+
+.prov-cal__tool--month-label:hover {
+  background: transparent;
+  color: rgba(28, 35, 51, 0.72);
+}
+
+/* Jak nieaktywna ikona Kalendarza w bottom-nav: bez tła i bez obramowania. */
+.prov-cal__tool--month-label.is-on,
+.prov-cal__tool--month-label.is-on:hover {
+  background: transparent;
+  color: rgba(28, 35, 51, 0.42);
 }
 
 .prov-cal__month-name {
@@ -7555,8 +7569,22 @@ body.prov-cal-dragging * {
   display: flex;
   flex-direction: column;
   justify-content: center;
+  align-items: flex-start;
   gap: 0.1rem;
   min-width: 0;
+}
+
+/* Nagłówek dnia zawsze pokazuje godziny — także przy otwartym edytorze */
+.avail-day-group--open .avail-day__sep-main .avail-day__hours,
+.avail-day-group:has(.avail-day--editing) .avail-day__sep-main .avail-day__hours {
+  display: flex;
+  visibility: visible;
+  opacity: 1;
+}
+
+.avail-day-group--open .avail-day__sep-main .avail-day__hours-row,
+.avail-day-group:has(.avail-day--editing) .avail-day__sep-main .avail-day__hours-row {
+  color: var(--text);
 }
 
 .avail-day__hours-row {
@@ -7606,18 +7634,17 @@ body.prov-cal-dragging * {
   height: 2rem;
   margin: 0;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 8px;
-  background: var(--surface);
+  background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  transition: color 0.15s ease, background 0.15s ease;
 }
 
 .avail-day__edit-btn:hover {
   color: var(--accent-provider);
-  border-color: color-mix(in srgb, var(--accent-provider) 40%, var(--border));
-  background: color-mix(in srgb, var(--accent-provider) 8%, var(--surface));
+  background: transparent;
 }
 
 .avail-day__edit-btn:active {
@@ -7626,23 +7653,38 @@ body.prov-cal-dragging * {
 
 .avail-day__edit-btn.is-on {
   color: #fff;
-  border-color: var(--accent-provider);
+  border: 0;
   background: var(--accent-provider);
+}
+
+.avail-day__edit-btn--save {
+  width: auto;
+  min-width: 2rem;
+  padding: 0 0.55rem;
+  border-radius: 8px;
+}
+
+.avail-day__edit-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .avail-day__toggle-icon {
   display: block;
-  width: 0.75rem;
-  height: 0.75rem;
+  width: 1.05rem;
+  height: 1.05rem;
   background: currentColor;
   opacity: 0.9;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") center / contain no-repeat;
-  transition: transform 0.15s ease;
 }
 
-.avail-day__edit-btn.is-on .avail-day__toggle-icon {
-  transform: rotate(180deg);
+.avail-day__toggle-icon--edit {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20h9'/%3E%3Cpath d='M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20h9'/%3E%3Cpath d='M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z'/%3E%3C/svg%3E")
+    center / contain no-repeat;
 }
 
 .avail-day__dow {
@@ -7682,6 +7724,17 @@ body.prov-cal-dragging * {
   border-color: color-mix(in srgb, var(--accent-provider) 45%, var(--border));
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.06);
   background: var(--surface);
+}
+
+/* Edytor Calendly: pełna szerokość ekranu, bez zaokrągleń */
+.avail-day--editing:has(.avail-edit--day) {
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  margin-left: calc(-1 * var(--app-pad-x));
+  margin-right: calc(-1 * var(--app-pad-x));
+  box-shadow: none;
+  background: var(--surface-2);
 }
 
 .avail-day__summary {
@@ -7749,13 +7802,7 @@ body.prov-cal-dragging * {
   margin-top: -0.15rem;
 }
 
-.avail-day__hours {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.45rem;
-}
-
+/* Stare bloki godzin (legacy) — nie nadpisują nagłówka listy */
 .avail-day__hours-block {
   display: flex;
   flex-direction: column;
@@ -7765,11 +7812,7 @@ body.prov-cal-dragging * {
   --loc: var(--accent-provider);
 }
 
-.avail-day__hours-row {
-  display: flex;
-  flex-direction: row;
-  align-items: baseline;
-  gap: 0.28rem;
+.avail-day__hours-block .avail-day__hours-row {
   white-space: nowrap;
 }
 
@@ -7847,6 +7890,423 @@ body.prov-cal-dragging * {
 
 .avail-day--editing .avail-edit {
   border-top: none;
+}
+
+/* —— Edytor dnia (Calendly-style) —— */
+.avail-edit--day {
+  gap: 0.65rem;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0.55rem calc(var(--app-pad-x) + 0.25rem) 0.7rem;
+  border-radius: 0;
+  box-sizing: border-box;
+  background: var(--surface-2);
+}
+
+.avail-edit__slots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.avail-edit__slot {
+  --avail-lead: 1.25rem; /* stała kolumna ikon wiodących */
+  --avail-gap: 0.65rem; /* odstęp ikona → treść */
+  --avail-trail: 2rem; /* × / + */
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.avail-edit__slot + .avail-edit__slot {
+  padding-top: 0.7rem;
+  border-top: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
+}
+
+.avail-edit__slot-row {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
+  min-height: 2.25rem;
+}
+
+.avail-edit__slot-times {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.avail-edit__time-icon {
+  flex: 0 0 var(--avail-lead);
+  width: var(--avail-lead);
+  height: var(--avail-lead);
+  margin-right: var(--avail-gap);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
+.avail-edit__time-icon svg {
+  width: 1.05rem;
+  height: 1.05rem;
+  display: block;
+}
+
+.avail-edit__time {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 4.6rem;
+  width: 4.6rem;
+  min-width: 4.6rem;
+  max-width: 4.6rem;
+  margin: 0;
+  padding: 0.35rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.avail-edit__time:focus {
+  outline: none;
+  background: transparent;
+}
+
+.avail-edit__time::-webkit-calendar-picker-indicator {
+  display: none;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.avail-edit__time::-webkit-datetime-edit,
+.avail-edit__time::-webkit-datetime-edit-fields-wrapper,
+.avail-edit__time::-webkit-datetime-edit-hour-field,
+.avail-edit__time::-webkit-datetime-edit-minute-field,
+.avail-edit__time::-webkit-datetime-edit-ampm-field {
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+  padding: 0;
+}
+
+.avail-edit__dash {
+  flex: 0 0 auto;
+  margin: 0 0.2rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.avail-edit__icon-btn {
+  appearance: none;
+  flex: 0 0 var(--avail-trail, 2rem);
+  width: var(--avail-trail, 2rem);
+  height: var(--avail-trail, 2rem);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 1.55rem;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.avail-edit__icon-btn--remove {
+  font-size: 1.65rem;
+  font-weight: 400;
+}
+
+.avail-edit__icon-btn:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+}
+
+.avail-edit__icon-btn--remove:hover {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
+.avail-edit__icon-btn--add {
+  color: var(--accent-provider);
+  font-weight: 500;
+  font-size: 1.75rem;
+}
+
+.avail-edit__icon-btn--add:hover {
+  background: color-mix(in srgb, var(--accent-provider) 12%, transparent);
+  color: var(--accent-provider);
+}
+
+.avail-edit__icon-spacer {
+  flex: 0 0 var(--avail-trail, 2rem);
+  width: var(--avail-trail, 2rem);
+  height: var(--avail-trail, 2rem);
+}
+
+.avail-edit__slot-loc {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.25rem;
+}
+
+.avail-edit__slot-meta {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  width: 100%;
+  min-height: 2.25rem;
+  gap: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.avail-edit__loc-lead {
+  flex: 0 0 var(--avail-lead);
+  width: var(--avail-lead);
+  height: var(--avail-lead);
+  margin-right: var(--avail-gap);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.avail-edit__loc-icon {
+  width: 1.05rem;
+  height: 1.05rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
+.avail-edit__loc-icon svg {
+  width: 1.05rem;
+  height: 1.05rem;
+  display: block;
+}
+
+/* Kropka + nazwa startują jak 09:00 / „Co tydzień” (po kolumnie ikony). */
+.avail-edit__loc-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.avail-loc-pick--compact .avail-edit__loc-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.avail-loc-pick--compact .avail-edit__loc-dot.is-hidden,
+.avail-loc-pick--compact .avail-edit__loc-dot[hidden] {
+  display: none;
+}
+
+.avail-loc-pick--compact {
+  position: relative;
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.avail-loc-pick--compact .avail-loc-pick__btn {
+  justify-content: flex-start;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+  margin-left: 0;
+  min-height: 2.25rem;
+  padding: 0.25rem 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  gap: 0;
+  font-size: 0.9rem;
+  text-align: left;
+  text-align-last: left;
+  color: var(--text);
+}
+
+.avail-loc-pick--compact .avail-loc-pick__btn:hover {
+  background: transparent;
+}
+
+.avail-loc-pick--compact .avail-loc-pick__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.avail-loc-pick--compact .avail-edit__loc-content .avail-loc-pick__label {
+  flex: 1 1 auto;
+}
+
+.avail-loc-pick--compact .avail-loc-pick__label--placeholder {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Ikona select: chevron góra + dół (jak w natywnych listach). */
+.avail-loc-pick__chevron {
+  flex: 0 0 0.95rem;
+  width: 0.95rem;
+  height: 0.95rem;
+  margin-left: auto;
+  background: currentColor;
+  opacity: 0.45;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='7 9 12 4 17 9'/%3E%3Cpolyline points='7 15 12 20 17 15'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='7 9 12 4 17 9'/%3E%3Cpolyline points='7 15 12 20 17 15'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.avail-edit__repeat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0.25rem 0;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.avail-edit__repeat .avail-edit__repeat-icon {
+  flex: 0 0 var(--avail-lead);
+  width: var(--avail-lead);
+  height: var(--avail-lead);
+  margin-right: var(--avail-gap);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.85;
+  color: var(--text-muted);
+}
+
+.avail-edit__repeat .avail-edit__repeat-icon svg {
+  width: 1.05rem;
+  height: 1.05rem;
+  display: block;
+}
+
+.avail-edit__repeat select {
+  appearance: none;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0.15rem 1.25rem 0.15rem 0;
+  border: 0;
+  background: transparent
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='7 9 12 4 17 9'/%3E%3Cpolyline points='7 15 12 20 17 15'/%3E%3C/svg%3E")
+    right 0 center / 0.95rem no-repeat;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: left;
+  text-align-last: left;
+  cursor: pointer;
+  max-width: none;
+}
+
+.avail-edit__unavailable {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 2.4rem;
+  padding: 0.15rem 0;
+}
+
+.avail-edit__unavailable-label {
+  font-size: 0.95rem;
+  font-weight: 550;
+  color: var(--text-muted);
+}
+
+.avail-edit__bar {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  margin-top: 0.15rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+}
+
+.avail-edit__bar-btn {
+  appearance: none;
+  flex: 1 1 0;
+  min-height: 2.35rem;
+  margin: 0;
+  padding: 0.45rem 0.7rem;
+  border-radius: 11px;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.1s ease;
+}
+
+.avail-edit__bar-btn:active {
+  transform: scale(0.98);
+}
+
+.avail-edit__bar-btn--danger {
+  border: 1.5px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+  color: var(--danger);
+}
+
+.avail-edit__bar-btn--primary,
+.avail-edit__bar-btn--ghost {
+  border: 1.5px solid color-mix(in srgb, var(--border) 90%, var(--text-muted));
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.avail-edit__bar-btn--primary:hover,
+.avail-edit__bar-btn--ghost:hover {
+  background: color-mix(in srgb, var(--text-muted) 10%, var(--surface-2));
 }
 
 .avail-edit__row {
@@ -8165,7 +8625,7 @@ body.prov-cal-dragging * {
 }
 
 .avail-loc-pick__opt.is-selected {
-  background: color-mix(in srgb, var(--accent-provider) 10%, var(--surface));
+  background: var(--loc-soft, color-mix(in srgb, var(--accent-provider) 10%, var(--surface)));
 }
 
 .avail-loc-pick__opt-label {
