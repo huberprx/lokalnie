@@ -4715,6 +4715,27 @@
     return opt ? opt.label : "Nie powtarzaj";
   }
 
+  function normalizeAvailTimeValue(value) {
+    const parts = String(value || "09:00").split(":");
+    let h = Number(parts[0]);
+    let m = Number(parts[1]);
+    if (isNaN(h) || h < 0 || h > 23) h = 9;
+    if (isNaN(m) || m < 0 || m > 59) m = 0;
+    return pad(h) + ":" + pad(m);
+  }
+
+  /**
+   * Standardowy natywny picker godzin (koło na iOS, zegar na Androidzie).
+   * Kluczowe: BEZ <label> naokoło (label re-dispatchuje tap i zamyka picker na mobile)
+   * oraz BEZ appearance:none (to wyłącza natywny picker w WebKit).
+   */
+  function renderAvailTimeField(name, value, ariaLabel) {
+    const v = normalizeAvailTimeValue(value);
+    return `<span class="avail-edit__time-wrap" data-role="avail-time-field">
+      <input class="avail-edit__time" type="time" name="${escapeHtml(name)}" value="${escapeHtml(v)}" step="300" required aria-label="${escapeHtml(ariaLabel)}" />
+    </span>`;
+  }
+
   function defaultAvailBlock(p) {
     const locId = p && p.locations && p.locations[0] ? p.locations[0].id : "";
     return {
@@ -5006,6 +5027,198 @@
     refreshAvailListOnly();
   }
 
+  /** Czy dwa bloki należą do tej samej serii (godziny + lokalizacja + typ powtórzenia). */
+  function availBlockSameSeries(a, b) {
+    if (!a || !b) return false;
+    const repeat = normalizeAvailRepeat(a);
+    if (repeat === "none" || normalizeAvailRepeat(b) !== repeat) return false;
+    return (
+      a.from === b.from &&
+      a.to === b.to &&
+      String(a.locationId || "") === String(b.locationId || "")
+    );
+  }
+
+  /**
+   * Usuń całą serię powtórzeń bloku: ten dzień + kolejne wystąpienia
+   * (co tydzień / co 2 tygodnie) w oknie horyzontu.
+   */
+  function clearAvailRecurringSeries(dateISO, index) {
+    const p = myProvider();
+    if (!p || !dateISO) return;
+    syncAvailDraftFromForm(dateISO);
+    const draft = ensureAvailDraft(dateISO);
+    const i = Number(index);
+    if (!draft || !draft.blocks || isNaN(i) || i < 0 || i >= draft.blocks.length) return;
+
+    const template = Object.assign({}, draft.blocks[i]);
+    const repeat = normalizeAvailRepeat(template);
+    // Gdy kilka terminów ma identyczne godziny/lokalizację/powtarzanie,
+    // usuń tylko wybrany z nich, a nie wszystkie pasujące bloki.
+    const seriesOrdinal =
+      draft.blocks.slice(0, i + 1).filter(function (b) {
+        return availBlockSameSeries(b, template);
+      }).length - 1;
+    closeAvailSeriesCloud();
+
+    if (repeat === "none") {
+      removeAvailEditBlock(dateISO, i);
+      showToast("Ten blok się nie powtarza — nie ma serii do usunięcia.");
+      return;
+    }
+
+    const step = repeat === "biweekly" ? 14 : 7;
+    const horizonEnd = addDaysISO(dateISO, AVAIL_REPEAT_HORIZON_DAYS);
+    let target = dateISO;
+    while (target <= horizonEnd) {
+      const sourceBlocks =
+        target === dateISO
+          ? draft.blocks.map(function (b) {
+              return Object.assign({}, b);
+            })
+          : providerAvailBlocksForDate(target).map(function (b) {
+              return Object.assign({}, b);
+            });
+      let removeIndex = -1;
+      if (target === dateISO) {
+        removeIndex = i;
+      } else {
+        let matchOrdinal = -1;
+        sourceBlocks.some(function (b, blockIndex) {
+          if (!availBlockSameSeries(b, template)) return false;
+          matchOrdinal += 1;
+          if (matchOrdinal !== seriesOrdinal) return false;
+          removeIndex = blockIndex;
+          return true;
+        });
+      }
+      if (removeIndex !== -1) {
+        const next = sourceBlocks.slice();
+        next.splice(removeIndex, 1);
+        setAvailDayBlocks(target, next);
+      }
+      target = addDaysISO(target, step);
+    }
+
+    const left = providerAvailBlocksForDate(dateISO);
+    if (left.length) {
+      window.AppState.availEditDate = dateISO;
+      if (window.AppState.availEditDrafts) {
+        window.AppState.availEditDrafts[dateISO] = buildAvailDraftFromProvider(p, dateISO);
+        window.AppState.availEditDraft = window.AppState.availEditDrafts[dateISO];
+      }
+    } else {
+      window.AppState.availEditDate = null;
+      window.AppState.availEditDraft = null;
+      if (window.AppState.availEditDrafts) {
+        window.AppState.availEditDrafts[dateISO] = buildAvailDraftFromProvider(p, dateISO);
+      }
+    }
+
+    saveState();
+    refreshAvailListOnly();
+    patchAvailMonthBusyDots();
+    showToast(
+      repeat === "biweekly"
+        ? "Usunięto serię (co drugi tydzień)."
+        : "Usunięto serię (co tydzień)."
+    );
+  }
+
+  function ensureAvailSeriesCloud() {
+    let el = document.getElementById("avail-series-cloud");
+    if (el) return el;
+    el = document.createElement("div");
+    el.id = "avail-series-cloud";
+    el.className = "avail-series-cloud";
+    el.setAttribute("data-role", "avail-series-cloud");
+    el.hidden = true;
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function closeAvailSeriesCloud() {
+    const cloud = document.getElementById("avail-series-cloud");
+    if (cloud) {
+      cloud.hidden = true;
+      cloud.innerHTML = "";
+      cloud.style.visibility = "";
+      cloud.removeAttribute("data-for-date");
+      cloud.removeAttribute("data-for-index");
+    }
+  }
+
+  /** Klik × → chmurka: Usuń dzień / Usuń serię. */
+  function openAvailSeriesCloud(trigger) {
+    if (!trigger) return;
+    const dateISO = trigger.getAttribute("data-date");
+    const index = trigger.getAttribute("data-index");
+    if (!dateISO || index == null || index === "") return;
+
+    const cloud = ensureAvailSeriesCloud();
+    if (
+      !cloud.hidden &&
+      cloud.getAttribute("data-for-date") === dateISO &&
+      cloud.getAttribute("data-for-index") === String(index)
+    ) {
+      closeAvailSeriesCloud();
+      return;
+    }
+
+    syncAvailDraftFromForm(dateISO);
+    const draft = ensureAvailDraft(dateISO);
+    const block = draft && draft.blocks ? draft.blocks[Number(index)] : null;
+    const hasSeries = !!(block && normalizeAvailRepeat(block) !== "none");
+
+    cloud.setAttribute("data-for-date", dateISO);
+    cloud.setAttribute("data-for-index", String(index));
+    cloud.innerHTML =
+      `<button type="button" class="avail-series-cloud__btn" data-action="clear-avail-day" data-date="${escapeHtml(dateISO)}">
+        <span class="avail-series-cloud__icon" aria-hidden="true"></span>
+        <span>Usuń dzień</span>
+      </button>
+      <button type="button" class="avail-series-cloud__btn${hasSeries ? "" : " is-disabled"}" data-action="clear-avail-recurring-series" data-date="${escapeHtml(dateISO)}" data-index="${escapeHtml(String(index))}"${hasSeries ? "" : " disabled aria-disabled=\"true\""}>
+        <span class="avail-series-cloud__icon" aria-hidden="true"></span>
+        <span>Usuń serię</span>
+      </button>`;
+
+    const dayBtn = cloud.querySelector('[data-action="clear-avail-day"]');
+    if (dayBtn) {
+      dayBtn.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeAvailSeriesCloud();
+        clearAvailDay(dateISO, { closeEdit: true });
+      });
+    }
+    const seriesBtn = cloud.querySelector('[data-action="clear-avail-recurring-series"]');
+    if (seriesBtn && hasSeries) {
+      seriesBtn.addEventListener("click", function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        clearAvailRecurringSeries(dateISO, index);
+      });
+    }
+
+    cloud.hidden = false;
+    cloud.style.visibility = "hidden";
+    const rect = trigger.getBoundingClientRect();
+    const cloudRect = cloud.getBoundingClientRect();
+    let top = rect.top - cloudRect.height - 10;
+    let left = rect.right - cloudRect.width;
+    if (top < 8) top = rect.bottom + 10;
+    if (left < 8) left = 8;
+    if (left + cloudRect.width > window.innerWidth - 8) {
+      left = Math.max(8, window.innerWidth - cloudRect.width - 8);
+    }
+    if (top + cloudRect.height > window.innerHeight - 8) {
+      top = Math.max(8, window.innerHeight - cloudRect.height - 8);
+    }
+    cloud.style.top = top + "px";
+    cloud.style.left = left + "px";
+    cloud.style.visibility = "visible";
+  }
+
   function saveAvailDayEdit(dateISO, options) {
     const opts = options || {};
     if (!dateISO) return;
@@ -5019,6 +5232,12 @@
     }
     window.AppState.availEditDate = dateISO;
     saveState();
+    // Zmiana godziny: NIE przebudowujemy edytora, bo podmiana <input> w trakcie
+    // potwierdzania natywnego pickera (iOS/Android) gubi właśnie wybraną wartość.
+    if (opts.noRender) {
+      patchAvailMonthBusyDots();
+      return;
+    }
     const scroller = document.querySelector('[data-role="avail-body"]');
     const scrollTop = scroller ? scroller.scrollTop : 0;
     refreshAvailListOnly();
@@ -5081,15 +5300,33 @@
     });
   }
 
+  function closeAvailPickMenus(except) {
+    document
+      .querySelectorAll(
+        '[data-role="avail-loc-pick"].is-open, [data-role="avail-repeat-pick"].is-open'
+      )
+      .forEach(function (pick) {
+        if (except && pick === except) return;
+        pick.classList.remove("is-open");
+        const btn = pick.querySelector('[data-action="toggle-avail-loc"], [data-action="toggle-avail-repeat"]');
+        const menu = pick.querySelector('[data-role="avail-loc-menu"], [data-role="avail-repeat-menu"]');
+        if (btn) btn.setAttribute("aria-expanded", "false");
+        if (menu) menu.hidden = true;
+      });
+  }
+
   function closeAvailLocMenus(except) {
-    document.querySelectorAll('[data-role="avail-loc-pick"].is-open').forEach(function (pick) {
-      if (except && pick === except) return;
-      pick.classList.remove("is-open");
-      const btn = pick.querySelector('[data-action="toggle-avail-loc"]');
-      const menu = pick.querySelector('[data-role="avail-loc-menu"]');
-      if (btn) btn.setAttribute("aria-expanded", "false");
-      if (menu) menu.hidden = true;
-    });
+    closeAvailPickMenus(except);
+  }
+
+  function toggleAvailPickMenu(pick, btn, menuRole) {
+    if (!pick || !btn) return;
+    const open = !pick.classList.contains("is-open");
+    closeAvailPickMenus(open ? pick : null);
+    pick.classList.toggle("is-open", open);
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    const menu = pick.querySelector('[data-role="' + menuRole + '"]');
+    if (menu) menu.hidden = !open;
   }
 
   function setAvailBlockLocation(dateISO, index, locationId) {
@@ -5124,7 +5361,29 @@
         opt.classList.toggle("is-selected", on);
         opt.setAttribute("aria-selected", on ? "true" : "false");
       });
-    closeAvailLocMenus();
+    closeAvailPickMenus();
+    saveAvailDayEdit(dateISO, { quiet: true });
+  }
+
+  function setAvailBlockRepeat(dateISO, index, repeatId) {
+    if (!dateISO) return;
+    const repeat = normalizeAvailRepeat({ repeat: repeatId });
+    const form = document.querySelector('[data-role="avail-edit-form"][data-date="' + dateISO + '"]');
+    if (!form) return;
+    const row = form.querySelector('[data-avail-block][data-index="' + index + '"]');
+    if (!row) return;
+    const pick = row.querySelector('[data-role="avail-repeat-pick"]');
+    const input = pick && pick.querySelector('[name="repeat"]');
+    const labelEl = pick && pick.querySelector('[data-role="avail-repeat-label"]');
+    if (input) input.value = repeat;
+    if (labelEl) labelEl.textContent = availRepeatLabel(repeat);
+    pick &&
+      pick.querySelectorAll("[data-action=pick-avail-repeat]").forEach(function (opt) {
+        const on = opt.getAttribute("data-repeat") === repeat;
+        opt.classList.toggle("is-selected", on);
+        opt.setAttribute("aria-selected", on ? "true" : "false");
+      });
+    closeAvailPickMenus();
     saveAvailDayEdit(dateISO, { quiet: true });
   }
 
@@ -5174,11 +5433,12 @@
                   <path d="M12 7v5l3.2 1.8" />
                 </svg>
               </span>
-              <input class="avail-edit__time" type="time" name="from" value="${escapeHtml(b.from)}" required step="300" aria-label="Od" />
+              ${renderAvailTimeField("from", b.from || "09:00", "Od")}
               <span class="avail-edit__dash" aria-hidden="true">–</span>
-              <input class="avail-edit__time" type="time" name="to" value="${escapeHtml(b.to)}" required step="300" aria-label="Do" />
+              ${renderAvailTimeField("to", b.to || "17:00", "Do")}
             </div>
-            <button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--remove" data-action="remove-avail-block" data-date="${dateAttr}" data-index="${i}" aria-label="Usuń godziny" title="Usuń">
+            <button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--remove" data-action="open-avail-remove-cloud" data-date="${dateAttr}" data-index="${i}"
+              aria-label="Usuń" title="Usuń dzień lub serię" aria-haspopup="menu">
               <span aria-hidden="true">×</span>
             </button>
             ${
@@ -5212,22 +5472,36 @@
             </div>
           </div>
           <div class="avail-edit__slot-meta">
-            <label class="avail-edit__repeat">
-              <span class="avail-edit__repeat-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 12a9 9 0 0 0-15.4-6.4" />
-                  <path d="M3 4.5v5h5" />
-                  <path d="M3 12a9 9 0 0 0 15.4 6.4" />
-                  <path d="M21 19.5v-5h-5" />
-                </svg>
-              </span>
-              <select name="repeat" aria-label="Powtarzaj">
+            <div class="avail-loc-pick avail-loc-pick--compact avail-repeat-pick" data-role="avail-repeat-pick">
+              <input type="hidden" name="repeat" value="${escapeHtml(normalizeAvailRepeat(b))}" />
+              <button type="button" class="avail-loc-pick__btn" data-action="toggle-avail-repeat"
+                aria-haspopup="listbox" aria-expanded="false" aria-label="Powtarzaj">
+                <span class="avail-edit__loc-lead" aria-hidden="true">
+                  <span class="avail-edit__repeat-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21 12a9 9 0 0 0-15.4-6.4" />
+                      <path d="M3 4.5v5h5" />
+                      <path d="M3 12a9 9 0 0 0 15.4 6.4" />
+                      <path d="M21 19.5v-5h-5" />
+                    </svg>
+                  </span>
+                </span>
+                <span class="avail-edit__loc-content">
+                  <span class="avail-loc-pick__label" data-role="avail-repeat-label">${escapeHtml(availRepeatLabel(normalizeAvailRepeat(b)))}</span>
+                </span>
+                <span class="avail-loc-pick__chevron" aria-hidden="true"></span>
+              </button>
+              <div class="avail-loc-pick__menu" data-role="avail-repeat-menu" role="listbox" hidden>
                 ${AVAIL_REPEAT_OPTIONS.map(function (opt) {
-                  const selected = normalizeAvailRepeat(b) === opt.id ? " selected" : "";
-                  return `<option value="${escapeHtml(opt.id)}"${selected}>${escapeHtml(opt.label)}</option>`;
+                  const on = normalizeAvailRepeat(b) === opt.id;
+                  return `<button type="button" class="avail-loc-pick__opt${on ? " is-selected" : ""}" role="option"
+                    data-action="pick-avail-repeat" data-date="${dateAttr}" data-index="${i}"
+                    data-repeat="${escapeHtml(opt.id)}" aria-selected="${on ? "true" : "false"}">
+                    <span class="avail-loc-pick__opt-label">${escapeHtml(opt.label)}</span>
+                  </button>`;
                 }).join("")}
-              </select>
-            </label>
+              </div>
+            </div>
           </div>
         </div>`;
       })
@@ -5493,7 +5767,7 @@
         </div>
         <div class="avail-body" data-role="avail-body">
           <div class="avail-list__head">
-            <h3 class="avail-list__heading">Lista dostępności</h3>
+            <h3 class="avail-list__heading">Godziny dostępności</h3>
           </div>
           <div class="avail-list-viewport" data-role="avail-list-viewport">
             <div class="avail-list" data-role="avail-list">${list}</div>
@@ -6369,8 +6643,17 @@
   });
 
   document.addEventListener("click", function (event) {
-    if (!event.target.closest('[data-role="avail-loc-pick"]')) {
-      closeAvailLocMenus();
+    if (
+      !event.target.closest('[data-role="avail-loc-pick"]') &&
+      !event.target.closest('[data-role="avail-repeat-pick"]')
+    ) {
+      closeAvailPickMenus();
+    }
+    if (
+      !event.target.closest("#avail-series-cloud") &&
+      !event.target.closest('[data-action="open-avail-remove-cloud"]')
+    ) {
+      closeAvailSeriesCloud();
     }
 
     const popover = document.getElementById("provider-card-popover");
@@ -6574,9 +6857,18 @@
           scrollAvailListToDate(dateISO);
         }
         break;
+      case "open-avail-remove-cloud":
+        event.preventDefault();
+        openAvailSeriesCloud(btn);
+        break;
       case "remove-avail-block":
         event.preventDefault();
+        closeAvailSeriesCloud();
         removeAvailEditBlock(d.date, d.index);
+        break;
+      case "clear-avail-recurring-series":
+        event.preventDefault();
+        clearAvailRecurringSeries(d.date, d.index);
         break;
       case "save-avail-day":
         event.preventDefault();
@@ -6584,24 +6876,24 @@
         break;
       case "toggle-avail-loc":
         event.preventDefault();
-        {
-          const pick = btn.closest('[data-role="avail-loc-pick"]');
-          if (!pick) break;
-          const open = !pick.classList.contains("is-open");
-          closeAvailLocMenus(open ? pick : null);
-          pick.classList.toggle("is-open", open);
-          btn.setAttribute("aria-expanded", open ? "true" : "false");
-          const menu = pick.querySelector('[data-role="avail-loc-menu"]');
-          if (menu) menu.hidden = !open;
-        }
+        toggleAvailPickMenu(btn.closest('[data-role="avail-loc-pick"]'), btn, "avail-loc-menu");
         break;
       case "pick-avail-loc":
         event.preventDefault();
         setAvailBlockLocation(d.date, d.index, d.locationId);
         break;
+      case "toggle-avail-repeat":
+        event.preventDefault();
+        toggleAvailPickMenu(btn.closest('[data-role="avail-repeat-pick"]'), btn, "avail-repeat-menu");
+        break;
+      case "pick-avail-repeat":
+        event.preventDefault();
+        setAvailBlockRepeat(d.date, d.index, d.repeat);
+        break;
       case "clear-avail-day":
         event.preventDefault();
-        clearAvailDay(d.date);
+        closeAvailSeriesCloud();
+        clearAvailDay(d.date, { closeEdit: true });
         break;
       case "swipe-clear-avail-day":
         event.preventDefault();
@@ -6774,7 +7066,11 @@
     if (availField) {
       const form = availField.closest('[data-role="avail-edit-form"]');
       const dateISO = form && form.getAttribute("data-date");
-      if (dateISO) saveAvailDayEdit(dateISO, { quiet: true });
+      if (dateISO) {
+        // Godziny: zapis bez przebudowy DOM (mobile picker gubi wartość przy re-renderze).
+        const isTime = availField.matches && availField.matches("input.avail-edit__time");
+        saveAvailDayEdit(dateISO, { quiet: true, noRender: isTime });
+      }
     }
   });
 
@@ -7567,6 +7863,29 @@
     );
   }
 
+  /** Select godziny/minuty → ukryte name=from/to (działa na iOS/Android). */
+  function bindAvailTimePickers() {
+    if (bindAvailTimePickers.done) return;
+    bindAvailTimePickers.done = true;
+
+    // Na mobile natywny input[type=time] otwiera picker sam po tapnięciu.
+    // showPicker() to progresywne ulepszenie głównie dla desktopu (klik = otwórz picker).
+    document.addEventListener(
+      "click",
+      function (event) {
+        const input = event.target.closest("input.avail-edit__time[type='time']");
+        if (!input || input.disabled || input.readOnly) return;
+        if (typeof input.showPicker !== "function") return;
+        try {
+          input.showPicker();
+        } catch (err) {
+          /* iOS/brak gestu — natywne tapnięcie i tak otwiera picker */
+        }
+      },
+      false
+    );
+  }
+
   /**
    * Swipe-to-delete na wierszu dnia (odsłoń kosz w lewo; dalej = usuń dostępności).
    */
@@ -7574,8 +7893,9 @@
     if (bindAvailDaySwipe.done) return;
     bindAvailDaySwipe.done = true;
 
-    const REVEAL = 72;
-    const DELETE_RATIO = 0.42;
+    // Krótszy gest: ~56px na kosz (jak wąski action w iOS), pełne usunięcie ~28% szerokości.
+    const REVEAL = 56;
+    const DELETE_RATIO = 0.28;
     let drag = null;
 
     function frontOf(swipe) {
@@ -7618,6 +7938,13 @@
         if (!swipe || swipe.classList.contains("avail-day__swipe--locked")) return;
         if (event.target.closest(".avail-day__swipe-action")) return;
         if (event.target.closest(".avail-day__edit-btn")) return;
+        // Nie przejmuj gestu na polach godzin / selectach w edytorze.
+        if (
+          event.target.closest(
+            ".avail-edit__time-wrap, select, .avail-loc-pick, .avail-repeat-pick"
+          )
+        )
+          return;
         closeAll(swipe);
         const front = frontOf(swipe);
         if (!front) return;
@@ -7719,6 +8046,7 @@
     bindProvCalTimeLabels();
     bindAvailWeekScrollBridge();
     bindAvailDaySwipe();
+    bindAvailTimePickers();
     loadState();
     renderAll();
     showPage("home");
