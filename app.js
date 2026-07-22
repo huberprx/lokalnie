@@ -178,13 +178,15 @@
 
   function updateAvailMonthLabel(grid) {
     if (!grid) return null;
-    const section = grid.closest(".avail-week");
-    const label = section && section.querySelector('[data-role="avail-week-month"]');
+    const screen = grid.closest(".app-screen--avail") || document;
+    const label = screen.querySelector('[data-role="avail-week-month"]');
     const chosen = leftmostDatedChild(grid, ".avail-week__col[data-date]");
     if (!chosen) return null;
     const iso = chosen.getAttribute("data-date");
     const text = monthLabelFromISO(iso);
     if (label && text && label.textContent !== text) label.textContent = text;
+    const monthBtn = label && label.closest('[data-action="avail-month-start"]');
+    if (monthBtn && text) monthBtn.setAttribute("aria-label", text);
     return iso;
   }
 
@@ -4141,6 +4143,7 @@
     window.AppState.availFocusDate = focus;
     window.AppState.availWeekStart = mondayISOFrom(focus);
     window.AppState.availStripScrollLeft = null;
+    window.AppState.availEditDate = null;
     navigate("provider", "availability", {});
   }
 
@@ -4175,6 +4178,37 @@
     grid.scrollBy({ left: deltaWeeks * 7 * step, behavior: "smooth" });
   }
 
+  function scrollAvailStripToDate(dateISO) {
+    const grid = document.querySelector('[data-role="avail-week-grid"]');
+    if (!grid || !dateISO) return;
+    const col = grid.querySelector('.avail-week__col[data-date="' + dateISO + '"]');
+    if (!col) return;
+    const left = Math.max(0, col.offsetLeft - 8);
+    grid.scrollTo({ left: left, behavior: "smooth" });
+    window.AppState.availStripScrollLeft = left;
+    handleAvailStripScroll(grid);
+  }
+
+  function goAvailToday() {
+    const today = demoTodayISO();
+    window.AppState.availFocusDate = today;
+    window.AppState.availWeekStart = mondayISOFrom(today);
+    scrollAvailStripToDate(today);
+    scrollAvailListToDate(today);
+  }
+
+  /** Skocz do 1. dnia miesiąca widocznego na pasku (jak etykieta miesiąca w kalendarzu). */
+  function goAvailMonthStart() {
+    const grid = document.querySelector('[data-role="avail-week-grid"]');
+    const iso = (grid && updateAvailMonthLabel(grid)) || ensureAvailFocusDate() || demoTodayISO();
+    const d = new Date(String(iso) + "T12:00:00");
+    if (isNaN(d.getTime())) return;
+    const start = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-01";
+    window.AppState.availFocusDate = start;
+    scrollAvailStripToDate(start);
+    scrollAvailListToDate(start);
+  }
+
   function initAvailStripScroll(grid) {
     if (!grid) return;
     if (typeof window.AppState.availStripScrollLeft === "number") {
@@ -4198,7 +4232,6 @@
 
   function prepareAvailListForDate(dateISO) {
     if (!dateISO) return false;
-    ensureAvailDraft(dateISO);
     if (document.querySelector('.avail-day-group[data-date="' + dateISO + '"]')) return false;
     let changed = false;
     const weekStart = mondayISOFrom(dateISO);
@@ -4206,8 +4239,14 @@
       window.AppState.availWeekStart = weekStart;
       changed = true;
     }
-    if (window.AppState.availListOnlySet) {
-      window.AppState.availListOnlySet = false;
+    // Dzień bez dostępności — otwórz edycję, żeby pojawił się na liście.
+    if (window.AppState.availEditDate !== dateISO) {
+      const p = myProvider();
+      const draft = ensureAvailDraft(dateISO);
+      if (draft && p && (!draft.blocks || !draft.blocks.length)) {
+        draft.blocks.push(defaultAvailBlock(p));
+      }
+      window.AppState.availEditDate = dateISO;
       changed = true;
     }
     if (changed) {
@@ -4220,8 +4259,6 @@
   function scrollAvailListToDate(dateISO) {
     if (!dateISO) return;
     window.AppState.availFocusDate = dateISO;
-    const fab = document.querySelector('[data-role="avail-fab"]');
-    if (fab) fab.setAttribute("data-date", dateISO);
     prepareAvailListForDate(dateISO);
 
     function runScroll() {
@@ -4363,7 +4400,6 @@
 
   const AVAIL_REPEAT_OPTIONS = [
     { id: "none", label: "Nie powtarzaj" },
-    { id: "daily", label: "Codziennie" },
     { id: "weekly", label: "Co tydzień" },
     { id: "biweekly", label: "Co drugi tydzień" },
   ];
@@ -4371,7 +4407,8 @@
   function normalizeAvailRepeat(block) {
     if (!block) return "none";
     const id = block.repeat;
-    if (id === "none" || id === "daily" || id === "weekly" || id === "biweekly") return id;
+    if (id === "daily") return "weekly";
+    if (id === "none" || id === "weekly" || id === "biweekly") return id;
     return block.recurring ? "weekly" : "none";
   }
 
@@ -4420,9 +4457,33 @@
     if (!window.AppState.availEditDrafts[dateISO]) {
       window.AppState.availEditDrafts[dateISO] = buildAvailDraftFromProvider(p, dateISO);
     }
-    window.AppState.availEditDate = dateISO;
     window.AppState.availEditDraft = window.AppState.availEditDrafts[dateISO];
     return window.AppState.availEditDrafts[dateISO];
+  }
+
+  /** Otwórz edycję dnia na liście (pozostałe wiersze zostają zwinięte). */
+  function openAvailDayEdit(dateISO) {
+    if (!dateISO) return;
+    const p = myProvider();
+    const draft = ensureAvailDraft(dateISO);
+    if (draft && p && (!draft.blocks || !draft.blocks.length)) {
+      draft.blocks.push(defaultAvailBlock(p));
+    }
+    window.AppState.availEditDate = dateISO;
+    window.AppState.availFocusDate = dateISO;
+    saveState();
+    renderAll();
+  }
+
+  function toggleAvailDayEdit(dateISO) {
+    if (!dateISO) return;
+    if (window.AppState.availEditDate === dateISO) {
+      window.AppState.availEditDate = null;
+      saveState();
+      renderAll();
+      return;
+    }
+    openAvailDayEdit(dateISO);
   }
 
   function syncAvailDraftFromForm(dateISO) {
@@ -4532,6 +4593,7 @@
   function addAvailEditBlock(dateISO) {
     const p = myProvider();
     if (!p || !dateISO) return;
+    window.AppState.availEditDate = dateISO;
     const draft = syncAvailDraftFromForm(dateISO) || ensureAvailDraft(dateISO);
     if (!draft) return;
     draft.blocks.push(defaultAvailBlock(p));
@@ -4731,7 +4793,7 @@
       availByDate[d.dateISO] = d.blocks || [];
     });
 
-    const monthLabel = monthLabelFromISO(weekDates[0] || stripDates[0]);
+    const monthLabel = monthLabelFromISO(focusDate || weekDates[0] || stripDates[0]);
     // Indeks jak w Date#getDay(): 0=Nd … 6=Sb
     const AVAIL_DOW = ["Nd", "Pn", "Wt", "Śr", "Cz", "Pt", "Sb"];
 
@@ -4770,31 +4832,51 @@
       })
       .join("");
 
-    const onlySet = !!window.AppState.availListOnlySet;
-    const listDates = onlySet
-      ? stripDates.filter(function (dateISO) {
-          return (availByDate[dateISO] || []).length > 0;
-        })
-      : weekDates;
+    const editDate = window.AppState.availEditDate || null;
+    const listDates = stripDates.filter(function (dateISO) {
+      return (availByDate[dateISO] || []).length > 0 || dateISO === editDate;
+    });
 
     const AVAIL_DOW_PRINT = ["ND", "PN", "WT", "ŚR", "CZ", "PT", "SB"];
-
     const list = listDates
       .map(function (dateISO) {
         const dt = new Date(dateISO + "T12:00:00");
         const blocks = availByDate[dateISO] || [];
         const red = isSunday(dateISO);
         const has = blocks.length > 0;
-        const draft = has ? ensureAvailDraft(dateISO) : null;
+        const isEditing = editDate === dateISO;
+        const draft = isEditing ? ensureAvailDraft(dateISO) : null;
         const editor =
-          has && draft
+          isEditing && draft
             ? `<div class="avail-day avail-day--editing">${renderAvailDayEditor(p, dateISO, draft)}</div>`
             : "";
+        const dateNum = pad(dt.getDate()) + "." + pad(dt.getMonth() + 1);
+        const hoursHtml = has
+          ? blocks
+              .map(function (b) {
+                return `<span class="avail-day__hours-row">
+                  <span class="avail-day__from">${escapeHtml(b.from)}</span>
+                  <span class="avail-day__hours-sep" aria-hidden="true">–</span>
+                  <span class="avail-day__to">${escapeHtml(b.to)}</span>
+                </span>`;
+              })
+              .join("")
+          : `<span class="avail-day__hours-row avail-day__hours-row--empty">—</span>`;
         return `
-        <div class="avail-day-group${has ? "" : " avail-day-group--closed"}" data-date="${escapeHtml(dateISO)}" id="avail-day-${escapeHtml(dateISO)}">
+        <div class="avail-day-group${has ? "" : " avail-day-group--closed"}${isEditing ? " avail-day-group--open" : ""}" data-date="${escapeHtml(dateISO)}" id="avail-day-${escapeHtml(dateISO)}">
           <div class="avail-day__sep">
-            <span class="avail-day__dow${red ? " avail-day__dow--red" : ""}">${AVAIL_DOW_PRINT[dt.getDay()]}</span>
-            <span class="avail-day__date${red ? " avail-day__date--red" : ""}">${dt.getDate()} ${MONTHS[dt.getMonth()]}</span>
+            <div class="avail-day__sep-main">
+              <span class="avail-day__dow${red ? " avail-day__dow--red" : ""}">${AVAIL_DOW_PRINT[dt.getDay()]}</span>
+              <span class="avail-day__date${red ? " avail-day__date--red" : ""}">${dateNum}</span>
+              <span class="avail-day__hours">${hoursHtml}</span>
+            </div>
+            <button type="button" class="avail-day__edit-btn${isEditing ? " is-on" : ""}"
+              data-action="toggle-avail-day-edit" data-date="${escapeHtml(dateISO)}"
+              aria-expanded="${isEditing ? "true" : "false"}"
+              aria-label="${isEditing ? "Zwiń edycję" : "Edytuj dostępność"}"
+              title="${isEditing ? "Zwiń" : "Edytuj"}">
+              <span class="avail-day__edit-icon" aria-hidden="true"></span>
+            </button>
           </div>
           ${editor}
         </div>`;
@@ -4804,38 +4886,36 @@
     return `
       <div class="app-screen app-screen--provider app-screen--avail">
         <div class="avail-top">
-          <header class="screen-head">
-            <h2 class="screen-head__title">Ustawienia dostępności</h2>
-          </header>
-          <section class="avail-week" aria-label="Kalendarz dostępności">
-            <div class="avail-week__nav">
-              <span class="avail-week__month" data-role="avail-week-month">${escapeHtml(monthLabel)}</span>
-              <div class="avail-week__nav-btns">
-                <button type="button" class="avail-week__nav-btn" data-action="avail-week-prev" aria-label="Przewiń o tydzień wstecz">‹</button>
-                <button type="button" class="avail-week__nav-btn" data-action="avail-week-next" aria-label="Przewiń o tydzień do przodu">›</button>
+          <header class="screen-head screen-head--prov-cal">
+            <div class="prov-cal-head">
+              <div class="prov-cal-head__title-row">
+                <button type="button" class="screen-head__back" data-action="provider-tab" data-tab="dashboard" aria-label="Wróć">
+                  <span class="screen-head__back-icon" aria-hidden="true"></span>
+                </button>
+                <h2 class="screen-head__title">Dostępności</h2>
+              </div>
+              <div class="prov-cal-head__actions">
+                <div class="prov-cal__tools" role="toolbar" aria-label="Narzędzia dostępności">
+                  <button type="button" class="prov-cal__tool prov-cal__tool--month-label" data-action="avail-month-start"
+                    aria-label="${escapeHtml(monthLabel)}">
+                    <span class="prov-cal__month-name" data-role="avail-week-month">${escapeHtml(monthLabel)}</span>
+                    <span class="prov-cal__month-chevron" aria-hidden="true"></span>
+                  </button>
+                </div>
+                <button type="button" class="prov-cal__today-btn" data-action="avail-today">Dzisiaj</button>
               </div>
             </div>
+          </header>
+          <section class="avail-week" aria-label="Kalendarz dostępności">
             <div class="avail-week__grid" data-role="avail-week-grid" tabindex="0" aria-label="Kalendarz, przewijaj w poziomie">${weekCols}</div>
           </section>
         </div>
         <div class="avail-body" data-role="avail-body">
           <div class="avail-list__head">
             <h3 class="avail-list__heading">Lista dostępności</h3>
-            <button type="button" class="avail-list__toggle${onlySet ? " avail-list__toggle--on" : ""}"
-              data-action="toggle-avail-list-filter" role="switch" aria-checked="${onlySet ? "true" : "false"}"
-              aria-label="${onlySet ? "Pokaż wszystkie dni" : "Pokaż tylko ustawione terminy"}"
-              title="${onlySet ? "Tylko ustawione" : "Wszystkie dni"}">
-              <span class="avail-list__toggle-text">${onlySet ? "Ustawione" : "Wszystkie"}</span>
-              <span class="avail-list__switch" aria-hidden="true"><span class="avail-list__switch-knob"></span></span>
-            </button>
           </div>
           <div class="avail-list">${list || `<p class="empty-note">Brak ustawionych terminów.</p>`}</div>
         </div>
-        <button type="button" class="avail-fab" data-action="add-avail-block" data-date="${escapeHtml(
-          focusDate
-        )}" data-role="avail-fab" aria-label="Dodaj blok godzin" title="Dodaj">
-          <span class="avail-fab__plus" aria-hidden="true"></span>
-        </button>
         ${providerBottomNav("availability")}
       </div>`;
   }
@@ -5865,15 +5945,24 @@
         event.preventDefault();
         scrollAvailStripByWeeks(1);
         break;
+      case "avail-today":
+        event.preventDefault();
+        goAvailToday();
+        break;
+      case "avail-month-start":
+        event.preventDefault();
+        goAvailMonthStart();
+        break;
       case "avail-jump-date":
         event.preventDefault();
         scrollAvailListToDate(d.date);
         break;
-      case "toggle-avail-list-filter":
+      case "toggle-avail-day-edit":
         event.preventDefault();
-        window.AppState.availListOnlySet = !window.AppState.availListOnlySet;
-        saveState();
-        renderAll();
+        toggleAvailDayEdit(d.date);
+        if (d.date && window.AppState.availEditDate === d.date) {
+          scrollAvailListToDate(d.date);
+        }
         break;
       case "add-avail-block":
         event.preventDefault();
