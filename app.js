@@ -2725,14 +2725,21 @@
   }
 
   function renderProviderVisitCard(b) {
+    const durationMin = Math.max(0, timeToMin(b.to) - timeToMin(b.from));
+    const services = (b.serviceNames || []).length ? b.serviceNames : ["Usługa"];
     return `
-      <div class="visit-card" data-booking-id="${escapeHtml(b.id)}">
-        <div class="visit-card__top">
-          <span class="visit-card__name">${escapeHtml(b.clientName || "Klient")}</span>
-          <span class="status-badge" data-status="${escapeHtml(b.status)}">${escapeHtml(STATUS_LABEL[b.status] || b.status)}</span>
+      <div class="visit-card visit-card--provider" data-booking-id="${escapeHtml(b.id)}" data-status="${escapeHtml(b.status)}">
+        <div class="visit-card__schedule">
+          <time class="visit-card__range" datetime="${escapeHtml(b.dateISO + "T" + b.from)}">${escapeHtml(b.from)}–${escapeHtml(b.to)}</time>
+          <span class="visit-card__duration" aria-label="Czas trwania: ${escapeHtml(formatDuration(durationMin))}">
+            <span class="visit-card__clock" aria-hidden="true"></span>
+            ${escapeHtml(formatDuration(durationMin))}
+          </span>
         </div>
-        <div class="visit-card__svc">${escapeHtml((b.serviceNames || []).join(", "))}</div>
-        <div class="visit-card__when">${escapeHtml(formatDateLong(b.dateISO))} · ${escapeHtml(b.from)}→${escapeHtml(b.to)}${b.locationLabel ? " · " + escapeHtml(b.locationLabel) : ""}</div>
+        <div class="visit-card__name">${escapeHtml(b.clientName || "Klient")}</div>
+        <ul class="visit-card__services" aria-label="Usługi">
+          ${services.map((serviceName) => `<li>${escapeHtml(serviceName)}</li>`).join("")}
+        </ul>
         ${
           b.status === "confirmed"
             ? `<div class="visit-card__actions">
@@ -2873,12 +2880,105 @@
   }
 
   function renderProvCalGcalHtml(dateISO) {
-    const visits = providerVisits();
-    const dayVisits = visits.filter(function (b) {
+    return renderProvCalGoogleWeek(dateISO, providerVisits());
+  }
+
+  /** Krok swipa jak w Google Calendar: 1–6 dni → ±1 dzień; 7 dni → ±7 (tydzień). */
+  function provCalSwipeStepDays() {
+    return ensureProvCalVisibleDays() === 7 ? 7 : 1;
+  }
+
+  function renderProvCalHoursHtml(hourH) {
+    let hours = "";
+    for (let h = PROV_CAL_HOUR_START; h <= PROV_CAL_HOUR_END; h++) {
+      const top = (h - PROV_CAL_HOUR_START) * hourH;
+      hours += `
+        <div class="gcal__hour" style="top:${top}px" data-hour="${h}">
+          <span class="gcal__hour-label">${h === PROV_CAL_HOUR_START ? "" : pad(h) + ":00"}</span>
+        </div>`;
+    }
+    return `<div class="gcal__hours" aria-hidden="true">${hours}</div>`;
+  }
+
+  /** Jedna kolumna dnia (bez osi godzin) — używana też przy rozszerzaniu toru swipa. */
+  function renderProvCalDayColumnHtml(dateISO, visits) {
+    const hourStart = PROV_CAL_HOUR_START;
+    const hourEnd = PROV_CAL_HOUR_END;
+    const hourH = ensureProvCalHourH();
+    const dayStartMin = hourStart * 60;
+    const dayEndMin = hourEnd * 60;
+    const today = demoTodayISO();
+    const isToday = dateISO === today;
+    const q = String(window.AppState.provCalSearchQ || "")
+      .trim()
+      .toLowerCase();
+    const dayVisits = (visits || []).filter(function (b) {
       return b.dateISO === dateISO;
     });
-    if (ensureProvCalVisibleDays() > 1) return renderProvCalGoogleWeek(dateISO, visits);
-    return renderProvCalGoogleDay(dateISO, dayVisits);
+    const events = dayVisits
+      .map(function (b) {
+        const fromM = timeToMinutes(b.from);
+        const toM = timeToMinutes(b.to);
+        if (isNaN(fromM) || isNaN(toM) || toM <= fromM) return "";
+        const clampedFrom = Math.max(dayStartMin, Math.min(dayEndMin, fromM));
+        const clampedTo = Math.max(dayStartMin, Math.min(dayEndMin, toM));
+        if (clampedTo <= clampedFrom) return "";
+        const top = ((clampedFrom - dayStartMin) / 60) * hourH;
+        const height = Math.max(22, ((clampedTo - clampedFrom) / 60) * hourH);
+        const svc = (b.serviceNames || []).join(", ") || "Usługa";
+        const client = b.clientName || "Klient";
+        const hay = (svc + " " + client).toLowerCase();
+        const dim = q && hay.indexOf(q) === -1;
+        const selected = !!(
+          window.AppState.provCalSelection &&
+          window.AppState.provCalSelection.kind === "booking" &&
+          window.AppState.provCalSelection.bookingId === b.id
+        );
+        const densityCls = provCalDensityCls(height);
+        return `
+          <article class="gcal__event gcal__event--${escapeHtml(b.status)}${densityCls ? " " + densityCls : ""}${
+            dim ? " gcal__event--dim" : ""
+          }${selected ? " gcal__event--selected" : ""}"
+            style="top:${top}px;height:${height}px"
+            data-role="prov-cal-slot" data-kind="booking" data-date="${escapeHtml(dateISO)}"
+            data-action="select-prov-cal-slot" data-booking-id="${escapeHtml(b.id)}"
+            data-from-min="${clampedFrom}" data-to-min="${clampedTo}"
+            data-search="${escapeHtml(hay)}" role="button" tabindex="0"
+            aria-pressed="${selected ? "true" : "false"}"
+            aria-label="${escapeHtml(svc + ", " + client + ", " + b.from + "–" + b.to)}">
+            <div class="gcal__event-row">
+              <span class="gcal__event-time">${escapeHtml(b.from)}–${escapeHtml(b.to)}</span>
+              <span class="gcal__event-title">${escapeHtml(svc)}</span>
+            </div>
+            <span class="gcal__event-client">${escapeHtml(client)}</span>
+          </article>`;
+      })
+      .join("");
+
+    let nowLine = "";
+    if (isToday) {
+      const now = new Date();
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+      if (nowMin >= dayStartMin && nowMin <= dayEndMin) {
+        const y = ((nowMin - dayStartMin) / 60) * hourH;
+        nowLine = `<div class="gcal__now" style="top:${y}px" data-now-min="${nowMin}" aria-hidden="true"><span></span></div>`;
+      }
+    }
+
+    const empty =
+      !events && ensureProvCalVisibleDays() <= 1
+        ? `<p class="gcal__empty">Brak wizyt w tym dniu</p>`
+        : "";
+
+    return `
+      <div class="gcal-week__col${isToday ? " gcal-week__col--today" : ""}" data-date="${escapeHtml(dateISO)}">
+        <div class="gcal__track gcal-week__track" data-action="prov-cal-pick-date" data-date="${escapeHtml(dateISO)}">
+          ${renderProvCalAvailBars(dateISO, hourH, dayStartMin, dayEndMin)}
+          ${nowLine}
+          ${events}
+          ${empty}
+        </div>
+      </div>`;
   }
 
   /**
@@ -3177,9 +3277,7 @@
    */
   function syncProvCalEventTimeLabels(root) {
     const scope = root && root.querySelectorAll ? root : document;
-    const columns = scope.querySelectorAll(
-      '.gcal-week__col, .gcal[data-role="prov-cal-gcal"]:not(.gcal--week) .gcal__track'
-    );
+    const columns = scope.querySelectorAll(".gcal-week__col");
     columns.forEach(function (col) {
       const events = col.querySelectorAll('.gcal__event[data-kind="booking"][data-from-min]');
       if (!events.length) return;
@@ -3236,11 +3334,9 @@
         document.querySelectorAll('[data-role="prov-cal-body"]').forEach(function (body) {
           ro.observe(body);
         });
-        document
-          .querySelectorAll('.gcal-week__col, .gcal[data-role="prov-cal-gcal"]:not(.gcal--week) .gcal__track')
-          .forEach(function (el) {
-            ro.observe(el);
-          });
+        document.querySelectorAll(".gcal-week__col").forEach(function (el) {
+          ro.observe(el);
+        });
       };
     }
   }
@@ -3688,7 +3784,9 @@
       }>
         <div class="gcal-week__head">
           <div class="gcal-week__corner gcal-week__corner--spacer" aria-hidden="true"></div>
-          <div class="gcal-week__days">${daysHtml}</div>
+          <div class="gcal-week__days-clip" data-role="prov-cal-heads-clip">
+            <div class="gcal-week__days" data-role="prov-cal-heads-track">${daysHtml}</div>
+          </div>
         </div>
       </div>`;
   }
@@ -3859,115 +3957,16 @@
       .join("");
   }
 
-  /** Widok dnia jak Google Calendar: oś godzin + bloki wizyt i wolnych. */
-  function renderProvCalGoogleDay(dateISO, dayVisits) {
-    const isToday = dateISO === demoTodayISO();
-    const hourStart = PROV_CAL_HOUR_START;
-    const hourEnd = PROV_CAL_HOUR_END;
-    const hourH = ensureProvCalHourH();
-    const dayStartMin = hourStart * 60;
-    const dayEndMin = hourEnd * 60;
-    const totalH = (hourEnd - hourStart) * hourH;
-
-    let hours = "";
-    for (let h = hourStart; h <= hourEnd; h++) {
-      const top = (h - hourStart) * hourH;
-      hours += `
-        <div class="gcal__hour" style="top:${top}px" data-hour="${h}">
-          <span class="gcal__hour-label">${h === hourStart ? "" : pad(h) + ":00"}</span>
-        </div>`;
-    }
-
-    const events = (dayVisits || [])
-      .map(function (b) {
-        const fromM = timeToMinutes(b.from);
-        const toM = timeToMinutes(b.to);
-        if (isNaN(fromM) || isNaN(toM) || toM <= fromM) return "";
-        const clampedFrom = Math.max(dayStartMin, Math.min(dayEndMin, fromM));
-        const clampedTo = Math.max(dayStartMin, Math.min(dayEndMin, toM));
-        if (clampedTo <= clampedFrom) return "";
-        const top = ((clampedFrom - dayStartMin) / 60) * hourH;
-        const height = Math.max(22, ((clampedTo - clampedFrom) / 60) * hourH);
-        const svc = (b.serviceNames || []).join(", ") || "Usługa";
-        const client = b.clientName || "Klient";
-        const q = String(window.AppState.provCalSearchQ || "")
-          .trim()
-          .toLowerCase();
-        const hay = (svc + " " + client).toLowerCase();
-        const dim = q && hay.indexOf(q) === -1;
-        const selected = !!(
-          window.AppState.provCalSelection &&
-          window.AppState.provCalSelection.kind === "booking" &&
-          window.AppState.provCalSelection.bookingId === b.id
-        );
-        const densityCls = provCalDensityCls(height);
-        return `
-          <article class="gcal__event gcal__event--${escapeHtml(b.status)}${densityCls ? " " + densityCls : ""}${
-            dim ? " gcal__event--dim" : ""
-          }${selected ? " gcal__event--selected" : ""}"
-            style="top:${top}px;height:${height}px"
-            data-role="prov-cal-slot" data-kind="booking" data-date="${escapeHtml(dateISO)}"
-            data-action="select-prov-cal-slot" data-booking-id="${escapeHtml(b.id)}"
-            data-from-min="${clampedFrom}" data-to-min="${clampedTo}"
-            data-search="${escapeHtml(hay)}" role="button" tabindex="0"
-            aria-pressed="${selected ? "true" : "false"}"
-            aria-label="${escapeHtml(svc + ", " + client + ", " + b.from + "–" + b.to)}">
-            <div class="gcal__event-row">
-              <span class="gcal__event-time">${escapeHtml(b.from)}–${escapeHtml(b.to)}</span>
-              <span class="gcal__event-title">${escapeHtml(svc)}</span>
-            </div>
-            <span class="gcal__event-client">${escapeHtml(client)}</span>
-          </article>`;
-      })
-      .join("");
-
-    let nowLine = "";
-    if (isToday) {
-      const now = new Date();
-      const nowMin = now.getHours() * 60 + now.getMinutes();
-      if (nowMin >= dayStartMin && nowMin <= dayEndMin) {
-        const y = ((nowMin - dayStartMin) / 60) * hourH;
-        nowLine = `<div class="gcal__now" style="top:${y}px" data-now-min="${nowMin}" aria-hidden="true"><span></span></div>`;
-      }
-    }
-
-    return `
-      <div class="gcal" data-role="prov-cal-gcal" data-prov-cal-day-swipe style="--gcal-days:1">
-        ${renderProvCalStickyDayHeads(renderProvCalDayHeadButton(dateISO, dateISO))}
-        <div class="gcal__timeline" style="height:${totalH}px;--gcal-hour-h:${hourH}px" data-role="prov-cal-timeline">
-          <div class="gcal__hours">${hours}</div>
-          <div class="gcal__track">
-            ${renderProvCalAvailBars(dateISO, hourH, dayStartMin, dayEndMin)}
-            ${nowLine}
-            ${events || `<p class="gcal__empty">Brak wizyt w tym dniu</p>`}
-          </div>
-        </div>
-      </div>`;
-  }
-
-  /** Widok wielodniowy: N kolumn (2–7) — te same kafle wizyt co w widoku dnia. */
+  /**
+   * Widok 1–7 dni (Google Calendar):
+   * — oś godzin stała (poza torem swipe),
+   * — nagłówki + kolumny dni w osobnych clipach (przesuwane poziomo).
+   */
   function renderProvCalGoogleWeek(selectedISO, visits) {
     const dayCount = ensureProvCalVisibleDays();
     const weekDays = provCalVisibleDayList(selectedISO, dayCount);
-    const today = demoTodayISO();
-    const hourStart = PROV_CAL_HOUR_START;
-    const hourEnd = PROV_CAL_HOUR_END;
     const hourH = ensureProvCalHourH();
-    const dayStartMin = hourStart * 60;
-    const dayEndMin = hourEnd * 60;
-    const totalH = (hourEnd - hourStart) * hourH;
-    const q = String(window.AppState.provCalSearchQ || "")
-      .trim()
-      .toLowerCase();
-
-    let hours = "";
-    for (let h = hourStart; h <= hourEnd; h++) {
-      const top = (h - hourStart) * hourH;
-      hours += `
-        <div class="gcal__hour" style="top:${top}px" data-hour="${h}">
-          <span class="gcal__hour-label">${h === hourStart ? "" : pad(h) + ":00"}</span>
-        </div>`;
-    }
+    const totalH = (PROV_CAL_HOUR_END - PROV_CAL_HOUR_START) * hourH;
 
     const headCols = weekDays
       .map(function (dateISO) {
@@ -3977,68 +3976,7 @@
 
     const cols = weekDays
       .map(function (dateISO) {
-        const dayVisits = (visits || []).filter(function (b) {
-          return b.dateISO === dateISO;
-        });
-        const isToday = dateISO === today;
-        const events = dayVisits
-          .map(function (b, idx) {
-            const fromM = timeToMinutes(b.from);
-            const toM = timeToMinutes(b.to);
-            if (isNaN(fromM) || isNaN(toM) || toM <= fromM) return "";
-            const clampedFrom = Math.max(dayStartMin, Math.min(dayEndMin, fromM));
-            const clampedTo = Math.max(dayStartMin, Math.min(dayEndMin, toM));
-            if (clampedTo <= clampedFrom) return "";
-            const top = ((clampedFrom - dayStartMin) / 60) * hourH;
-            const height = Math.max(22, ((clampedTo - clampedFrom) / 60) * hourH);
-            const svc = (b.serviceNames || []).join(", ") || "Usługa";
-            const client = b.clientName || "Klient";
-            const hay = (svc + " " + client).toLowerCase();
-            const dim = q && hay.indexOf(q) === -1;
-            const selected = !!(
-              window.AppState.provCalSelection &&
-              window.AppState.provCalSelection.kind === "booking" &&
-              window.AppState.provCalSelection.bookingId === b.id
-            );
-            const densityCls = provCalDensityCls(height);
-            return `
-              <article class="gcal__event gcal__event--${escapeHtml(b.status)}${densityCls ? " " + densityCls : ""}${
-                dim ? " gcal__event--dim" : ""
-              }${selected ? " gcal__event--selected" : ""}"
-                style="top:${top}px;height:${height}px"
-                data-role="prov-cal-slot" data-kind="booking" data-date="${escapeHtml(dateISO)}"
-                data-action="select-prov-cal-slot" data-booking-id="${escapeHtml(b.id)}"
-                data-from-min="${clampedFrom}" data-to-min="${clampedTo}"
-                data-search="${escapeHtml(hay)}" role="button" tabindex="0"
-                aria-pressed="${selected ? "true" : "false"}"
-                aria-label="${escapeHtml(svc + ", " + client + ", " + b.from + "–" + b.to)}">
-                <div class="gcal__event-row">
-                  <span class="gcal__event-time">${escapeHtml(b.from)}–${escapeHtml(b.to)}</span>
-                  <span class="gcal__event-title">${escapeHtml(svc)}</span>
-                </div>
-                <span class="gcal__event-client">${escapeHtml(client)}</span>
-              </article>`;
-          })
-          .join("");
-
-        let nowLine = "";
-        if (isToday) {
-          const now = new Date();
-          const nowMin = now.getHours() * 60 + now.getMinutes();
-          if (nowMin >= dayStartMin && nowMin <= dayEndMin) {
-            const y = ((nowMin - dayStartMin) / 60) * hourH;
-            nowLine = `<div class="gcal__now" style="top:${y}px" data-now-min="${nowMin}" aria-hidden="true"><span></span></div>`;
-          }
-        }
-
-        return `
-          <div class="gcal-week__col${isToday ? " gcal-week__col--today" : ""}" data-date="${escapeHtml(dateISO)}">
-            <div class="gcal__track gcal-week__track" data-action="prov-cal-pick-date" data-date="${escapeHtml(dateISO)}">
-              ${renderProvCalAvailBars(dateISO, hourH, dayStartMin, dayEndMin)}
-              ${nowLine}
-              ${events}
-            </div>
-          </div>`;
+        return renderProvCalDayColumnHtml(dateISO, visits);
       })
       .join("");
 
@@ -4046,8 +3984,10 @@
       <div class="gcal gcal--week" data-role="prov-cal-gcal" data-prov-cal-day-swipe style="--gcal-days:${weekDays.length}">
         ${renderProvCalStickyDayHeads(headCols)}
         <div class="gcal__timeline gcal-week__timeline" style="height:${totalH}px;--gcal-hour-h:${hourH}px" data-role="prov-cal-timeline">
-          <div class="gcal__hours">${hours}</div>
-          <div class="gcal-week__cols">${cols}</div>
+          ${renderProvCalHoursHtml(hourH)}
+          <div class="gcal-week__cols-clip" data-role="prov-cal-cols-clip">
+            <div class="gcal-week__cols" data-role="prov-cal-cols-track">${cols}</div>
+          </div>
         </div>
       </div>`;
   }
@@ -4055,14 +3995,10 @@
   function renderProviderCalendar() {
     const selected = ensureProvCalDate();
     const visits = providerVisits();
-    const dayVisits = visits.filter(function (b) {
-      return b.dateISO === selected;
-    });
-    const visibleDays = ensureProvCalVisibleDays();
+    ensureProvCalVisibleDays();
     // Nie pozwól, by zapisany zbyt mały zoom nakładał wizyty po odświeżeniu.
     const dynMinHourH = provCalNoOverlapMinHourH();
     if (ensureProvCalHourH() < dynMinHourH) window.AppState.provCalHourH = clampProvCalHourH(dynMinHourH);
-    const weekView = visibleDays > 1;
     const monthOpen = !!window.AppState.provCalMonthOpen;
     const selectedD = new Date(selected + "T12:00:00");
     const monthLabel = isNaN(selectedD.getTime())
@@ -4097,7 +4033,7 @@
           </div>
         </div>
         <div class="prov-cal-body" data-role="prov-cal-body">
-          ${weekView ? renderProvCalGoogleWeek(selected, visits) : renderProvCalGoogleDay(selected, dayVisits)}
+          ${renderProvCalGoogleWeek(selected, visits)}
         </div>
         ${providerBottomNav("calendar")}
       </div>`;
@@ -7043,7 +6979,8 @@
       if (!document.querySelector(".app-screen--prov-cal")) return;
       if (window.AppState.provCalMonthOpen) return;
       event.preventDefault();
-      shiftProvCalDate(event.key === "ArrowLeft" ? -1 : 1);
+      const step = provCalSwipeStepDays();
+      shiftProvCalDate(event.key === "ArrowLeft" ? -step : step);
     }
   });
 
@@ -7569,12 +7506,10 @@
     }
 
     function trackForDate(dateISO) {
-      if (isWeekView()) {
-        const root = dragRootGcal();
-        const scope = root || document;
-        const col = scope.querySelector('.gcal-week__col[data-date="' + dateISO + '"]');
-        return col ? col.querySelector(".gcal-week__track") : null;
-      }
+      const root = dragRootGcal();
+      const scope = root || document;
+      const col = scope.querySelector('.gcal-week__col[data-date="' + dateISO + '"]');
+      if (col) return col.querySelector(".gcal-week__track");
       return drag.el ? drag.el.closest(".gcal__track") : null;
     }
 
@@ -8154,21 +8089,37 @@
   }
 
   /** Swipe w lewo/prawo → następny / poprzedni dzień (dzień i widok wielodniowy), z animacją. */
+  /**
+   * Swipe jak Google Calendar:
+   * — oś godzin (.gcal__hours) NIE jest w transformie → zostaje przy krawędzi,
+   * — przesuwane są tylko nagłówki + kolumny dni w clipach,
+   * — 1–6 dni: krok ±1 dzień (przesunięcie o szerokość 1 kolumny),
+   * — 7 dni: krok ±7 (przesunięcie o pełną szerokość widoku).
+   */
   function bindProvCalDaySwipe() {
     if (bindProvCalDaySwipe.done) return;
     bindProvCalDaySwipe.done = true;
 
-    const THRESHOLD = 56;
+    const DIST_THRESHOLD = 0.28;
+    const VELOCITY_THRESHOLD = 0.45;
     const swipe = {
       active: false,
       startX: 0,
       startY: 0,
       dx: 0,
+      lastX: 0,
+      lastT: 0,
+      velocity: 0,
       locked: false,
-      moved: false,
+      built: false,
+      settling: false,
       gcal: null,
       body: null,
-      underlay: null,
+      colsTrack: null,
+      headsTrack: null,
+      shiftPx: 0,
+      stepDays: 1,
+      scrollTop: 0,
     };
 
     function canSwipe(target) {
@@ -8181,68 +8132,167 @@
       return !!target.closest("[data-prov-cal-day-swipe]");
     }
 
-    function ensureUnderlay() {
+    function elFromHtml(html) {
+      const host = document.createElement("div");
+      host.innerHTML = String(html || "").trim();
+      return host.firstElementChild;
+    }
+
+    function styleSwipeTrack(track, totalCols, colWidth, shiftPx) {
+      if (!track) return;
+      track.classList.add("prov-cal-swipe-extended");
+      track.style.display = "grid";
+      track.style.gridTemplateColumns = "repeat(" + totalCols + ", " + colWidth + "px)";
+      track.style.width = totalCols * colWidth + "px";
+      track.style.maxWidth = "none";
+      track.style.transition = "none";
+      track.style.transform = "translate3d(" + -shiftPx + "px,0,0)";
+    }
+
+    function setTracksX(x, withTransition, durationMs) {
+      const t = withTransition
+        ? "transform " + durationMs + "ms cubic-bezier(0.22, 1, 0.36, 1)"
+        : "none";
+      const transform = "translate3d(" + x + "px,0,0)";
+      if (swipe.colsTrack) {
+        swipe.colsTrack.style.transition = t;
+        swipe.colsTrack.style.transform = transform;
+      }
+      if (swipe.headsTrack) {
+        swipe.headsTrack.style.transition = t;
+        swipe.headsTrack.style.transform = transform;
+      }
+    }
+
+    /**
+     * Rozszerz tory o stepDays kolumn z każdej strony (oś godzin zostaje).
+     * initial translate = -shiftPx, gdzie shiftPx = stepDays * colWidth.
+     */
+    function buildExtendedTracks() {
       const gcal = swipe.gcal;
-      if (!gcal || swipe.underlay || !gcal.parentNode) return;
-      const under = gcal.cloneNode(true);
-      under.removeAttribute("data-role");
-      under.removeAttribute("data-prov-cal-day-swipe");
-      under.classList.add("gcal--swipe-underlay");
-      under.querySelectorAll("[id]").forEach(function (el) {
-        el.removeAttribute("id");
-      });
-      gcal.parentNode.insertBefore(under, gcal);
-      gcal.classList.add("gcal--swipe-top");
-      swipe.underlay = under;
-      if (swipe.body) swipe.body.classList.add("prov-cal-body--day-swipe");
-    }
-
-    function clearUnderlay() {
-      if (swipe.underlay) {
-        swipe.underlay.remove();
-        swipe.underlay = null;
-      }
-      if (swipe.gcal) swipe.gcal.classList.remove("gcal--swipe-top");
-    }
-
-    function resetVisual(spring) {
-      const gcal = swipe.gcal || resolveVisibleProvCalGcal(null);
       const body = swipe.body;
-      if (!gcal) {
-        clearUnderlay();
-        if (body) body.classList.remove("prov-cal-body--day-swipe");
-        return;
-      }
-      if (spring) {
-        gcal.classList.add("gcal--sliding");
-        gcal.style.transition = "transform 0.24s cubic-bezier(0.4, 0, 0.2, 1)";
-        gcal.style.transform = "translate3d(0,0,0)";
-        gcal.style.opacity = "1";
-        window.setTimeout(function () {
-          gcal.classList.remove("gcal--sliding");
-          gcal.style.transition = "";
-          gcal.style.transform = "";
-          gcal.style.opacity = "";
-          clearUnderlay();
-          if (body && !body.classList.contains("prov-cal-body--animating-days")) {
-            body.classList.remove("prov-cal-body--day-swipe");
-          }
-        }, 260);
-      } else {
-        gcal.classList.remove("gcal--sliding");
-        gcal.style.transition = "";
-        gcal.style.transform = "";
-        gcal.style.opacity = "";
-        clearUnderlay();
-        if (body && !body.classList.contains("prov-cal-body--animating-days")) {
-          body.classList.remove("prov-cal-body--day-swipe");
+      if (!gcal || !body) return false;
+      const colsTrack = gcal.querySelector('[data-role="prov-cal-cols-track"]');
+      const colsClip = gcal.querySelector('[data-role="prov-cal-cols-clip"]');
+      const headsTrack = gcal.querySelector('[data-role="prov-cal-heads-track"]');
+      if (!colsTrack || !colsClip) return false;
+
+      const visibleDays = ensureProvCalVisibleDays();
+      const stepDays = provCalSwipeStepDays();
+      const clipWidth = colsClip.clientWidth || Math.max(gcal.clientWidth - 40, 200);
+      if (clipWidth < 8) return false;
+      const colWidth = clipWidth / visibleDays;
+      const shiftPx = stepDays * colWidth;
+
+      const cur = ensureProvCalDate();
+      const visible = provCalVisibleDayList(cur, visibleDays);
+      if (!visible.length) return false;
+      const first = visible[0];
+      const last = visible[visible.length - 1];
+      const visits = providerVisits();
+
+      for (let i = stepDays; i >= 1; i--) {
+        const d = isoAddDays(first, -i);
+        colsTrack.insertBefore(elFromHtml(renderProvCalDayColumnHtml(d, visits)), colsTrack.firstChild);
+        if (headsTrack) {
+          headsTrack.insertBefore(elFromHtml(renderProvCalDayHeadButton(d, cur)), headsTrack.firstChild);
         }
       }
+      for (let i = 1; i <= stepDays; i++) {
+        const d = isoAddDays(last, i);
+        colsTrack.appendChild(elFromHtml(renderProvCalDayColumnHtml(d, visits)));
+        if (headsTrack) {
+          headsTrack.appendChild(elFromHtml(renderProvCalDayHeadButton(d, cur)));
+        }
+      }
+
+      const totalCols = visibleDays + stepDays * 2;
+      styleSwipeTrack(colsTrack, totalCols, colWidth, shiftPx);
+      styleSwipeTrack(headsTrack, totalCols, colWidth, shiftPx);
+
+      swipe.colsTrack = colsTrack;
+      swipe.headsTrack = headsTrack;
+      swipe.shiftPx = shiftPx;
+      swipe.stepDays = stepDays;
+      swipe.scrollTop = body.scrollTop;
+      swipe.built = true;
+      body.classList.add("prov-cal-body--day-swipe");
+      return true;
+    }
+
+    function commit(deltaDays) {
+      const body = swipe.body;
+      const scrollTop = swipe.scrollTop;
+      if (body) body.classList.remove("prov-cal-body--day-swipe", "prov-cal-body--animating-days");
+      clearSwipeState();
+      if (deltaDays) {
+        const nextISO = isoAddDays(ensureProvCalDate(), deltaDays);
+        window.AppState.provCalDate = nextISO;
+        window.AppState.provCalPickerMonth = nextISO.slice(0, 7);
+        window.AppState.provCalSelection = null;
+        saveState();
+        hapticTap(12);
+      }
+      renderAll();
+      requestAnimationFrame(function () {
+        const b = resolveProvCalBody(body);
+        if (b) b.scrollTop = scrollTop;
+      });
+    }
+
+    function clearSwipeState() {
+      swipe.active = false;
+      swipe.locked = false;
+      swipe.built = false;
+      swipe.settling = false;
+      swipe.colsTrack = null;
+      swipe.headsTrack = null;
+      swipe.gcal = null;
+      swipe.body = null;
+      swipe.dx = 0;
+      swipe.velocity = 0;
+      swipe.shiftPx = 0;
+      swipe.stepDays = 1;
+    }
+
+    /** direction: -1 prev / 0 cancel / +1 next → deltaDays = direction * stepDays */
+    function settle(direction) {
+      const shiftPx = swipe.shiftPx;
+      if (!swipe.colsTrack || !shiftPx) {
+        commit(direction * swipe.stepDays);
+        return;
+      }
+      swipe.settling = true;
+      if (swipe.body) swipe.body.classList.add("prov-cal-body--animating-days");
+      const target = direction > 0 ? -2 * shiftPx : direction < 0 ? 0 : -shiftPx;
+      const dist = Math.abs(target - (-shiftPx + swipe.dx));
+      const dur = Math.max(160, Math.min(360, 200 + dist * 0.35));
+      let done = false;
+      function finalize() {
+        if (done) return;
+        done = true;
+        commit(direction * swipe.stepDays);
+      }
+      if (swipe.colsTrack) {
+        swipe.colsTrack.addEventListener(
+          "transitionend",
+          function (ev) {
+            if (ev.target !== swipe.colsTrack) return;
+            if (ev.propertyName && ev.propertyName.indexOf("transform") === -1) return;
+            finalize();
+          },
+          { once: true }
+        );
+      }
+      void (swipe.colsTrack && swipe.colsTrack.offsetWidth);
+      setTracksX(target, true, dur);
+      window.setTimeout(finalize, dur + 80);
     }
 
     document.addEventListener(
       "touchstart",
       function (event) {
+        if (swipe.settling) return;
         if (event.touches.length !== 1) return;
         if (!canSwipe(event.target)) return;
         if (event.target.closest('[data-role="prov-cal-slot"][data-kind="booking"]')) return;
@@ -8250,12 +8300,15 @@
         if (!gcal || gcal.classList.contains("gcal--sliding")) return;
         swipe.active = true;
         swipe.locked = false;
-        swipe.moved = false;
+        swipe.built = false;
         swipe.dx = 0;
         swipe.gcal = gcal;
         swipe.body = gcal.closest('[data-role="prov-cal-body"]');
         swipe.startX = event.touches[0].clientX;
         swipe.startY = event.touches[0].clientY;
+        swipe.lastX = swipe.startX;
+        swipe.lastT = event.timeStamp || Date.now();
+        swipe.velocity = 0;
       },
       { passive: true }
     );
@@ -8264,77 +8317,77 @@
       "touchmove",
       function (event) {
         if (!swipe.active || event.touches.length !== 1) return;
-        const dx = event.touches[0].clientX - swipe.startX;
+        const x = event.touches[0].clientX;
+        const dx = x - swipe.startX;
         const dy = event.touches[0].clientY - swipe.startY;
         if (!swipe.locked) {
           if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return;
-          // Pionowy scroll osi czasu wygrywa, jeśli dominuje.
           if (Math.abs(dy) >= Math.abs(dx) * 0.85) {
             swipe.active = false;
-            resetVisual(false);
+            swipe.gcal = null;
+            swipe.body = null;
             return;
           }
           swipe.locked = true;
-          ensureUnderlay();
+          if (!buildExtendedTracks()) {
+            swipe.active = false;
+            clearSwipeState();
+            return;
+          }
         }
         if (event.cancelable) event.preventDefault();
-        swipe.moved = true;
+
+        const now = event.timeStamp || Date.now();
+        const dt = now - swipe.lastT;
+        if (dt > 0) {
+          swipe.velocity = swipe.velocity * 0.7 + ((x - swipe.lastX) / dt) * 0.3;
+        }
+        swipe.lastX = x;
+        swipe.lastT = now;
         swipe.dx = dx;
-        const gcal = swipe.gcal;
-        if (!gcal) return;
-        // Lekki opór poza progiem (rubber-band) — pod spodem underlay trzyma krawędź.
-        const resisted =
-          Math.abs(dx) > THRESHOLD
-            ? Math.sign(dx) * (THRESHOLD + (Math.abs(dx) - THRESHOLD) * 0.28)
-            : dx;
-        gcal.style.transition = "none";
-        gcal.style.opacity = "1";
-        gcal.style.transform = "translate3d(" + resisted + "px,0,0)";
+        setTracksX(-swipe.shiftPx + dx, false, 0);
       },
       { passive: false }
     );
 
-    document.addEventListener(
-      "touchend",
-      function () {
-        if (!swipe.active) return;
-        const dx = swipe.dx;
-        const wasLocked = swipe.locked;
-        const moved = swipe.moved;
-        const gcal = swipe.gcal;
-        swipe.active = false;
-        swipe.locked = false;
-        swipe.moved = false;
-        swipe.dx = 0;
+    function endGesture() {
+      if (!swipe.active) return;
+      const wasBuilt = swipe.built;
+      const dx = swipe.dx;
+      const shiftPx = swipe.shiftPx || 1;
+      const velocity = swipe.velocity;
+      swipe.active = false;
 
-        if (!wasLocked || Math.abs(dx) < THRESHOLD) {
-          resetVisual(moved);
-          return;
-        }
+      if (!wasBuilt) {
+        clearSwipeState();
+        return;
+      }
 
-        // Blokuj przypadkowy tap w kolumnę po swipe.
+      const passedDist = Math.abs(dx) > shiftPx * DIST_THRESHOLD;
+      const passedFlick = Math.abs(velocity) > VELOCITY_THRESHOLD && Math.abs(dx) > 12;
+      let direction = 0;
+      if (passedDist || passedFlick) {
+        direction = dx < 0 ? 1 : -1;
+      }
+
+      if (direction) {
         window._provCalSwipeSuppressClick = true;
         window.setTimeout(function () {
           window._provCalSwipeSuppressClick = false;
         }, 450);
+      }
+      settle(direction);
+    }
 
-        clearUnderlay();
-        // w lewo → następny dzień, w prawo → poprzedni (standard kalendarzy mobilnych)
-        shiftProvCalDateAnimated(dx < 0 ? 1 : -1, { gcal: gcal });
-        swipe.gcal = null;
-        swipe.body = null;
-      },
-      { passive: true }
-    );
+    document.addEventListener("touchend", endGesture, { passive: true });
 
     document.addEventListener(
       "touchcancel",
       function () {
         if (!swipe.active) return;
         swipe.active = false;
-        swipe.locked = false;
-        swipe.moved = false;
-        resetVisual(true);
+        if (swipe.built) settle(0);
+        else clearSwipeState();
       },
       { passive: true }
     );

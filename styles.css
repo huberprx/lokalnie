@@ -6070,10 +6070,24 @@ body.avatar-preview-open {
   pointer-events: none;
 }
 
+/* Clip nagłówków / kolumn — oś godzin zostaje poza transformem swipa. */
+.gcal-week__days-clip,
+.gcal-week__cols-clip {
+  overflow: hidden;
+  min-width: 0;
+  width: 100%;
+  position: relative;
+}
+
 .gcal-week__days {
   display: grid;
   grid-template-columns: repeat(var(--gcal-days, 7), minmax(0, 1fr));
   min-width: 0;
+}
+
+.gcal-week__days.prov-cal-swipe-extended,
+.gcal-week__cols.prov-cal-swipe-extended {
+  will-change: transform;
 }
 
 .gcal-week__dayhead {
@@ -6142,6 +6156,9 @@ body.avatar-preview-open {
   display: grid;
   grid-template-columns: repeat(var(--gcal-days, 7), minmax(0, 1fr));
   min-width: 0;
+}
+
+.gcal-week__cols-clip {
   border-left: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
 }
 
@@ -6181,8 +6198,9 @@ body.avatar-preview-open {
 
 .gcal__hours {
   position: relative;
-  z-index: 2;
+  z-index: 3;
   overflow: visible;
+  background: var(--surface);
 }
 
 .gcal__hour {
@@ -7419,6 +7437,102 @@ body.prov-cal-dragging * {
   display: flex;
   gap: 0.4rem;
   margin-top: 0.6rem;
+}
+
+.visit-card--provider {
+  --visit-status-color: var(--text-muted);
+  position: relative;
+  overflow: hidden;
+  padding: 0.9rem 0.9rem 0.9rem 1.15rem;
+  background: var(--surface);
+}
+
+.visit-card--provider::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0.3rem;
+  background: var(--visit-status-color);
+}
+
+.visit-card--provider[data-status="confirmed"] {
+  --visit-status-color: var(--success);
+}
+
+.visit-card--provider[data-status="proposed"] {
+  --visit-status-color: var(--accent-client);
+}
+
+.visit-card__schedule {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.55rem;
+}
+
+.visit-card__range {
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.visit-card__duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.visit-card__clock {
+  position: relative;
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+}
+
+.visit-card__clock::before,
+.visit-card__clock::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1px;
+  background: currentColor;
+  transform-origin: 50% 0;
+}
+
+.visit-card__clock::before {
+  height: 0.25rem;
+  transform: translate(-50%, -100%);
+}
+
+.visit-card__clock::after {
+  height: 0.2rem;
+  transform: translate(0, -1px) rotate(125deg);
+}
+
+.visit-card--provider .visit-card__name {
+  margin-bottom: 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.visit-card__services {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding-left: 1rem;
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.visit-card__services li::marker {
+  color: var(--visit-status-color);
 }
 
 /* ---- Panel usługodawcy: zakładki ---- */
