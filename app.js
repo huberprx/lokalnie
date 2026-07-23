@@ -90,6 +90,8 @@
       /** Panel „+” → nowy termin z kalendarza usługodawcy. */
       provCalAddOpen: false,
       provCalAddDraft: null,
+      /** Zapisani klienci usługodawcy: { [providerId]: [{ id, name }] } */
+      providerClients: {},
       availWeekStart: null,
       availStripScrollLeft: null,
       availPickerMonth: null,
@@ -1268,6 +1270,8 @@
         provCalSearchQ: typeof stored.provCalSearchQ === "string" ? stored.provCalSearchQ : base.provCalSearchQ,
         provCalAddOpen: false,
         provCalAddDraft: null,
+        providerClients:
+          stored.providerClients && typeof stored.providerClients === "object" ? stored.providerClients : base.providerClients,
         provCalSelection: normalizeProvCalSelection(
           stored.provCalSelection ||
             (typeof stored.provCalSelectedBookingId === "string"
@@ -4095,13 +4099,31 @@
       </div>`;
   }
 
+  /** Bloki czasu w panelu „Nowy termin” — jak usługi, bez ceny z oferty. */
+  const PROV_CAL_ADD_DURATION_OPTS = [
+    { id: "dur-15", name: "15 min", durationMin: 15, price: null, isDuration: true },
+    { id: "dur-30", name: "30 min", durationMin: 30, price: null, isDuration: true },
+    { id: "dur-60", name: "1 h", durationMin: 60, price: null, isDuration: true },
+    { id: "dur-120", name: "2 h", durationMin: 120, price: null, isDuration: true },
+  ];
+  const PROV_CAL_ADD_DEFAULT_DURATION_ID = "dur-30";
+
+  function isProvCalAddDurationId(id) {
+    return String(id || "").indexOf("dur-") === 0;
+  }
+
+  function provCalAddServiceOptions(p) {
+    return PROV_CAL_ADD_DURATION_OPTS.concat((p && p.services) || []);
+  }
+
   function defaultProvCalAddDraft() {
     return {
       clientName: "",
-      serviceIds: [],
+      serviceIds: [PROV_CAL_ADD_DEFAULT_DURATION_ID],
       dateISO: ensureProvCalDate(),
       slotId: null,
       servicePickOpen: false,
+      clientPickOpen: false,
       expandedServiceIds: [],
     };
   }
@@ -4114,30 +4136,217 @@
         cur.serviceIds = cur.serviceId ? [cur.serviceId] : [];
       }
       if (typeof cur.servicePickOpen !== "boolean") cur.servicePickOpen = false;
+      if (typeof cur.clientPickOpen !== "boolean") cur.clientPickOpen = false;
       return cur;
     }
     window.AppState.provCalAddDraft = defaultProvCalAddDraft();
     return window.AppState.provCalAddDraft;
   }
 
+  function ensureProviderClientsList(providerId) {
+    if (!providerId) return [];
+    if (!window.AppState.providerClients || typeof window.AppState.providerClients !== "object") {
+      window.AppState.providerClients = {};
+    }
+    if (!Array.isArray(window.AppState.providerClients[providerId])) {
+      window.AppState.providerClients[providerId] = [];
+    }
+    return window.AppState.providerClients[providerId];
+  }
+
+  /** Unikalne imiona klientów, którzy już byli u usługodawcy (+ ręcznie dodani). */
+  function collectProviderClientNames(providerId) {
+    const seen = Object.create(null);
+    const names = [];
+    function add(name) {
+      const n = String(name || "").trim();
+      if (!n) return;
+      const key = n.toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      names.push(n);
+    }
+    ensureProviderClientsList(providerId).forEach(function (c) {
+      add(c && c.name);
+    });
+    (window.AppState.bookings || []).forEach(function (b) {
+      if (!b || b.providerId !== providerId) return;
+      add(b.clientName);
+    });
+    (window.AppState.requests || []).forEach(function (r) {
+      if (!r || r.providerId !== providerId) return;
+      add(r.clientName);
+    });
+    names.sort(function (a, b) {
+      return a.localeCompare(b, "pl", { sensitivity: "base" });
+    });
+    return names;
+  }
+
+  function addProviderClientName(providerId, name) {
+    const n = String(name || "").trim();
+    if (!providerId || !n) return "";
+    const list = ensureProviderClientsList(providerId);
+    const key = n.toLowerCase();
+    const exists = list.some(function (c) {
+      return String((c && c.name) || "")
+        .trim()
+        .toLowerCase() === key;
+    });
+    if (!exists) {
+      list.push({ id: "cli-" + Date.now(), name: n });
+    }
+    return n;
+  }
+
+  function renderProvCalAddClientMenuHtml(providerId, query) {
+    const raw = String(query || "").trim();
+    const q = raw.toLowerCase();
+    const names = collectProviderClientNames(providerId);
+    const filtered = q
+      ? names.filter(function (n) {
+          return n.toLowerCase().indexOf(q) !== -1;
+        })
+      : names;
+    const exact = !!q && names.some(function (n) {
+      return n.toLowerCase() === q;
+    });
+    let html = filtered
+      .slice(0, 8)
+      .map(function (n) {
+        return `<button type="button" class="avail-loc-pick__opt" role="option"
+          data-action="prov-cal-add-pick-client" data-name="${escapeHtml(n)}">
+          <span class="avail-loc-pick__opt-label">${escapeHtml(n)}</span>
+        </button>`;
+      })
+      .join("");
+    if (raw && !exact) {
+      html += `<button type="button" class="avail-loc-pick__opt prov-cal-add__client-add" role="option"
+        data-action="prov-cal-add-new-client" data-name="${escapeHtml(raw)}">
+        <span class="avail-loc-pick__opt-label">Dodaj „${escapeHtml(raw)}”</span>
+      </button>`;
+    }
+    if (!html) {
+      html = `<p class="empty-note prov-cal-add__client-empty">Wpisz imię klienta — możesz dodać nową osobę.</p>`;
+    }
+    return html;
+  }
+
+  function ensureProvCalAddClientMenuEl() {
+    let menu = document.getElementById("prov-cal-add-client-menu");
+    if (!menu) {
+      menu = document.createElement("div");
+      menu.id = "prov-cal-add-client-menu";
+      menu.className = "avail-loc-pick__menu prov-cal-add__client-menu";
+      menu.setAttribute("data-role", "prov-cal-add-client-menu");
+      menu.setAttribute("role", "listbox");
+      menu.hidden = true;
+    }
+    // Poza panelem (transform/overflow), inaczej chmurka jest niewidoczna.
+    if (menu.parentNode !== document.body) document.body.appendChild(menu);
+    return menu;
+  }
+
+  function positionProvCalAddClientMenu() {
+    const pick = document.querySelector('[data-role="prov-cal-add-client-pick"]');
+    const menu = ensureProvCalAddClientMenuEl();
+    const row = pick && pick.querySelector(".prov-cal-add__client-row");
+    if (!pick || !row) return;
+    const rect = row.getBoundingClientRect();
+    const gap = 6;
+    let top = rect.bottom + gap;
+    let left = rect.left;
+    const width = Math.max(rect.width, 180);
+    menu.hidden = false;
+    menu.style.position = "fixed";
+    menu.style.zIndex = "10060";
+    menu.style.top = "0px";
+    menu.style.left = "0px";
+    menu.style.width = width + "px";
+    menu.style.right = "auto";
+    menu.style.bottom = "auto";
+    menu.style.visibility = "hidden";
+    const menuRect = menu.getBoundingClientRect();
+    if (top + menuRect.height > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - menuRect.height - gap);
+    }
+    if (left + width > window.innerWidth - 8) {
+      left = Math.max(8, window.innerWidth - width - 8);
+    }
+    menu.style.top = top + "px";
+    menu.style.left = left + "px";
+    menu.style.visibility = "visible";
+  }
+
+  function setProvCalAddClientPickOpen(open) {
+    const draft = window.AppState.provCalAddDraft;
+    if (draft) draft.clientPickOpen = !!open;
+    const pick = document.querySelector('[data-role="prov-cal-add-client-pick"]');
+    const menu = ensureProvCalAddClientMenuEl();
+    const input = document.querySelector('[data-role="prov-cal-add-client"]');
+    if (pick) pick.classList.toggle("is-open", !!open);
+    if (input) input.setAttribute("aria-expanded", open ? "true" : "false");
+    if (!open) {
+      menu.hidden = true;
+      menu.style.visibility = "";
+      menu.innerHTML = "";
+      return;
+    }
+    positionProvCalAddClientMenu();
+  }
+
+  function refreshProvCalAddClientMenu() {
+    const draft = window.AppState.provCalAddDraft;
+    const p = myProvider();
+    if (!draft || !p) return;
+    const menu = ensureProvCalAddClientMenuEl();
+    menu.innerHTML = renderProvCalAddClientMenuHtml(p.id, draft.clientName || "");
+    setProvCalAddClientPickOpen(!!draft.clientPickOpen);
+  }
+
+  function pickProvCalAddClient(name, opts) {
+    const options = opts || {};
+    const draft = ensureProvCalAddDraft();
+    const p = myProvider();
+    const n = String(name || "").trim();
+    if (options.addNew && p) addProviderClientName(p.id, n);
+    draft.clientName = n;
+    draft.clientPickOpen = false;
+    const input = document.querySelector('[data-role="prov-cal-add-client"]');
+    if (input) input.value = n;
+    setProvCalAddClientPickOpen(false);
+    saveState();
+    if (options.addNew) showToast("Klient dodany ✓");
+  }
+
   function provCalAddSelectedServices(p, draft) {
     const ids = (draft && draft.serviceIds) || [];
-    return ((p && p.services) || []).filter(function (s) {
+    return provCalAddServiceOptions(p).filter(function (s) {
       return ids.indexOf(s.id) !== -1;
     });
   }
 
   function provCalAddServiceTotals(selected) {
-    const duration = (selected || []).reduce(function (a, s) {
+    const list = selected || [];
+    const duration = list.reduce(function (a, s) {
       return a + (s.durationMin || 0);
     }, 0);
-    const hasNullPrice = (selected || []).some(function (s) {
+    const onlyDuration = list.length > 0 && list.every(function (s) {
+      return s.isDuration;
+    });
+    const hasNullPrice = !onlyDuration && list.some(function (s) {
       return s.price == null;
     });
-    const price = (selected || []).reduce(function (a, s) {
+    const price = list.reduce(function (a, s) {
       return a + (s.price || 0);
     }, 0);
-    return { duration: duration, price: price, hasNullPrice: hasNullPrice, count: (selected || []).length };
+    return {
+      duration: duration,
+      price: price,
+      hasNullPrice: hasNullPrice,
+      onlyDuration: onlyDuration,
+      count: list.length,
+    };
   }
 
   function captureProvCalAddClientName() {
@@ -4150,11 +4359,6 @@
   function openProvCalAdd() {
     window.AppState.provCalAddOpen = true;
     window.AppState.provCalAddDraft = defaultProvCalAddDraft();
-    const p = myProvider();
-    const services = (p && p.services) || [];
-    if (services.length === 1) {
-      window.AppState.provCalAddDraft.serviceIds = [services[0].id];
-    }
     setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
     closeProvCalViewCloud();
     saveState();
@@ -4168,6 +4372,73 @@
   function closeProvCalAdd() {
     window.AppState.provCalAddOpen = false;
     window.AppState.provCalAddDraft = null;
+    setProvCalAddClientPickOpen(false);
+    const orphanMenu = document.getElementById("prov-cal-add-client-menu");
+    if (orphanMenu) orphanMenu.remove();
+    saveState();
+    renderAll();
+  }
+
+  function patchProvCalAddServiceUi() {
+    const p = myProvider();
+    const draft = window.AppState.provCalAddDraft;
+    if (!p || !draft) return;
+    const selected = provCalAddSelectedServices(p, draft);
+    const totals = provCalAddServiceTotals(selected);
+    const hasSvc = selected.length > 0;
+    const serviceLabel = !hasSvc
+      ? "Wybierz usługę"
+      : selected
+          .map(function (s) {
+            return s.name;
+          })
+          .join(", ");
+    const ids = draft.serviceIds || [];
+
+    document.querySelectorAll('[data-role="prov-cal-add-service-menu"] [data-action="prov-cal-add-service"]').forEach(function (opt) {
+      const id = opt.getAttribute("data-service-id");
+      const on = ids.indexOf(id) !== -1;
+      opt.classList.toggle("is-selected", on);
+      opt.setAttribute("aria-selected", on ? "true" : "false");
+      const check = opt.querySelector(".service-row__check-visual");
+      if (check) check.classList.toggle("is-on", on);
+      const nameEl = opt.querySelector(".avail-loc-pick__opt-label");
+      const labelText = nameEl ? nameEl.textContent : "";
+      if (labelText) opt.setAttribute("aria-label", (on ? "Odznacz" : "Zaznacz") + " " + labelText);
+    });
+
+    const labelEl = document.querySelector('[data-role="prov-cal-add-service-pick"] .avail-loc-pick__label');
+    if (labelEl) {
+      labelEl.textContent = serviceLabel;
+      labelEl.classList.toggle("avail-loc-pick__label--placeholder", !hasSvc);
+    }
+
+    const summary = document.querySelector(".prov-cal-add__foot .bottom-nav__summary");
+    if (summary) {
+      summary.classList.toggle("bottom-nav__summary--empty", !hasSvc);
+      const dur = summary.querySelector(".bottom-nav__summary-dur");
+      const price = summary.querySelector(".bottom-nav__summary-price");
+      if (dur) dur.textContent = !hasSvc ? "—" : formatDuration(totals.duration || 0);
+      if (price) {
+        price.textContent = !hasSvc
+          ? "—"
+          : totals.onlyDuration
+            ? "—"
+            : totals.hasNullPrice
+              ? "wycena indyw."
+              : formatPrice(totals.price);
+      }
+    }
+
+    const saveBtn = document.querySelector(".prov-cal-add__save");
+    if (saveBtn) saveBtn.disabled = !(hasSvc && !!draft.slotId);
+  }
+
+  function flushProvCalAddServiceSchedule() {
+    const draft = window.AppState.provCalAddDraft;
+    if (!draft || !draft.serviceScheduleDirty) return;
+    draft.serviceScheduleDirty = false;
+    draft.servicePickOpen = false;
     saveState();
     renderAll();
   }
@@ -4178,12 +4449,28 @@
     const draft = ensureProvCalAddDraft();
     if (!Array.isArray(draft.serviceIds)) draft.serviceIds = [];
     const idx = draft.serviceIds.indexOf(serviceId);
-    if (idx === -1) draft.serviceIds.push(serviceId);
-    else draft.serviceIds.splice(idx, 1);
+    const isDur = isProvCalAddDurationId(serviceId);
+    if (idx === -1) {
+      if (isDur) {
+        // Blok czasu: tylko jedna opcja czasu naraz, bez usług z oferty.
+        draft.serviceIds = [serviceId];
+      } else {
+        // Usługa z oferty: odznacz bloki czasu, pozwól na kilka usług.
+        draft.serviceIds = draft.serviceIds.filter(function (id) {
+          return !isProvCalAddDurationId(id);
+        });
+        draft.serviceIds.push(serviceId);
+      }
+    } else {
+      draft.serviceIds.splice(idx, 1);
+    }
+    if (!draft.serviceIds.length) draft.serviceIds = [PROV_CAL_ADD_DEFAULT_DURATION_ID];
     draft.slotId = null;
     draft.servicePickOpen = true;
+    draft.serviceScheduleDirty = true;
     saveState();
-    renderAll();
+    // Bez renderAll — inaczej chmurka miga przy każdym checkmarku.
+    patchProvCalAddServiceUi();
   }
 
   function setProvCalAddService(serviceId) {
@@ -4274,10 +4561,8 @@
     const p = myProvider();
     if (!p) return;
     const clientName = String(draft.clientName || "").trim();
-    if (!clientName) {
-      showToast("Podaj imię klienta.");
-      return;
-    }
+    // Imię klienta opcjonalne — sam blok usługi / czasu można zapisać bez kontaktu.
+    if (clientName) addProviderClientName(p.id, clientName);
     const selected = provCalAddSelectedServices(p, draft);
     if (!selected.length) {
       showToast("Wybierz usługę.");
@@ -4340,7 +4625,9 @@
     if (!window.AppState.provCalAddOpen) return "";
     const p = myProvider();
     const draft = ensureProvCalAddDraft();
-    const services = (p && p.services) || [];
+    if (!Array.isArray(draft.serviceIds) || !draft.serviceIds.length) {
+      draft.serviceIds = [PROV_CAL_ADD_DEFAULT_DURATION_ID];
+    }
     const selected = provCalAddSelectedServices(p, draft);
     const totals = provCalAddServiceTotals(selected);
     const duration = totals.duration || 30;
@@ -4358,22 +4645,35 @@
     }
     const hasSvc = selected.length > 0;
     const slots = hasSvc ? computeSlots(p, activeDate, duration) : [];
-    const serviceMenu = services.length
-      ? services
-          .map(function (s) {
-            const on = (draft.serviceIds || []).indexOf(s.id) !== -1;
-            const meta = [formatDuration(s.durationMin), formatPrice(s.price)].filter(Boolean).join(" · ");
-            const selectLabel = (on ? "Odznacz" : "Zaznacz") + " " + s.name;
-            return `<button type="button" class="avail-loc-pick__opt prov-cal-add__service-opt${on ? " is-selected" : ""}" role="option"
-              data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}"
-              aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
-              <span class="avail-loc-pick__opt-label">${escapeHtml(s.name)}</span>
-              ${meta ? `<span class="prov-cal-add__service-opt-meta">${escapeHtml(meta)}</span>` : ""}
-              <span class="service-row__check-visual${on ? " is-on" : ""}" aria-hidden="true"></span>
-            </button>`;
-          })
-          .join("")
-      : `<p class="empty-note prov-cal-add__service-empty">Brak usług — dodaj je w zakładce Usługi.</p>`;
+    const catalogServices = (p && p.services) || [];
+    const serviceMenu =
+      PROV_CAL_ADD_DURATION_OPTS.map(function (s) {
+        const on = (draft.serviceIds || []).indexOf(s.id) !== -1;
+        const selectLabel = (on ? "Odznacz" : "Zaznacz") + " " + s.name;
+        return `<button type="button" class="avail-loc-pick__opt prov-cal-add__service-opt${on ? " is-selected" : ""}" role="option"
+          data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}"
+          aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
+          <span class="avail-loc-pick__opt-label">${escapeHtml(s.name)}</span>
+          <span class="service-row__check-visual${on ? " is-on" : ""}" aria-hidden="true"></span>
+        </button>`;
+      }).join("") +
+      (catalogServices.length
+        ? `<div class="prov-cal-add__service-sep" role="separator" aria-hidden="true"></div>` +
+          catalogServices
+            .map(function (s) {
+              const on = (draft.serviceIds || []).indexOf(s.id) !== -1;
+              const meta = [formatDuration(s.durationMin), formatPrice(s.price)].filter(Boolean).join(" · ");
+              const selectLabel = (on ? "Odznacz" : "Zaznacz") + " " + s.name;
+              return `<button type="button" class="avail-loc-pick__opt prov-cal-add__service-opt${on ? " is-selected" : ""}" role="option"
+                data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}"
+                aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
+                <span class="avail-loc-pick__opt-label">${escapeHtml(s.name)}</span>
+                ${meta ? `<span class="prov-cal-add__service-opt-meta">${escapeHtml(meta)}</span>` : ""}
+                <span class="service-row__check-visual${on ? " is-on" : ""}" aria-hidden="true"></span>
+              </button>`;
+            })
+            .join("")
+        : "");
     const dateStrip = hasSvc
       ? renderDateStripHtml(availDates, activeDate, { action: "prov-cal-add-date" })
       : `<p class="empty-note">Najpierw wybierz usługę.</p>`;
@@ -4396,7 +4696,13 @@
         : `<p class="empty-note">Brak wolnych godzin tego dnia.</p>`;
 
     const canSave = hasSvc && !!draft.slotId;
-    const priceText = !hasSvc ? "—" : totals.hasNullPrice ? "wycena indyw." : formatPrice(totals.price);
+    const priceText = !hasSvc
+      ? "—"
+      : totals.onlyDuration
+        ? "—"
+        : totals.hasNullPrice
+          ? "wycena indyw."
+          : formatPrice(totals.price);
     const durText = !hasSvc ? "—" : formatDuration(totals.duration || 0);
     const serviceLabel = !hasSvc
       ? "Wybierz usługę"
@@ -4404,17 +4710,19 @@
           return s.name;
         }).join(", ");
     const servicePickOpen = !!draft.servicePickOpen;
+    const clientPickOpen = !!draft.clientPickOpen;
 
     return `
       <div class="prov-cal-add" data-role="prov-cal-add">
         <button type="button" class="prov-cal-add__backdrop" data-action="close-prov-cal-add" aria-label="Zamknij"></button>
         <div class="prov-cal-add__sheet" role="dialog" aria-modal="true" aria-labelledby="prov-cal-add-title">
           <header class="prov-cal-add__head">
-            <h3 class="prov-cal-add__title" id="prov-cal-add-title">Nowy termin</h3>
             <button type="button" class="prov-cal-add__close" data-action="close-prov-cal-add" aria-label="Zamknij">×</button>
+            <h3 class="prov-cal-add__title" id="prov-cal-add-title">Nowy termin</h3>
+            <button type="button" class="prov-cal-add__save" data-action="confirm-prov-cal-add"${canSave ? "" : " disabled"}>Zapisz</button>
           </header>
           <div class="prov-cal-add__body">
-            <label class="prov-cal-add__field" aria-label="Klient">
+            <div class="prov-cal-add__field prov-cal-add__client-pick${clientPickOpen ? " is-open" : ""}" data-role="prov-cal-add-client-pick" aria-label="Klient">
               <span class="prov-cal-add__client-row">
                 <span class="prov-cal-add__client-avatar" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -4423,9 +4731,11 @@
                   </svg>
                 </span>
                 <input type="text" class="prov-cal-add__input" data-role="prov-cal-add-client"
-                  value="${escapeHtml(draft.clientName || "")}" placeholder="Imię i nazwisko" autocomplete="name" />
+                  value="${escapeHtml(draft.clientName || "")}" placeholder="Imię i nazwisko"
+                  autocomplete="off" spellcheck="false" aria-autocomplete="list"
+                  aria-expanded="${clientPickOpen ? "true" : "false"}" aria-controls="prov-cal-add-client-menu" />
               </span>
-            </label>
+            </div>
 
             <div class="prov-cal-add__field" aria-label="Usługa">
               <div class="avail-loc-pick avail-loc-pick--compact prov-cal-add__service-pick${servicePickOpen ? " is-open" : ""}" data-role="prov-cal-add-service-pick">
@@ -4465,7 +4775,6 @@
                 <span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>
               </div>
             </div>
-            <button type="button" class="bottom-nav__book" data-action="confirm-prov-cal-add"${canSave ? "" : " disabled"}>Dodaj</button>
           </div>
         </div>
       </div>`;
@@ -6141,6 +6450,7 @@
   }
 
   function closeAvailPickMenus(except) {
+    let flushAddSchedule = false;
     document
       .querySelectorAll(
         '[data-role="avail-loc-pick"].is-open, [data-role="avail-repeat-pick"].is-open, [data-role="prov-cal-add-service-pick"].is-open'
@@ -6158,8 +6468,10 @@
         if (menu) menu.hidden = true;
         if (pick.getAttribute("data-role") === "prov-cal-add-service-pick" && window.AppState.provCalAddDraft) {
           window.AppState.provCalAddDraft.servicePickOpen = false;
+          if (window.AppState.provCalAddDraft.serviceScheduleDirty) flushAddSchedule = true;
         }
       });
+    if (flushAddSchedule) flushProvCalAddServiceSchedule();
   }
 
   function closeAvailLocMenus(except) {
@@ -7499,6 +7811,16 @@
       closeAvailPickMenus();
     }
     if (
+      !event.target.closest('[data-role="prov-cal-add-client-pick"]') &&
+      !event.target.closest('[data-role="prov-cal-add-client-menu"]')
+    ) {
+      const addDraft = window.AppState.provCalAddDraft;
+      if (addDraft && addDraft.clientPickOpen) {
+        addDraft.clientPickOpen = false;
+        setProvCalAddClientPickOpen(false);
+      }
+    }
+    if (
       !event.target.closest("#avail-series-cloud") &&
       !event.target.closest('[data-action="open-avail-remove-cloud"]')
     ) {
@@ -7820,13 +8142,26 @@
         const pick = btn.closest('[data-role="prov-cal-add-service-pick"]');
         const willOpen = !(pick && pick.classList.contains("is-open"));
         const addDraft = window.AppState.provCalAddDraft;
-        if (addDraft) addDraft.servicePickOpen = willOpen;
+        if (addDraft) {
+          addDraft.servicePickOpen = willOpen;
+          if (willOpen) addDraft.clientPickOpen = false;
+        }
+        if (willOpen) setProvCalAddClientPickOpen(false);
         toggleAvailPickMenu(pick, btn, "prov-cal-add-service-menu");
+        if (!willOpen) flushProvCalAddServiceSchedule();
         break;
       }
       case "prov-cal-add-service":
         event.preventDefault();
         toggleProvCalAddService(d.serviceId);
+        break;
+      case "prov-cal-add-pick-client":
+        event.preventDefault();
+        pickProvCalAddClient(d.name);
+        break;
+      case "prov-cal-add-new-client":
+        event.preventDefault();
+        pickProvCalAddClient(d.name, { addNew: true });
         break;
       case "prov-cal-add-toggle-desc":
         event.preventDefault();
@@ -7954,6 +8289,28 @@
       return;
     }
 
+    const addClientInp = event.target.closest('[data-role="prov-cal-add-client"]');
+    if (addClientInp) {
+      const draft = ensureProvCalAddDraft();
+      draft.clientName = String(addClientInp.value || "");
+      draft.clientPickOpen = true;
+      draft.servicePickOpen = false;
+      closeAvailPickMenus();
+      refreshProvCalAddClientMenu();
+      saveState();
+      return;
+    }
+  });
+
+  document.addEventListener("focusin", function (event) {
+    const addClientInp = event.target.closest('[data-role="prov-cal-add-client"]');
+    if (!addClientInp) return;
+    const draft = ensureProvCalAddDraft();
+    draft.clientName = String(addClientInp.value || "");
+    draft.clientPickOpen = true;
+    draft.servicePickOpen = false;
+    closeAvailPickMenus();
+    refreshProvCalAddClientMenu();
   });
 
   document.addEventListener("change", function (event) {

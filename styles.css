@@ -5573,11 +5573,11 @@ body.avatar-preview-open {
 }
 
 .prov-cal-add__head {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(4.5rem, 1fr) auto minmax(4.5rem, 1fr);
   align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.95rem 1rem 0.55rem;
+  gap: 0.5rem;
+  padding: 0.85rem 0.85rem 0.55rem;
   flex-shrink: 0;
 }
 
@@ -5586,6 +5586,9 @@ body.avatar-preview-open {
   font-size: 1.05rem;
   font-weight: 750;
   color: var(--text);
+  text-align: center;
+  justify-self: center;
+  grid-column: 2;
 }
 
 .prov-cal-add__close {
@@ -5601,6 +5604,31 @@ body.avatar-preview-open {
   font-size: 1.45rem;
   line-height: 1;
   cursor: pointer;
+  justify-self: start;
+  grid-column: 1;
+}
+
+.prov-cal-add__save {
+  appearance: none;
+  -webkit-appearance: none;
+  justify-self: end;
+  grid-column: 3;
+  margin: 0;
+  padding: 0.35rem 0.15rem;
+  border: 0;
+  background: transparent;
+  color: var(--accent-provider);
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.prov-cal-add__save:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .prov-cal-add__body {
@@ -5622,11 +5650,38 @@ body.avatar-preview-open {
   gap: 0.4rem;
 }
 
+.prov-cal-add__client-pick {
+  position: relative;
+  z-index: 1;
+}
+
+.prov-cal-add__client-pick.is-open {
+  z-index: 32;
+}
+
 .prov-cal-add__client-row {
   display: flex;
   align-items: center;
   gap: 0.7rem;
   min-width: 0;
+}
+
+.prov-cal-add__client-menu {
+  /* Mounted on document.body — poza transform/overflow panelu. */
+  position: fixed;
+  z-index: 10060;
+  max-height: min(14rem, 42vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-shadow: 0 10px 28px rgba(20, 24, 30, 0.16);
+}
+
+.prov-cal-add__client-add .avail-loc-pick__opt-label {
+  color: var(--accent-provider);
+}
+
+.prov-cal-add__client-empty {
+  margin: 0.35rem 0.55rem;
 }
 
 .prov-cal-add__client-avatar {
@@ -5711,6 +5766,12 @@ body.avatar-preview-open {
 
 .prov-cal-add__service-opt {
   gap: 0.55rem;
+}
+
+.prov-cal-add__service-sep {
+  height: 1px;
+  margin: 0.25rem 0.45rem;
+  background: color-mix(in srgb, var(--border) 88%, transparent);
 }
 
 .prov-cal-add__service-opt-meta {
@@ -5840,8 +5901,9 @@ body.avatar-preview-open {
   box-shadow: none;
 }
 
-.prov-cal-add__foot .bottom-nav__book {
-  background: var(--accent-provider);
+.prov-cal-add__foot .bottom-nav__summary {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
