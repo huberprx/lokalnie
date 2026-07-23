@@ -87,6 +87,9 @@
       provCalSearchOpen: false,
       provCalSearchQ: "",
       provCalSelection: null,
+      /** Panel „+” → nowy termin z kalendarza usługodawcy. */
+      provCalAddOpen: false,
+      provCalAddDraft: null,
       availWeekStart: null,
       availStripScrollLeft: null,
       availPickerMonth: null,
@@ -1258,6 +1261,8 @@
           typeof stored.provCalPickerMonth === "string" ? stored.provCalPickerMonth : base.provCalPickerMonth,
         provCalSearchOpen: !!stored.provCalSearchOpen,
         provCalSearchQ: typeof stored.provCalSearchQ === "string" ? stored.provCalSearchQ : base.provCalSearchQ,
+        provCalAddOpen: false,
+        provCalAddDraft: null,
         provCalSelection: normalizeProvCalSelection(
           stored.provCalSelection ||
             (typeof stored.provCalSelectedBookingId === "string"
@@ -4085,6 +4090,247 @@
       </div>`;
   }
 
+  function defaultProvCalAddDraft() {
+    return {
+      clientName: "",
+      serviceId: null,
+      dateISO: ensureProvCalDate(),
+      slotId: null,
+    };
+  }
+
+  function ensureProvCalAddDraft() {
+    const cur = window.AppState.provCalAddDraft;
+    if (cur && typeof cur === "object") {
+      if (!cur.dateISO) cur.dateISO = ensureProvCalDate();
+      return cur;
+    }
+    window.AppState.provCalAddDraft = defaultProvCalAddDraft();
+    return window.AppState.provCalAddDraft;
+  }
+
+  function captureProvCalAddClientName() {
+    const input = document.querySelector('[data-role="prov-cal-add-client"]');
+    const draft = window.AppState.provCalAddDraft;
+    if (!input || !draft) return;
+    draft.clientName = String(input.value || "").trim();
+  }
+
+  function openProvCalAdd() {
+    window.AppState.provCalAddOpen = true;
+    window.AppState.provCalAddDraft = defaultProvCalAddDraft();
+    const p = myProvider();
+    const services = (p && p.services) || [];
+    if (services.length === 1) window.AppState.provCalAddDraft.serviceId = services[0].id;
+    setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
+    closeProvCalViewCloud();
+    saveState();
+    renderAll();
+    requestAnimationFrame(function () {
+      const input = document.querySelector('[data-role="prov-cal-add-client"]');
+      if (input) input.focus();
+    });
+  }
+
+  function closeProvCalAdd() {
+    window.AppState.provCalAddOpen = false;
+    window.AppState.provCalAddDraft = null;
+    saveState();
+    renderAll();
+  }
+
+  function setProvCalAddService(serviceId) {
+    captureProvCalAddClientName();
+    const draft = ensureProvCalAddDraft();
+    draft.serviceId = serviceId || null;
+    draft.slotId = null;
+    saveState();
+    renderAll();
+  }
+
+  function setProvCalAddDate(dateISO) {
+    captureProvCalAddClientName();
+    const draft = ensureProvCalAddDraft();
+    draft.dateISO = dateISO || ensureProvCalDate();
+    draft.slotId = null;
+    window.AppState.provCalDate = draft.dateISO;
+    window.AppState.provCalPickerMonth = draft.dateISO.slice(0, 7);
+    saveState();
+    renderAll();
+  }
+
+  function setProvCalAddSlot(slotId) {
+    captureProvCalAddClientName();
+    const draft = ensureProvCalAddDraft();
+    draft.slotId = slotId || null;
+    saveState();
+    renderAll();
+  }
+
+  function confirmProvCalAdd() {
+    captureProvCalAddClientName();
+    const draft = ensureProvCalAddDraft();
+    const p = myProvider();
+    if (!p) return;
+    const clientName = String(draft.clientName || "").trim();
+    if (!clientName) {
+      showToast("Podaj imię klienta.");
+      return;
+    }
+    const svc = (p.services || []).find(function (s) {
+      return s.id === draft.serviceId;
+    });
+    if (!svc) {
+      showToast("Wybierz usługę.");
+      return;
+    }
+    if (!draft.dateISO || !draft.slotId) {
+      showToast("Wybierz dzień i godzinę.");
+      return;
+    }
+    const slots = computeSlots(p, draft.dateISO, svc.durationMin || 15);
+    const slot = slots.find(function (s) {
+      return s.id === draft.slotId;
+    });
+    if (!slot) {
+      showToast("Ten termin jest już zajęty — wybierz inny.");
+      draft.slotId = null;
+      saveState();
+      renderAll();
+      return;
+    }
+    const booking = {
+      id: "bk-" + Date.now(),
+      providerId: p.id,
+      providerName: p.name,
+      clientName: clientName,
+      serviceIds: [svc.id],
+      serviceNames: [svc.name],
+      dateISO: draft.dateISO,
+      from: slot.from,
+      to: slot.to,
+      locationId: slot.locationId || "",
+      locationLabel: slot.locationLabel || "",
+      status: "confirmed",
+      side: "provider",
+    };
+    window.AppState.bookings.push(booking);
+    window.AppState.provCalDate = booking.dateISO;
+    window.AppState.provCalPickerMonth = booking.dateISO.slice(0, 7);
+    window.AppState.provCalSelection = normalizeProvCalSelection({
+      kind: "booking",
+      bookingId: booking.id,
+      dateISO: booking.dateISO,
+      fromMin: timeToMinutes(booking.from),
+      toMin: timeToMinutes(booking.to),
+    });
+    window.AppState.provCalAddOpen = false;
+    window.AppState.provCalAddDraft = null;
+    saveState();
+    renderAll();
+    hapticTap(22);
+    showToast("Termin dodany ✓");
+  }
+
+  function renderProvCalAddPanel() {
+    if (!window.AppState.provCalAddOpen) return "";
+    const p = myProvider();
+    const draft = ensureProvCalAddDraft();
+    const services = (p && p.services) || [];
+    const svc = services.find(function (s) {
+      return s.id === draft.serviceId;
+    });
+    const duration = (svc && svc.durationMin) || 30;
+    const availDays = ((p && p.availability) || []).filter(function (d) {
+      return computeSlots(p, d.dateISO, duration).length > 0;
+    });
+    let activeDate = draft.dateISO;
+    if (!availDays.some(function (d) {
+      return d.dateISO === activeDate;
+    })) {
+      activeDate = (availDays[0] && availDays[0].dateISO) || ensureProvCalDate();
+      draft.dateISO = activeDate;
+    }
+    const slots = svc ? computeSlots(p, activeDate, duration) : [];
+
+    const serviceChips = services.length
+      ? services
+          .map(function (s) {
+            const on = s.id === draft.serviceId;
+            return `<button type="button" class="prov-cal-add__chip${on ? " is-on" : ""}" data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}">
+              <span class="prov-cal-add__chip-name">${escapeHtml(s.name)}</span>
+              <span class="prov-cal-add__chip-meta">${escapeHtml(formatDuration(s.durationMin || 0))}</span>
+            </button>`;
+          })
+          .join("")
+      : `<p class="empty-note">Brak usług — dodaj je w zakładce Usługi.</p>`;
+
+    const dateStrip = availDays.length
+      ? availDays
+          .map(function (d) {
+            const dt = new Date(d.dateISO + "T12:00:00");
+            const on = d.dateISO === activeDate;
+            const red = isRedCalendarDay(d.dateISO);
+            return `<button type="button" class="date-chip${on ? " date-chip--active" : ""}${red ? " date-chip--holiday" : ""}" data-action="prov-cal-add-date" data-date="${escapeHtml(d.dateISO)}">
+              <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span><span class="date-chip__day">${dt.getDate()}</span>
+            </button>`;
+          })
+          .join("")
+      : `<p class="empty-note">Brak dostępności w kalendarzu.</p>`;
+
+    const timeList =
+      !svc
+        ? `<p class="empty-note">Najpierw wybierz usługę.</p>`
+        : slots.length
+          ? slots
+              .map(function (s) {
+                const on = draft.slotId === s.id;
+                return `<button type="button" class="time-row${on ? " time-row--selected" : ""}" data-action="prov-cal-add-slot" data-slot="${escapeHtml(s.id)}">
+                  <span class="time-row__range">${escapeHtml(s.from)}→${escapeHtml(s.to)}</span>
+                  ${s.locationLabel ? `<span class="time-row__place">${escapeHtml(s.locationLabel)}</span>` : ""}
+                </button>`;
+              })
+              .join("")
+          : `<p class="empty-note">Brak wolnych godzin w tym dniu.</p>`;
+
+    const canSave = !!svc && !!draft.slotId;
+
+    return `
+      <div class="prov-cal-add" data-role="prov-cal-add">
+        <button type="button" class="prov-cal-add__backdrop" data-action="close-prov-cal-add" aria-label="Zamknij"></button>
+        <div class="prov-cal-add__sheet" role="dialog" aria-modal="true" aria-labelledby="prov-cal-add-title">
+          <header class="prov-cal-add__head">
+            <h3 class="prov-cal-add__title" id="prov-cal-add-title">Nowy termin</h3>
+            <button type="button" class="prov-cal-add__close" data-action="close-prov-cal-add" aria-label="Zamknij">×</button>
+          </header>
+          <div class="prov-cal-add__body">
+            <label class="prov-cal-add__field">
+              <span class="prov-cal-add__label">Klient</span>
+              <input type="text" class="prov-cal-add__input" data-role="prov-cal-add-client"
+                value="${escapeHtml(draft.clientName || "")}" placeholder="Imię i nazwisko" autocomplete="name" />
+            </label>
+            <div class="prov-cal-add__section">
+              <span class="prov-cal-add__label">Usługa</span>
+              <div class="prov-cal-add__chips">${serviceChips}</div>
+            </div>
+            <div class="prov-cal-add__section">
+              <span class="prov-cal-add__label">Dzień</span>
+              <div class="date-strip prov-cal-add__dates">${dateStrip}</div>
+            </div>
+            <div class="prov-cal-add__section">
+              <span class="prov-cal-add__label">Godzina${activeDate ? " · " + escapeHtml(formatDateLong(activeDate)) : ""}</span>
+              <div class="time-list prov-cal-add__times">${timeList}</div>
+            </div>
+          </div>
+          <div class="prov-cal-add__foot">
+            <button type="button" class="btn btn--primary prov-cal-add__save" data-action="confirm-prov-cal-add"${canSave ? "" : " disabled"}>
+              Dodaj termin
+            </button>
+          </div>
+        </div>
+      </div>`;
+  }
+
   function renderProviderCalendar() {
     const selected = ensureProvCalDate();
     const visits = providerVisits();
@@ -4093,12 +4339,13 @@
     const dynMinHourH = provCalNoOverlapMinHourH();
     if (ensureProvCalHourH() < dynMinHourH) window.AppState.provCalHourH = clampProvCalHourH(dynMinHourH);
     const monthOpen = !!window.AppState.provCalMonthOpen;
+    const addOpen = !!window.AppState.provCalAddOpen;
     const selectedD = new Date(selected + "T12:00:00");
     const monthLabel = isNaN(selectedD.getTime())
       ? "Miesiąc"
       : MONTHS_NOM[selectedD.getMonth()] || "Miesiąc";
     return `
-      <div class="app-screen app-screen--provider app-screen--prov-cal">
+      <div class="app-screen app-screen--provider app-screen--prov-cal${addOpen ? " app-screen--prov-cal-add-open" : ""}">
         <div class="prov-cal-top">
           <header class="screen-head screen-head--prov-cal">
             <div class="prov-cal-head">
@@ -4128,6 +4375,10 @@
         <div class="prov-cal-body" data-role="prov-cal-body">
           ${renderProvCalGoogleWeek(selected, visits)}
         </div>
+        <button type="button" class="prov-cal-fab" data-action="open-prov-cal-add" aria-label="Dodaj termin" title="Dodaj termin"${addOpen ? " hidden" : ""}>
+          <span class="prov-cal-fab__icon" aria-hidden="true">+</span>
+        </button>
+        ${renderProvCalAddPanel()}
         ${providerBottomNav("calendar")}
       </div>`;
   }
@@ -7407,6 +7658,30 @@
         event.preventDefault();
         if (window._provCalSwipeSuppressClick) break;
         pickProvCalDate(d.date);
+        break;
+      case "open-prov-cal-add":
+        event.preventDefault();
+        openProvCalAdd();
+        break;
+      case "close-prov-cal-add":
+        event.preventDefault();
+        closeProvCalAdd();
+        break;
+      case "prov-cal-add-service":
+        event.preventDefault();
+        setProvCalAddService(d.serviceId);
+        break;
+      case "prov-cal-add-date":
+        event.preventDefault();
+        setProvCalAddDate(d.date);
+        break;
+      case "prov-cal-add-slot":
+        event.preventDefault();
+        setProvCalAddSlot(d.slot);
+        break;
+      case "confirm-prov-cal-add":
+        event.preventDefault();
+        confirmProvCalAdd();
         break;
       case "propose-open": proposeOpen(d.requestId); break;
       case "propose-date": proposeDate(d.requestId, d.date); break;
