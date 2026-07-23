@@ -1333,7 +1333,9 @@
   // ─────────────────────────────────────────────────────────
   // Sloty rezerwacji
   // ─────────────────────────────────────────────────────────
-  function computeSlots(provider, dateISO, totalDurationMin) {
+  function computeSlots(provider, dateISO, totalDurationMin, opts) {
+    opts = opts || {};
+    const exceptBookingId = opts.exceptBookingId || null;
     const day = (provider.availability || []).find((d) => d.dateISO === dateISO);
     if (!day) return [];
 
@@ -1344,6 +1346,7 @@
       }
     });
     (window.AppState.bookings || []).forEach((bk) => {
+      if (exceptBookingId && bk.id === exceptBookingId) return;
       if (
         bk.providerId === provider.id &&
         bk.dateISO === dateISO &&
@@ -4118,6 +4121,7 @@
 
   function defaultProvCalAddDraft() {
     return {
+      bookingId: null,
       clientName: "",
       serviceIds: [PROV_CAL_ADD_DEFAULT_DURATION_ID],
       dateISO: ensureProvCalDate(),
@@ -4137,10 +4141,28 @@
       }
       if (typeof cur.servicePickOpen !== "boolean") cur.servicePickOpen = false;
       if (typeof cur.clientPickOpen !== "boolean") cur.clientPickOpen = false;
+      if (cur.bookingId == null) cur.bookingId = null;
       return cur;
     }
     window.AppState.provCalAddDraft = defaultProvCalAddDraft();
     return window.AppState.provCalAddDraft;
+  }
+
+  function provCalAddSlotIdForBooking(booking) {
+    if (!booking || !booking.dateISO || !booking.from) return null;
+    return "slot-" + booking.dateISO + "-" + timeToMin(booking.from);
+  }
+
+  function serviceIdsFromBooking(booking) {
+    const ids = ((booking && booking.serviceIds) || []).filter(Boolean);
+    if (ids.length) return ids.slice();
+    const from = timeToMin((booking && booking.from) || "00:00");
+    const to = timeToMin((booking && booking.to) || "00:00");
+    const dur = Math.max(0, to - from);
+    const match = PROV_CAL_ADD_DURATION_OPTS.find(function (d) {
+      return d.durationMin === dur;
+    });
+    return [match ? match.id : PROV_CAL_ADD_DEFAULT_DURATION_ID];
   }
 
   function ensureProviderClientsList(providerId) {
@@ -4369,6 +4391,35 @@
     });
   }
 
+  function openProvCalEdit(bookingId) {
+    const bk = (window.AppState.bookings || []).find(function (b) {
+      return b && b.id === bookingId;
+    });
+    if (!bk) return;
+    const draft = defaultProvCalAddDraft();
+    draft.bookingId = bk.id;
+    draft.clientName = String(bk.clientName || "");
+    draft.serviceIds = serviceIdsFromBooking(bk);
+    draft.dateISO = bk.dateISO || ensureProvCalDate();
+    draft.slotId = provCalAddSlotIdForBooking(bk);
+    window.AppState.provCalAddOpen = true;
+    window.AppState.provCalAddDraft = draft;
+    window.AppState.provCalDate = draft.dateISO;
+    window.AppState.provCalPickerMonth = draft.dateISO.slice(0, 7);
+    window.AppState.provCalSelection = normalizeProvCalSelection({
+      kind: "booking",
+      bookingId: bk.id,
+      dateISO: bk.dateISO,
+      fromMin: timeToMinutes(bk.from),
+      toMin: timeToMinutes(bk.to),
+    });
+    setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
+    closeProvCalViewCloud();
+    saveState();
+    renderAll();
+    hapticTap(16);
+  }
+
   function closeProvCalAdd() {
     window.AppState.provCalAddOpen = false;
     window.AppState.provCalAddDraft = null;
@@ -4573,7 +4624,8 @@
       return;
     }
     const totals = provCalAddServiceTotals(selected);
-    const slots = computeSlots(p, draft.dateISO, totals.duration || 15);
+    const slotOpts = draft.bookingId ? { exceptBookingId: draft.bookingId } : {};
+    const slots = computeSlots(p, draft.dateISO, totals.duration || 15, slotOpts);
     const slot = slots.find(function (s) {
       return s.id === draft.slotId;
     });
@@ -4584,26 +4636,49 @@
       renderAll();
       return;
     }
-    const booking = {
-      id: "bk-" + Date.now(),
-      providerId: p.id,
-      providerName: p.name,
-      clientName: clientName,
-      serviceIds: selected.map(function (s) {
-        return s.id;
-      }),
-      serviceNames: selected.map(function (s) {
-        return s.name;
-      }),
-      dateISO: draft.dateISO,
-      from: slot.from,
-      to: slot.to,
-      locationId: slot.locationId || "",
-      locationLabel: slot.locationLabel || "",
-      status: "confirmed",
-      side: "provider",
-    };
-    window.AppState.bookings.push(booking);
+    const serviceIds = selected.map(function (s) {
+      return s.id;
+    });
+    const serviceNames = selected.map(function (s) {
+      return s.name;
+    });
+    let booking = null;
+    const editing = !!draft.bookingId;
+    if (editing) {
+      booking = (window.AppState.bookings || []).find(function (b) {
+        return b && b.id === draft.bookingId;
+      });
+      if (!booking) {
+        showToast("Nie znaleziono terminu.");
+        return;
+      }
+      booking.clientName = clientName;
+      booking.serviceIds = serviceIds;
+      booking.serviceNames = serviceNames;
+      booking.dateISO = draft.dateISO;
+      booking.from = slot.from;
+      booking.to = slot.to;
+      booking.locationId = slot.locationId || "";
+      booking.locationLabel = slot.locationLabel || "";
+      if (!booking.status) booking.status = "confirmed";
+    } else {
+      booking = {
+        id: "bk-" + Date.now(),
+        providerId: p.id,
+        providerName: p.name,
+        clientName: clientName,
+        serviceIds: serviceIds,
+        serviceNames: serviceNames,
+        dateISO: draft.dateISO,
+        from: slot.from,
+        to: slot.to,
+        locationId: slot.locationId || "",
+        locationLabel: slot.locationLabel || "",
+        status: "confirmed",
+        side: "provider",
+      };
+      window.AppState.bookings.push(booking);
+    }
     window.AppState.provCalDate = booking.dateISO;
     window.AppState.provCalPickerMonth = booking.dateISO.slice(0, 7);
     window.AppState.provCalSelection = normalizeProvCalSelection({
@@ -4618,7 +4693,7 @@
     saveState();
     renderAll();
     hapticTap(22);
-    showToast("Termin dodany ✓");
+    showToast(editing ? "Termin zapisany ✓" : "Termin dodany ✓");
   }
 
   function renderProvCalAddPanel() {
@@ -4631,12 +4706,14 @@
     const selected = provCalAddSelectedServices(p, draft);
     const totals = provCalAddServiceTotals(selected);
     const duration = totals.duration || 30;
+    const isEdit = !!draft.bookingId;
+    const slotOpts = isEdit ? { exceptBookingId: draft.bookingId } : {};
     const availDates = ((p && p.availability) || [])
       .map(function (d) {
         return d.dateISO;
       })
       .filter(function (dateISO) {
-        return computeSlots(p, dateISO, duration).length > 0;
+        return computeSlots(p, dateISO, duration, slotOpts).length > 0;
       });
     let activeDate = draft.dateISO;
     if (availDates.indexOf(activeDate) === -1) {
@@ -4644,7 +4721,7 @@
       draft.dateISO = activeDate;
     }
     const hasSvc = selected.length > 0;
-    const slots = hasSvc ? computeSlots(p, activeDate, duration) : [];
+    const slots = hasSvc ? computeSlots(p, activeDate, duration, slotOpts) : [];
     const catalogServices = (p && p.services) || [];
     const serviceMenu =
       PROV_CAL_ADD_DURATION_OPTS.map(function (s) {
@@ -4667,8 +4744,10 @@
               return `<button type="button" class="avail-loc-pick__opt prov-cal-add__service-opt${on ? " is-selected" : ""}" role="option"
                 data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}"
                 aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
-                <span class="avail-loc-pick__opt-label">${escapeHtml(s.name)}</span>
-                ${meta ? `<span class="prov-cal-add__service-opt-meta">${escapeHtml(meta)}</span>` : ""}
+                <span class="prov-cal-add__service-opt-main">
+                  <span class="avail-loc-pick__opt-label">${escapeHtml(s.name)}</span>
+                  ${meta ? `<span class="prov-cal-add__service-opt-meta">${escapeHtml(meta)}</span>` : ""}
+                </span>
                 <span class="service-row__check-visual${on ? " is-on" : ""}" aria-hidden="true"></span>
               </button>`;
             })
@@ -4718,7 +4797,7 @@
         <div class="prov-cal-add__sheet" role="dialog" aria-modal="true" aria-labelledby="prov-cal-add-title">
           <header class="prov-cal-add__head">
             <button type="button" class="prov-cal-add__close" data-action="close-prov-cal-add" aria-label="Zamknij">×</button>
-            <h3 class="prov-cal-add__title" id="prov-cal-add-title">Nowy termin</h3>
+            <h3 class="prov-cal-add__title" id="prov-cal-add-title">${isEdit ? "Edytuj termin" : "Nowy termin"}</h3>
             <button type="button" class="prov-cal-add__save" data-action="confirm-prov-cal-add"${canSave ? "" : " disabled"}>Zapisz</button>
           </header>
           <div class="prov-cal-add__body">
@@ -7772,7 +7851,9 @@
       const slot = event.target.closest('[data-role="prov-cal-slot"]');
       if (slot) {
         event.preventDefault();
-        selectProvCalSlot(selectionFromSlotEl(slot));
+        const sel = selectionFromSlotEl(slot);
+        if (sel && sel.kind === "booking" && sel.bookingId) openProvCalEdit(sel.bookingId);
+        else selectProvCalSlot(sel);
       }
       return;
     }
@@ -8094,8 +8175,12 @@
           window._provCalSlotIgnoreClick = false;
           break;
         }
+        if (d.bookingId || d.kind === "booking") {
+          openProvCalEdit(d.bookingId);
+          break;
+        }
         selectProvCalSlot({
-          kind: d.kind || (d.bookingId ? "booking" : "free"),
+          kind: d.kind || "free",
           bookingId: d.bookingId,
           dateISO: d.date || ensureProvCalDate(),
           fromMin: Number(d.fromMin),
@@ -8735,7 +8820,8 @@
       } else {
         const sel = selectionFromSlotEl(drag.el);
         resetDrag();
-        selectProvCalSlot(sel);
+        if (sel && sel.kind === "booking" && sel.bookingId) openProvCalEdit(sel.bookingId);
+        else selectProvCalSlot(sel);
       }
     }
 
