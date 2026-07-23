@@ -90,6 +90,8 @@
       /** Panel „+” → nowy termin z kalendarza usługodawcy. */
       provCalAddOpen: false,
       provCalAddDraft: null,
+      /** Pulpit: pokazywać karty wolnych luk między wizytami (domyślnie nie). */
+      dashShowFreeSlots: false,
       /** Zapisani klienci usługodawcy: { [providerId]: [{ id, name }] } */
       providerClients: {},
       availWeekStart: null,
@@ -1270,6 +1272,7 @@
         provCalSearchQ: typeof stored.provCalSearchQ === "string" ? stored.provCalSearchQ : base.provCalSearchQ,
         provCalAddOpen: false,
         provCalAddDraft: null,
+        dashShowFreeSlots: stored.dashShowFreeSlots === true,
         providerClients:
           stored.providerClients && typeof stored.providerClients === "object" ? stored.providerClients : base.providerClients,
         provCalSelection: normalizeProvCalSelection(
@@ -2716,6 +2719,7 @@
       .sort((a, b) => (a.dateISO + a.from).localeCompare(b.dateISO + b.from));
 
     const pendingCount = (window.AppState.requests || []).filter((r) => r.providerId === MY_PROVIDER_ID && r.status === "pending").length;
+    const showFree = !!window.AppState.dashShowFreeSlots;
 
     return `
       <div class="app-screen app-screen--provider">
@@ -2728,11 +2732,18 @@
             <div class="stat-card"><span class="stat-card__num">${upcoming.length}</span><span class="stat-card__lbl">Nadchodzące wizyty</span></div>
             <div class="stat-card"><span class="stat-card__num">${pendingCount}</span><span class="stat-card__lbl">Oczekujące prośby</span></div>
           </div>
-          <h3 class="prov-section">Nadchodzące wizyty</h3>
+          <div class="prov-section-row">
+            <h3 class="prov-section">Nadchodzące wizyty</h3>
+            <label class="prov-free-toggle">
+              <span class="prov-free-toggle__text">Wolne terminy</span>
+              <input type="checkbox" class="avail-edit__switch" data-role="prov-show-free"
+                ${showFree ? "checked" : ""} aria-label="Pokazuj wolne terminy" />
+            </label>
+          </div>
           <div class="visit-list">
             ${
               upcoming.length
-                ? renderProviderVisitTimeline(upcoming)
+                ? renderProviderVisitTimeline(upcoming, { showFree: showFree })
                 : `<p class="empty-note">Brak nadchodzących wizyt. Zarezerwuj coś jako klient, aby zobaczyć synchronizację.</p>`
             }
           </div>
@@ -2742,10 +2753,12 @@
   }
 
   /** Lista wizyt z kartami „Wolne” w lukach między kolejnymi terminami tego samego dnia. */
-  function renderProviderVisitTimeline(upcoming) {
+  function renderProviderVisitTimeline(upcoming, opts) {
+    const showFree = !opts || opts.showFree !== false;
     let html = "";
     for (let i = 0; i < upcoming.length; i++) {
       html += renderProviderVisitCard(upcoming[i]);
+      if (!showFree) continue;
       const next = upcoming[i + 1];
       if (!next) continue;
       const cur = upcoming[i];
@@ -2776,8 +2789,16 @@
   function renderProviderVisitCard(b) {
     const durationMin = Math.max(0, timeToMin(b.to) - timeToMin(b.from));
     const services = (b.serviceNames || []).length ? b.serviceNames : ["Usługa"];
+    const p = myProvider();
+    let locId = b.locationId || null;
+    if (!locId) {
+      const block = resolveAvailBlockForRange(b.dateISO, timeToMin(b.from), timeToMin(b.to));
+      if (block && block.locationId) locId = block.locationId;
+    }
+    const toneClass = locId ? locationToneClass(p, locId) : "";
+    const locAttr = locId ? ` data-location-id="${escapeHtml(String(locId))}"` : "";
     return `
-      <div class="visit-card visit-card--provider" data-booking-id="${escapeHtml(b.id)}" data-status="${escapeHtml(b.status)}">
+      <div class="visit-card visit-card--provider${toneClass ? " " + escapeHtml(toneClass) : ""}" data-booking-id="${escapeHtml(b.id)}" data-status="${escapeHtml(b.status)}"${locAttr}>
         <div class="visit-card__schedule">
           <time class="visit-card__range" datetime="${escapeHtml(b.dateISO + "T" + b.from)}">${escapeHtml(b.from)}–${escapeHtml(b.to)}</time>
           <span class="visit-card__duration" aria-label="Czas trwania: ${escapeHtml(formatDuration(durationMin))}">
@@ -3024,16 +3045,90 @@
       !events && ensureProvCalVisibleDays() <= 1
         ? `<p class="gcal__empty">Brak wizyt w tym dniu</p>`
         : "";
+    const draftSlot = renderProvCalFreeDraftHtml(dateISO, hourH, dayStartMin, dayEndMin);
 
     return `
       <div class="gcal-week__col${isToday ? " gcal-week__col--today" : ""}" data-date="${escapeHtml(dateISO)}">
-        <div class="gcal__track gcal-week__track" data-action="prov-cal-pick-date" data-date="${escapeHtml(dateISO)}">
+        <div class="gcal__track gcal-week__track" data-role="prov-cal-track" data-date="${escapeHtml(dateISO)}">
           ${renderProvCalAvailBars(dateISO, hourH, dayStartMin, dayEndMin)}
           ${nowLine}
           ${events}
+          ${draftSlot}
           ${empty}
         </div>
       </div>`;
+  }
+
+  /** Pusty zaznaczony przedział (jak w Google Calendar) — bez zapisu wizyty. */
+  function renderProvCalFreeDraftHtml(dateISO, hourH, dayStartMin, dayEndMin) {
+    const sel = window.AppState.provCalSelection;
+    if (!sel || sel.kind !== "free" || sel.dateISO !== dateISO) return "";
+    const fromM = Math.max(dayStartMin, Math.min(dayEndMin, Number(sel.fromMin) || dayStartMin));
+    const toM = Math.max(dayStartMin, Math.min(dayEndMin, Number(sel.toMin) || fromM + 30));
+    if (!(toM > fromM)) return "";
+    const top = ((fromM - dayStartMin) / 60) * hourH;
+    const height = Math.max(28, ((toM - fromM) / 60) * hourH);
+    const fromLabel = minToTime(fromM);
+    const toLabel = minToTime(toM);
+    return `
+      <article class="gcal__event gcal__event--draft gcal__event--selected"
+        style="top:${top}px;height:${height}px"
+        data-role="prov-cal-slot" data-kind="free" data-date="${escapeHtml(dateISO)}"
+        data-action="select-prov-cal-slot"
+        data-from-min="${fromM}" data-to-min="${toM}"
+        role="button" tabindex="0" aria-pressed="true"
+        aria-label="Zaznaczony przedział ${escapeHtml(fromLabel)}–${escapeHtml(toLabel)}">
+        <span class="gcal__event-resize gcal__event-resize--start" data-role="prov-cal-resize" data-edge="start" aria-hidden="true"></span>
+        <div class="gcal__event-row">
+          <span class="gcal__event-time">${escapeHtml(fromLabel)}–${escapeHtml(toLabel)}</span>
+        </div>
+        <span class="gcal__event-resize gcal__event-resize--end" data-role="prov-cal-resize" data-edge="end" aria-hidden="true"></span>
+      </article>`;
+  }
+
+  function placeProvCalFreeSelection(dateISO, clientY, track) {
+    if (!dateISO || !track) return;
+    const hourH = ensureProvCalHourH();
+    const dayStart = PROV_CAL_HOUR_START * 60;
+    const dayEnd = PROV_CAL_HOUR_END * 60;
+    const defaultDur = 30;
+    const rect = track.getBoundingClientRect();
+    let fromMin = dayStart + ((clientY - rect.top) / hourH) * 60;
+    fromMin = snapProvCalMin(fromMin);
+    fromMin = Math.max(dayStart, Math.min(dayEnd - defaultDur, fromMin));
+    let toMin = fromMin + defaultDur;
+    if (toMin > dayEnd) {
+      toMin = dayEnd;
+      fromMin = Math.max(dayStart, toMin - defaultDur);
+    }
+    window.AppState.provCalSelection = normalizeProvCalSelection({
+      kind: "free",
+      dateISO: dateISO,
+      fromMin: fromMin,
+      toMin: toMin,
+    });
+    window.AppState.provCalDate = dateISO;
+    window.AppState.provCalPickerMonth = dateISO.slice(0, 7);
+    saveState();
+    renderAll();
+    hapticTap(12);
+  }
+
+  function applyProvCalFreeDraftLayout(el, fromMin, toMin) {
+    if (!el) return;
+    const hourH = ensureProvCalHourH();
+    const dayStartMin = PROV_CAL_HOUR_START * 60;
+    const top = ((fromMin - dayStartMin) / 60) * hourH;
+    const height = Math.max(28, ((toMin - fromMin) / 60) * hourH);
+    el.style.top = top + "px";
+    el.style.height = height + "px";
+    el.setAttribute("data-from-min", String(fromMin));
+    el.setAttribute("data-to-min", String(toMin));
+    const timeEl = el.querySelector(".gcal__event-time");
+    const fromLabel = minToTime(fromMin);
+    const toLabel = minToTime(toMin);
+    if (timeEl) timeEl.textContent = fromLabel + "–" + toLabel;
+    el.setAttribute("aria-label", "Zaznaczony przedział " + fromLabel + "–" + toLabel);
   }
 
   /**
@@ -4115,6 +4210,37 @@
     return String(id || "").indexOf("dur-") === 0;
   }
 
+  function durationServiceForMinutes(min) {
+    const n = Math.max(5, Math.round(Number(min) || 30));
+    const exact = PROV_CAL_ADD_DURATION_OPTS.find(function (d) {
+      return d.durationMin === n;
+    });
+    if (exact) return exact;
+    return {
+      id: "dur-" + n,
+      name: formatDuration(n),
+      durationMin: n,
+      price: null,
+      isDuration: true,
+    };
+  }
+
+  function resolveProvCalAddService(p, id) {
+    if (!id) return null;
+    if (isProvCalAddDurationId(id)) {
+      const known = PROV_CAL_ADD_DURATION_OPTS.find(function (d) {
+        return d.id === id;
+      });
+      if (known) return known;
+      const m = /^dur-(\d+)$/.exec(String(id));
+      if (m) return durationServiceForMinutes(Number(m[1]));
+      return null;
+    }
+    return ((p && p.services) || []).find(function (s) {
+      return s.id === id;
+    }) || null;
+  }
+
   function provCalAddServiceOptions(p) {
     return PROV_CAL_ADD_DURATION_OPTS.concat((p && p.services) || []);
   }
@@ -4343,9 +4469,11 @@
 
   function provCalAddSelectedServices(p, draft) {
     const ids = (draft && draft.serviceIds) || [];
-    return provCalAddServiceOptions(p).filter(function (s) {
-      return ids.indexOf(s.id) !== -1;
-    });
+    return ids
+      .map(function (id) {
+        return resolveProvCalAddService(p, id);
+      })
+      .filter(Boolean);
   }
 
   function provCalAddServiceTotals(selected) {
@@ -4379,8 +4507,19 @@
   }
 
   function openProvCalAdd() {
+    const draft = defaultProvCalAddDraft();
+    const sel = window.AppState.provCalSelection;
+    if (sel && sel.kind === "free" && sel.dateISO) {
+      const dur = Math.max(5, Number(sel.toMin) - Number(sel.fromMin));
+      const durSvc = durationServiceForMinutes(dur);
+      draft.dateISO = sel.dateISO;
+      draft.serviceIds = [durSvc.id];
+      draft.slotId = "slot-" + sel.dateISO + "-" + Number(sel.fromMin);
+      window.AppState.provCalDate = sel.dateISO;
+      window.AppState.provCalPickerMonth = sel.dateISO.slice(0, 7);
+    }
     window.AppState.provCalAddOpen = true;
-    window.AppState.provCalAddDraft = defaultProvCalAddDraft();
+    window.AppState.provCalAddDraft = draft;
     setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
     closeProvCalViewCloud();
     saveState();
@@ -8189,17 +8328,18 @@
       case "select-prov-cal-slot":
         event.preventDefault();
         event.stopPropagation();
-        if (window._provCalSlotIgnoreClick) {
+        if (window._provCalSlotIgnoreClick || window._provCalResizeIgnoreClick) {
           window._provCalSlotIgnoreClick = false;
+          window._provCalResizeIgnoreClick = false;
           break;
         }
         if (d.bookingId || d.kind === "booking") {
           openProvCalEdit(d.bookingId);
           break;
         }
+        // Pusty przedział: drugi tap odznacza.
         selectProvCalSlot({
-          kind: d.kind || "free",
-          bookingId: d.bookingId,
+          kind: "free",
           dateISO: d.date || ensureProvCalDate(),
           fromMin: Number(d.fromMin),
           toMin: Number(d.toMin),
@@ -8425,6 +8565,14 @@
       return;
     }
 
+    const showFreeToggle = event.target.closest('[data-role="prov-show-free"]');
+    if (showFreeToggle) {
+      window.AppState.dashShowFreeSlots = !!showFreeToggle.checked;
+      saveState();
+      renderAll();
+      return;
+    }
+
     const availField = event.target.closest('.avail-edit input:not([type="hidden"]), .avail-edit select');
     if (availField) {
       const form = availField.closest('[data-role="avail-edit-form"]');
@@ -8454,6 +8602,145 @@
    * Zaznaczanie wolnych/zajętych + przeciąganie WIZYT na wolne sloty (snap 5 min).
    * „Wolne” da się tylko zaznaczyć — nie przesuwa się; przyjmuje upuszczoną wizytę.
    */
+  /** Tap w pusty tor → zaznacz przedział 30 min (jak Google Calendar). */
+  function bindProvCalEmptyTap() {
+    if (bindProvCalEmptyTap.done) return;
+    bindProvCalEmptyTap.done = true;
+    document.addEventListener(
+      "click",
+      function (event) {
+        if (window._provCalSlotIgnoreClick || window._provCalResizeIgnoreClick || window._provCalSwipeSuppressClick) {
+          return;
+        }
+        if (window.AppState.provCalAddOpen || window.AppState.provCalMonthOpen) return;
+        const track = event.target.closest && event.target.closest('[data-role="prov-cal-track"]');
+        if (!track || !track.closest('[data-role="prov-cal-body"]')) return;
+        if (event.target.closest('[data-role="prov-cal-slot"]')) return;
+        if (event.target.closest('[data-role="prov-cal-resize"]')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const dateISO =
+          track.getAttribute("data-date") ||
+          (track.closest("[data-date]") && track.closest("[data-date]").getAttribute("data-date")) ||
+          ensureProvCalDate();
+        placeProvCalFreeSelection(dateISO, event.clientY, track);
+      },
+      true
+    );
+  }
+
+  /** Przeciąganie górnego/dolnego uchwytu pustego przedziału. */
+  function bindProvCalDraftResize() {
+    if (bindProvCalDraftResize.done) return;
+    bindProvCalDraftResize.done = true;
+    const resize = {
+      active: false,
+      el: null,
+      edge: null,
+      pointerId: null,
+      dateISO: null,
+      fromMin: 0,
+      toMin: 0,
+      moved: false,
+    };
+
+    function endResize(event) {
+      if (!resize.active) return;
+      if (event && resize.pointerId != null && event.pointerId != null && event.pointerId !== resize.pointerId) {
+        return;
+      }
+      window._provCalResizeIgnoreClick = true;
+      setTimeout(function () {
+        window._provCalResizeIgnoreClick = false;
+      }, 0);
+      if (resize.moved) {
+        window.AppState.provCalSelection = normalizeProvCalSelection({
+          kind: "free",
+          dateISO: resize.dateISO,
+          fromMin: resize.fromMin,
+          toMin: resize.toMin,
+        });
+        saveState();
+        hapticTap(10);
+      }
+      resize.active = false;
+      resize.el = null;
+      resize.edge = null;
+      resize.pointerId = null;
+      resize.moved = false;
+      document.body.classList.remove("prov-cal-resizing");
+    }
+
+    document.addEventListener(
+      "pointerdown",
+      function (event) {
+        if (event.button != null && event.button !== 0) return;
+        const handle = event.target.closest && event.target.closest('[data-role="prov-cal-resize"]');
+        if (!handle) return;
+        const el = handle.closest('[data-role="prov-cal-slot"][data-kind="free"]');
+        if (!el) return;
+        event.preventDefault();
+        event.stopPropagation();
+        resize.active = true;
+        resize.el = el;
+        resize.edge = handle.getAttribute("data-edge") === "start" ? "start" : "end";
+        resize.pointerId = event.pointerId;
+        resize.dateISO = el.getAttribute("data-date") || ensureProvCalDate();
+        resize.fromMin = Number(el.getAttribute("data-from-min"));
+        resize.toMin = Number(el.getAttribute("data-to-min"));
+        resize.moved = false;
+        document.body.classList.add("prov-cal-resizing");
+        try {
+          handle.setPointerCapture(event.pointerId);
+        } catch (err) {}
+      },
+      true
+    );
+
+    document.addEventListener(
+      "pointermove",
+      function (event) {
+        if (!resize.active || !resize.el) return;
+        if (resize.pointerId != null && event.pointerId !== resize.pointerId) return;
+        event.preventDefault();
+        const track = resize.el.closest('[data-role="prov-cal-track"]') || resize.el.closest(".gcal__track");
+        if (!track) return;
+        const hourH = ensureProvCalHourH();
+        const dayStart = PROV_CAL_HOUR_START * 60;
+        const dayEnd = PROV_CAL_HOUR_END * 60;
+        const minDur = 15;
+        const rect = track.getBoundingClientRect();
+        let min = dayStart + ((event.clientY - rect.top) / hourH) * 60;
+        min = snapProvCalMin(min);
+        min = Math.max(dayStart, Math.min(dayEnd, min));
+        let fromMin = resize.fromMin;
+        let toMin = resize.toMin;
+        if (resize.edge === "start") {
+          fromMin = Math.min(min, toMin - minDur);
+          fromMin = Math.max(dayStart, fromMin);
+        } else {
+          toMin = Math.max(min, fromMin + minDur);
+          toMin = Math.min(dayEnd, toMin);
+        }
+        if (fromMin === resize.fromMin && toMin === resize.toMin) return;
+        resize.fromMin = fromMin;
+        resize.toMin = toMin;
+        resize.moved = true;
+        applyProvCalFreeDraftLayout(resize.el, fromMin, toMin);
+        window.AppState.provCalSelection = normalizeProvCalSelection({
+          kind: "free",
+          dateISO: resize.dateISO,
+          fromMin: fromMin,
+          toMin: toMin,
+        });
+      },
+      { capture: true, passive: false }
+    );
+
+    document.addEventListener("pointerup", endResize, true);
+    document.addEventListener("pointercancel", endResize, true);
+  }
+
   function bindProvCalEventDrag() {
     if (bindProvCalEventDrag.done) return;
     bindProvCalEventDrag.done = true;
@@ -8839,6 +9126,7 @@
         const sel = selectionFromSlotEl(drag.el);
         resetDrag();
         if (sel && sel.kind === "booking" && sel.bookingId) openProvCalEdit(sel.bookingId);
+        else if (sel && sel.kind === "free") selectProvCalSlot(sel);
         else selectProvCalSlot(sel);
       }
     }
@@ -9635,6 +9923,8 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     bindFilterScroll();
+    bindProvCalEmptyTap();
+    bindProvCalDraftResize();
     bindProvCalEventDrag();
     bindProvCalPinchZoom();
     bindProvCalDaySwipe();

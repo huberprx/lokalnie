@@ -6911,6 +6911,63 @@ body.prov-cal-dragging * {
   box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--text-muted) 55%, transparent);
 }
 
+/* Pusty szkic przedziału (tap w wolne miejsce) */
+.gcal__event--draft {
+  z-index: 6;
+  cursor: default;
+  background: color-mix(in srgb, var(--accent-provider) 14%, var(--surface));
+  color: var(--text);
+  border: 1.5px solid color-mix(in srgb, var(--accent-provider) 55%, var(--border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-provider) 20%, transparent);
+  padding-left: 0.45rem;
+  --event-accent: var(--accent-provider);
+}
+
+.gcal__event--draft::before {
+  display: none;
+}
+
+.gcal__event--draft.gcal__event--selected {
+  transform: none;
+  background: color-mix(in srgb, var(--accent-provider) 18%, var(--surface));
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent-provider) 50%, transparent);
+}
+
+.gcal__event--draft .gcal__event-time {
+  font-weight: 650;
+  opacity: 1;
+}
+
+.gcal__event-resize {
+  position: absolute;
+  left: 50%;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-left: -0.575rem;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 2px solid var(--accent-provider);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.18);
+  z-index: 2;
+  touch-action: none;
+  cursor: ns-resize;
+}
+
+.gcal__event-resize--start {
+  top: -0.55rem;
+}
+
+.gcal__event-resize--end {
+  bottom: -0.55rem;
+}
+
+body.prov-cal-resizing,
+body.prov-cal-resizing * {
+  cursor: ns-resize !important;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .gcal__event--free.gcal__event--drop-target {
   z-index: 3;
   background: color-mix(in srgb, var(--accent-provider) 16%, var(--surface));
@@ -7911,11 +7968,13 @@ body.prov-cal-dragging * {
 }
 
 .visit-card--provider {
+  /* Jak .gcal__event: kolor lokalizacji (--loc / loc-tone-*), inaczej status. */
   --visit-status-color: var(--text-muted);
+  --visit-accent: var(--loc, var(--visit-status-color));
   position: relative;
   overflow: hidden;
   padding: 0.9rem 0.9rem 0.9rem 1.15rem;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--visit-accent) 16%, var(--surface));
 }
 
 .visit-card--provider::before {
@@ -7923,7 +7982,7 @@ body.prov-cal-dragging * {
   position: absolute;
   inset: 0 auto 0 0;
   width: 0.3rem;
-  background: var(--visit-status-color);
+  background: var(--visit-accent);
 }
 
 .visit-card--provider[data-status="confirmed"] {
@@ -7937,6 +7996,7 @@ body.prov-cal-dragging * {
 .visit-card--provider.visit-card--free,
 .visit-card--provider[data-status="free"] {
   --visit-status-color: color-mix(in srgb, var(--text-muted) 72%, transparent);
+  --visit-accent: var(--visit-status-color);
   background: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
   padding-bottom: 0.85rem;
 }
@@ -8019,7 +8079,7 @@ body.prov-cal-dragging * {
 }
 
 .visit-card__services li::marker {
-  color: var(--visit-status-color);
+  color: var(--visit-accent, var(--visit-status-color));
 }
 
 /* ---- Panel usługodawcy: zakładki ---- */
@@ -8102,10 +8162,36 @@ body.prov-cal-dragging * {
   color: var(--text-muted);
 }
 
+.prov-section-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0.5rem 0 0.6rem;
+}
+
 .prov-section {
   font-size: 0.9rem;
   font-weight: 600;
-  margin: 0.5rem 0 0.6rem;
+  margin: 0;
+  min-width: 0;
+}
+
+.prov-free-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.prov-free-toggle__text {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 /* ---- Dostępność (usługodawca) ---- */
