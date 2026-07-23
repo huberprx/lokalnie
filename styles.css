@@ -5284,6 +5284,9 @@ body.avatar-preview-open {
 
 .screen-head--prov-cal {
   margin-bottom: 0;
+  padding-bottom: 0.4rem;
+  /* Ta sama linia co nad panelem miesiąca — też nad paskiem dni (dzień/tydzień). */
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
 }
 
 .prov-cal-head {
@@ -5385,7 +5388,7 @@ body.avatar-preview-open {
   opacity: 0.75;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") center / contain no-repeat;
-  transition: transform 0.15s ease;
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .prov-cal__tool--month-label.is-on .prov-cal__month-chevron {
@@ -5420,9 +5423,20 @@ body.avatar-preview-open {
   padding: 0 0 calc(1rem + var(--bottom-nav-clearance));
 }
 
+.prov-cal-body--day-swipe {
+  overflow-x: hidden;
+  overflow-y: hidden;
+  touch-action: pan-y;
+}
+
 /* Widok dnia — styl Google Calendar */
 .gcal {
   padding: 0 var(--app-pad-x);
+  will-change: transform;
+}
+
+.gcal--sliding {
+  pointer-events: none;
 }
 
 /* Mobile: oś godzin blisko lewej krawędzi; dni dociągnięte do prawej */
@@ -5477,6 +5491,78 @@ body.avatar-preview-open {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* Kalendarz wizyt: linia jest na .screen-head--prov-cal; panel miesiąca wysuwa się w dół. */
+.app-screen--prov-cal .gcal-month {
+  margin: 0;
+  padding: 0.55rem 0 0.35rem;
+  border-top: 0;
+  overflow: hidden;
+  transform-origin: top center;
+  animation: prov-cal-month-reveal 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.app-screen--prov-cal .gcal-month.gcal-month--instant {
+  animation: none;
+}
+
+.app-screen--prov-cal .gcal-month.gcal-month--closing {
+  animation: none;
+  pointer-events: none;
+  overflow: hidden;
+  transition:
+    max-height 0.28s cubic-bezier(0.4, 0, 1, 1),
+    opacity 0.2s ease,
+    transform 0.28s cubic-bezier(0.4, 0, 1, 1),
+    padding 0.28s cubic-bezier(0.4, 0, 1, 1);
+}
+
+@keyframes prov-cal-month-reveal {
+  from {
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-0.4rem);
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  to {
+    max-height: 22rem;
+    opacity: 1;
+    transform: translateY(0);
+    padding-top: 0.55rem;
+    padding-bottom: 0.35rem;
+  }
+}
+
+/* Pasek dnia/tygodnia: schowany pod otwartym miesiącem, wraca razem z zamykaniem. */
+.app-screen--prov-cal .gcal-week__sticky {
+  overflow: hidden;
+  max-height: 4.75rem;
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    max-height 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.2s ease,
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    padding 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.2s ease;
+}
+
+.app-screen--prov-cal .gcal-week__sticky--under-month:not(.gcal-week__sticky--revealing) {
+  max-height: 0;
+  opacity: 0;
+  padding-bottom: 0;
+  box-shadow: none;
+  transform: translateY(-0.3rem);
+  pointer-events: none;
+}
+
+.app-screen--prov-cal .gcal-week__sticky--revealing {
+  max-height: 4.75rem;
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
 }
 
 .gcal-month__cal {
@@ -5757,7 +5843,138 @@ body.avatar-preview-open {
 }
 
 .gcal-week__corner {
+  appearance: none;
+  -webkit-appearance: none;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  margin: 0;
+  padding: 0 0.1rem 0.2rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.gcal-week__corner:hover .gcal-week__view-badge,
+.gcal-week__corner[aria-expanded="true"] .gcal-week__view-badge {
+  color: var(--accent-provider);
+}
+
+.gcal-week__view-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  color: var(--text-muted);
+}
+
+/* Chmurka wyboru widoku: 1 dzień / 3 dni / tydzień */
+.prov-cal-view-cloud {
+  position: fixed;
+  z-index: 10055;
+  min-width: 9.5rem;
+  padding: 0.3rem;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16), 0 2px 8px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.prov-cal-view-cloud[hidden] {
+  display: none !important;
+}
+
+.prov-cal-view-cloud__item {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.prov-cal-view-cloud__item:hover {
+  background: var(--surface-2);
+}
+
+.prov-cal-view-cloud__item.is-on {
+  background: color-mix(in srgb, var(--accent-provider) 12%, var(--surface));
+  color: var(--accent-provider);
+  font-weight: 650;
+}
+
+.prov-cal-view-cloud__icon {
+  flex: 0 0 1.05rem;
+  width: 1.05rem;
+  height: 1.05rem;
+  background: currentColor;
+}
+
+.prov-cal-view-cloud__icon--day {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cpath d='M16 2v4M8 2v4M3 10h18'/%3E%3Cpath d='M12 14v4M10 16h4'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cpath d='M16 2v4M8 2v4M3 10h18'/%3E%3Cpath d='M12 14v4M10 16h4'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.prov-cal-view-cloud__icon--days3 {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cpath d='M16 2v4M8 2v4M3 10h18'/%3E%3Cpath d='M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cpath d='M16 2v4M8 2v4M3 10h18'/%3E%3Cpath d='M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.prov-cal-view-cloud__icon--week {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cpath d='M16 2v4M8 2v4M3 10h18'/%3E%3Cpath d='M7 14h10M7 18h10'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cpath d='M16 2v4M8 2v4M3 10h18'/%3E%3Cpath d='M7 14h10M7 18h10'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.prov-cal-view-cloud__label {
+  min-width: 0;
+}
+
+.gcal-week__view-badge-ico {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Liczba w dolnej części kartki kalendarza (poniżej linii y=10 w SVG). */
+.gcal-week__view-badge-num {
+  position: absolute;
+  left: 50%;
+  top: 70%;
+  transform: translate(-50%, -50%);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  pointer-events: none;
 }
 
 .gcal-week__days {

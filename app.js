@@ -17,8 +17,8 @@
 
   const ROLE_LABEL = { client: "Klient", provider: "Usługodawca" };
 
-  const WEEKDAYS = ["nd", "pon", "wt", "śr", "czw", "pt", "sob"];
-  const CAL_WEEKDAYS = ["pon", "wt", "śr", "czw", "pt", "sob", "nd"];
+  const WEEKDAYS = ["nd", "pn", "wt", "śr", "cz", "pt", "sb"];
+  const CAL_WEEKDAYS = ["pn", "wt", "śr", "cz", "pt", "sb", "nd"];
   const MONTHS = [
     "stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca",
     "lipca", "sierpnia", "września", "października", "listopada", "grudnia",
@@ -2744,6 +2744,67 @@
     hapticTap(12);
   }
 
+  /**
+   * Swipe dnia ze standardową animacją (jak Google/Apple Calendar):
+   * content wyjeżdża w kierunku gestu, nowy wjeżdża z przeciwnej strony.
+   */
+  function shiftProvCalDateAnimated(deltaDays) {
+    const dir = deltaDays > 0 ? 1 : -1;
+    const gcal = document.querySelector('[data-role="prov-cal-gcal"]');
+    if (!gcal || Math.abs(deltaDays) < 1) {
+      shiftProvCalDate(deltaDays);
+      return;
+    }
+    if (gcal.classList.contains("gcal--sliding")) return;
+
+    const body = document.querySelector('[data-role="prov-cal-body"]');
+    if (body) body.classList.add("prov-cal-body--day-swipe");
+
+    gcal.classList.add("gcal--sliding");
+    gcal.style.transition = "transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease";
+    gcal.style.transform = "translate3d(" + (dir > 0 ? "-42%" : "42%") + ",0,0)";
+    gcal.style.opacity = "0.35";
+
+    window.setTimeout(function () {
+      shiftProvCalDate(deltaDays);
+      requestAnimationFrame(function () {
+        const next = document.querySelector('[data-role="prov-cal-gcal"]');
+        const body2 = document.querySelector('[data-role="prov-cal-body"]');
+        if (body2) body2.classList.add("prov-cal-body--day-swipe");
+        if (!next) {
+          if (body2) body2.classList.remove("prov-cal-body--day-swipe");
+          return;
+        }
+        next.classList.add("gcal--sliding");
+        next.style.transition = "none";
+        next.style.transform = "translate3d(" + (dir > 0 ? "48%" : "-48%") + ",0,0)";
+        next.style.opacity = "0.4";
+        void next.offsetWidth;
+        next.style.transition =
+          "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.28s ease";
+        next.style.transform = "translate3d(0,0,0)";
+        next.style.opacity = "1";
+
+        function clear() {
+          next.classList.remove("gcal--sliding");
+          next.style.transition = "";
+          next.style.transform = "";
+          next.style.opacity = "";
+          if (body2) body2.classList.remove("prov-cal-body--day-swipe");
+        }
+        next.addEventListener(
+          "transitionend",
+          function (event) {
+            if (event.propertyName && event.propertyName.indexOf("transform") === -1) return;
+            clear();
+          },
+          { once: true }
+        );
+        window.setTimeout(clear, 380);
+      });
+    }, 200);
+  }
+
   function setProvCalView(view) {
     if (view === "week") {
       const cur = ensureProvCalVisibleDays();
@@ -3079,12 +3140,81 @@
     return window.AppState.provCalPickerMonth;
   }
 
+  function provCalMonthPanels() {
+    return Array.prototype.slice.call(document.querySelectorAll('[data-role="prov-cal-month-panel"]'));
+  }
+
+  /** Otwórz / zamknij panel miesiąca — z animacją wysuwania (chyba że opts.animate === false). */
+  function setProvCalMonthOpen(wantOpen, opts) {
+    opts = opts || {};
+    const cur = !!window.AppState.provCalMonthOpen;
+    if (!!wantOpen === cur && !opts.force) return;
+
+    if (wantOpen) {
+      window._provCalMonthClosing = false;
+      closeProvCalViewCloud();
+      window.AppState.provCalMonthOpen = true;
+      window.AppState.provCalPickerMonth = ensureProvCalDate().slice(0, 7);
+      // Animacja tylko przy świadomym otwarciu — nie przy restore / swipe miesiąca / re-render.
+      window._provCalMonthAnimateReveal = opts.animate !== false;
+      if (opts.persist !== false) saveState();
+      if (opts.render !== false) renderAll();
+      window._provCalMonthAnimateReveal = false;
+      return;
+    }
+
+    if (opts.animate === false) {
+      window._provCalMonthClosing = false;
+      window.AppState.provCalMonthOpen = false;
+      if (opts.persist !== false) saveState();
+      if (opts.render !== false) renderAll();
+      return;
+    }
+
+    const panels = provCalMonthPanels().filter(function (panel) {
+      return panel.offsetWidth > 8;
+    });
+    if (!panels.length) {
+      window.AppState.provCalMonthOpen = false;
+      if (opts.persist !== false) saveState();
+      if (opts.render !== false) renderAll();
+      return;
+    }
+    if (window._provCalMonthClosing) return;
+    window._provCalMonthClosing = true;
+    let done = false;
+    function finish() {
+      if (done) return;
+      done = true;
+      window._provCalMonthClosing = false;
+      window.AppState.provCalMonthOpen = false;
+      if (opts.persist !== false) saveState();
+      if (opts.render !== false) renderAll();
+    }
+    // Pasek dnia/tygodnia jest już w DOM (schowany) — przy zamykaniu jednocześnie
+    // chowa się miesiąc i pojawia sticky (bez pustki pod separatorem).
+    document.querySelectorAll(".gcal-week__sticky--under-month").forEach(function (el) {
+      el.classList.add("gcal-week__sticky--revealing");
+      el.removeAttribute("aria-hidden");
+    });
+    panels.forEach(function (panel) {
+      const h = Math.max(panel.offsetHeight, panel.scrollHeight);
+      panel.style.maxHeight = h + "px";
+      panel.style.opacity = "1";
+      panel.style.transform = "translateY(0)";
+      panel.classList.add("gcal-month--closing");
+      void panel.offsetHeight;
+      panel.style.maxHeight = "0px";
+      panel.style.opacity = "0";
+      panel.style.transform = "translateY(-0.35rem)";
+      panel.style.paddingTop = "0";
+      panel.style.paddingBottom = "0";
+    });
+    window.setTimeout(finish, 320);
+  }
+
   function toggleProvCalMonthPanel() {
-    const open = !window.AppState.provCalMonthOpen;
-    window.AppState.provCalMonthOpen = open;
-    if (open) window.AppState.provCalPickerMonth = ensureProvCalDate().slice(0, 7);
-    saveState();
-    renderAll();
+    setProvCalMonthOpen(!window.AppState.provCalMonthOpen);
   }
 
   function shiftProvCalPickerMonth(delta) {
@@ -3266,13 +3396,118 @@
 
   const PROV_CAL_DOW_SHORT = ["ND.", "PN.", "WT.", "ŚR.", "CZ.", "PT.", "SB."];
 
-  /** Sticky nagłówki dni — ukryte, gdy otwarty panel miesiąca (duplikat siatki). */
+  /** Etykieta / liczba widoku: tylko 1 / 3 / 7. */
+  function snapProvCalViewBadge(days) {
+    const n = clampProvCalVisibleDays(days);
+    if (n <= 1) return 1;
+    if (n <= 4) return 3;
+    return 7;
+  }
+
+  function provCalViewBadgeLabel(days) {
+    const n = snapProvCalViewBadge(days);
+    if (n === 1) return "Widok: 1 dzień";
+    if (n === 7) return "Widok: tydzień";
+    return "Widok: 3 dni";
+  }
+
+  const PROV_CAL_VIEW_OPTIONS = [
+    { days: 1, label: "1 dzień", icon: "day" },
+    { days: 3, label: "3 dni", icon: "days3" },
+    { days: 7, label: "Tydzień", icon: "week" },
+  ];
+
+  function ensureProvCalViewCloud() {
+    let el = document.getElementById("prov-cal-view-cloud");
+    if (el) return el;
+    el = document.createElement("div");
+    el.id = "prov-cal-view-cloud";
+    el.className = "prov-cal-view-cloud";
+    el.setAttribute("data-role", "prov-cal-view-cloud");
+    el.setAttribute("role", "menu");
+    el.setAttribute("aria-label", "Widok kalendarza");
+    el.hidden = true;
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function closeProvCalViewCloud() {
+    const cloud = document.getElementById("prov-cal-view-cloud");
+    if (cloud) {
+      cloud.hidden = true;
+      cloud.innerHTML = "";
+      cloud.style.visibility = "";
+    }
+    document.querySelectorAll('.gcal-week__corner[aria-expanded="true"]').forEach(function (btn) {
+      btn.setAttribute("aria-expanded", "false");
+    });
+  }
+
+  function openProvCalViewCloud(trigger) {
+    if (!trigger || window.AppState.provCalMonthOpen) return;
+    const cloud = ensureProvCalViewCloud();
+    if (!cloud.hidden) {
+      closeProvCalViewCloud();
+      return;
+    }
+
+    const current = snapProvCalViewBadge(ensureProvCalVisibleDays());
+    cloud.innerHTML = PROV_CAL_VIEW_OPTIONS.map(function (opt) {
+      const on = opt.days === current;
+      return `
+        <button type="button" class="prov-cal-view-cloud__item${on ? " is-on" : ""}"
+          role="menuitemradio" aria-checked="${on ? "true" : "false"}"
+          data-action="prov-cal-set-view" data-days="${opt.days}">
+          <span class="prov-cal-view-cloud__icon prov-cal-view-cloud__icon--${escapeHtml(opt.icon)}" aria-hidden="true"></span>
+          <span class="prov-cal-view-cloud__label">${escapeHtml(opt.label)}</span>
+        </button>`;
+    }).join("");
+
+    cloud.hidden = false;
+    cloud.style.visibility = "hidden";
+    const rect = trigger.getBoundingClientRect();
+    const cloudRect = cloud.getBoundingClientRect();
+    const gap = 8;
+    let top = rect.bottom + gap;
+    let left = rect.left;
+    if (left + cloudRect.width > window.innerWidth - 8) {
+      left = Math.max(8, window.innerWidth - cloudRect.width - 8);
+    }
+    if (left < 8) left = 8;
+    if (top + cloudRect.height > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - cloudRect.height - gap);
+    }
+    cloud.style.top = top + "px";
+    cloud.style.left = left + "px";
+    cloud.style.visibility = "visible";
+    trigger.setAttribute("aria-expanded", "true");
+  }
+
+  /**
+   * Sticky nagłówki dni — zawsze w DOM.
+   * Przy otwartym miesiącu są schowane CSS-em i simultaneousnie wracają przy zamykaniu panelu
+   * (żeby nie było „pustki” z samym separatorem).
+   */
   function renderProvCalStickyDayHeads(daysHtml) {
-    if (window.AppState.provCalMonthOpen) return "";
+    const days = ensureProvCalVisibleDays();
+    const badge = String(snapProvCalViewBadge(days));
+    const underMonth = !!window.AppState.provCalMonthOpen;
     return `
-      <div class="gcal-week__sticky">
+      <div class="gcal-week__sticky${underMonth ? " gcal-week__sticky--under-month" : ""}"${
+        underMonth ? ' aria-hidden="true"' : ""
+      }>
         <div class="gcal-week__head">
-          <div class="gcal-week__corner" aria-hidden="true"></div>
+          <button type="button" class="gcal-week__corner" data-action="prov-cal-view-menu"
+            aria-label="${escapeHtml(provCalViewBadgeLabel(days))}"
+            aria-haspopup="menu" aria-expanded="false">
+            <span class="gcal-week__view-badge" aria-hidden="true">
+              <svg class="gcal-week__view-badge-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="3" />
+                <path d="M16 2v4M8 2v4M3 10h18" />
+              </svg>
+              <span class="gcal-week__view-badge-num">${escapeHtml(badge)}</span>
+            </span>
+          </button>
           <div class="gcal-week__days">${daysHtml}</div>
         </div>
       </div>`;
@@ -3338,8 +3573,9 @@
       cells += `<span class="gcal-month__day gcal-month__day--pad" aria-hidden="true"></span>`;
     }
 
+    const reveal = !!window._provCalMonthAnimateReveal;
     return `
-      <div class="gcal-month" id="prov-cal-month-panel" data-role="prov-cal-month-panel">
+      <div class="gcal-month${reveal ? "" : " gcal-month--instant"}" id="prov-cal-month-panel" data-role="prov-cal-month-panel">
         <div class="gcal-month__cal" data-role="prov-cal-month-swipe">
           <div class="gcal-month__weekdays">${CAL_WEEKDAYS.map(function (w) {
             return `<span>${w}</span>`;
@@ -3627,7 +3863,7 @@
       .join("");
 
     return `
-      <div class="gcal gcal--week" data-role="prov-cal-gcal" style="--gcal-days:${weekDays.length}">
+      <div class="gcal gcal--week" data-role="prov-cal-gcal" data-prov-cal-day-swipe style="--gcal-days:${weekDays.length}">
         ${renderProvCalStickyDayHeads(headCols)}
         <div class="gcal__timeline gcal-week__timeline" style="height:${totalH}px;--gcal-hour-h:${hourH}px" data-role="prov-cal-timeline">
           <div class="gcal__hours">${hours}</div>
@@ -6655,6 +6891,12 @@
     ) {
       closeAvailSeriesCloud();
     }
+    if (
+      !event.target.closest("#prov-cal-view-cloud") &&
+      !event.target.closest('[data-action="prov-cal-view-menu"]')
+    ) {
+      closeProvCalViewCloud();
+    }
 
     const popover = document.getElementById("provider-card-popover");
     const insidePopover = event.target.closest("#provider-card-popover");
@@ -6937,8 +7179,19 @@
         event.preventDefault();
         if (d.view === "month") toggleProvCalMonthPanel();
         break;
+      case "prov-cal-view-menu":
+        event.preventDefault();
+        event.stopPropagation();
+        openProvCalViewCloud(btn);
+        break;
+      case "prov-cal-set-view":
+        event.preventDefault();
+        closeProvCalViewCloud();
+        applyProvCalVisibleDays(Number(d.days) || 1, { closeMonth: true });
+        break;
       case "prov-cal-pick-date":
         event.preventDefault();
+        if (window._provCalSwipeSuppressClick) break;
         pickProvCalDate(d.date);
         break;
       case "propose-open": proposeOpen(d.requestId); break;
@@ -7717,28 +7970,66 @@
     );
   }
 
-  /** Swipe w lewo/prawo na widoku dnia → następny / poprzedni dzień. */
+  /** Swipe w lewo/prawo → następny / poprzedni dzień (dzień i widok wielodniowy), z animacją. */
   function bindProvCalDaySwipe() {
     if (bindProvCalDaySwipe.done) return;
     bindProvCalDaySwipe.done = true;
-    const swipe = { active: false, startX: 0, startY: 0, locked: false };
 
-    function inDayView(target) {
+    const THRESHOLD = 56;
+    const swipe = {
+      active: false,
+      startX: 0,
+      startY: 0,
+      dx: 0,
+      locked: false,
+      moved: false,
+      gcal: null,
+    };
+
+    function canSwipe(target) {
       if (!target || !target.closest) return false;
-      if (ensureProvCalVisibleDays() > 1) return false;
       if (window.AppState.provCalMonthOpen) return false;
+      if (document.body.classList.contains("prov-cal-dragging")) return false;
+      if (document.body.classList.contains("prov-cal-pinching")) return false;
       return !!target.closest("[data-prov-cal-day-swipe]");
+    }
+
+    function resetVisual(spring) {
+      const gcal = swipe.gcal || document.querySelector('[data-role="prov-cal-gcal"]');
+      if (!gcal) return;
+      if (spring) {
+        gcal.classList.add("gcal--sliding");
+        gcal.style.transition =
+          "transform 0.24s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease";
+        gcal.style.transform = "translate3d(0,0,0)";
+        gcal.style.opacity = "1";
+        window.setTimeout(function () {
+          gcal.classList.remove("gcal--sliding");
+          gcal.style.transition = "";
+          gcal.style.transform = "";
+          gcal.style.opacity = "";
+        }, 260);
+      } else {
+        gcal.classList.remove("gcal--sliding");
+        gcal.style.transition = "";
+        gcal.style.transform = "";
+        gcal.style.opacity = "";
+      }
     }
 
     document.addEventListener(
       "touchstart",
       function (event) {
         if (event.touches.length !== 1) return;
-        if (!inDayView(event.target)) return;
-        // nie koliduj z przeciąganiem zajętej wizyty
+        if (!canSwipe(event.target)) return;
         if (event.target.closest('[data-role="prov-cal-slot"][data-kind="booking"]')) return;
+        const gcal = event.target.closest("[data-prov-cal-day-swipe]");
+        if (!gcal || gcal.classList.contains("gcal--sliding")) return;
         swipe.active = true;
         swipe.locked = false;
+        swipe.moved = false;
+        swipe.dx = 0;
+        swipe.gcal = gcal;
         swipe.startX = event.touches[0].clientX;
         swipe.startY = event.touches[0].clientY;
       },
@@ -7752,30 +8043,53 @@
         const dx = event.touches[0].clientX - swipe.startX;
         const dy = event.touches[0].clientY - swipe.startY;
         if (!swipe.locked) {
-          if (Math.abs(dx) < 14 && Math.abs(dy) < 14) return;
+          if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return;
+          // Pionowy scroll osi czasu wygrywa, jeśli dominuje.
           if (Math.abs(dy) >= Math.abs(dx) * 0.85) {
             swipe.active = false;
+            resetVisual(false);
             return;
           }
           swipe.locked = true;
         }
+        swipe.moved = true;
+        swipe.dx = dx;
+        const gcal = swipe.gcal;
+        if (!gcal) return;
+        // Lekki opór poza progiem (rubber-band).
+        const resisted = Math.abs(dx) > THRESHOLD ? Math.sign(dx) * (THRESHOLD + (Math.abs(dx) - THRESHOLD) * 0.35) : dx;
+        gcal.style.transition = "none";
+        gcal.style.transform = "translate3d(" + resisted + "px,0,0)";
+        gcal.style.opacity = String(Math.max(0.55, 1 - Math.abs(resisted) / 420));
       },
       { passive: true }
     );
 
     document.addEventListener(
       "touchend",
-      function (event) {
+      function () {
         if (!swipe.active) return;
-        const t = event.changedTouches && event.changedTouches[0];
-        const dx = t ? t.clientX - swipe.startX : 0;
+        const dx = swipe.dx;
         const wasLocked = swipe.locked;
+        const moved = swipe.moved;
         swipe.active = false;
         swipe.locked = false;
-        if (!wasLocked || Math.abs(dx) < 52) return;
-        if (ensureProvCalVisibleDays() > 1 || window.AppState.provCalMonthOpen) return;
-        // w lewo → następny dzień, w prawo → poprzedni
-        shiftProvCalDate(dx < 0 ? 1 : -1);
+        swipe.moved = false;
+        swipe.dx = 0;
+
+        if (!wasLocked || Math.abs(dx) < THRESHOLD) {
+          resetVisual(moved);
+          return;
+        }
+
+        // Blokuj przypadkowy tap w kolumnę po swipe.
+        window._provCalSwipeSuppressClick = true;
+        window.setTimeout(function () {
+          window._provCalSwipeSuppressClick = false;
+        }, 450);
+
+        // w lewo → następny dzień, w prawo → poprzedni (standard kalendarzy mobilnych)
+        shiftProvCalDateAnimated(dx < 0 ? 1 : -1);
       },
       { passive: true }
     );
@@ -7783,8 +8097,11 @@
     document.addEventListener(
       "touchcancel",
       function () {
+        if (!swipe.active) return;
         swipe.active = false;
         swipe.locked = false;
+        swipe.moved = false;
+        resetVisual(true);
       },
       { passive: true }
     );
@@ -8070,16 +8387,29 @@
 
   document.addEventListener("keydown", function (event) {
     if (event.key === "Escape") {
+      const viewCloud = document.getElementById("prov-cal-view-cloud");
+      if (viewCloud && !viewCloud.hidden) {
+        closeProvCalViewCloud();
+        return;
+      }
       if (window.AppState.provCalMonthOpen) {
-        window.AppState.provCalMonthOpen = false;
-        saveState();
-        renderAll();
+        setProvCalMonthOpen(false);
         return;
       }
       closeProviderCardMenu();
     }
   });
 
-  window.addEventListener("resize", closeProviderCardMenu);
-  window.addEventListener("scroll", closeProviderCardMenu, true);
+  window.addEventListener("resize", function () {
+    closeProviderCardMenu();
+    closeProvCalViewCloud();
+  });
+  window.addEventListener(
+    "scroll",
+    function () {
+      closeProviderCardMenu();
+      closeProvCalViewCloud();
+    },
+    true
+  );
 })();
