@@ -2715,12 +2715,44 @@
           <div class="visit-list">
             ${
               upcoming.length
-                ? upcoming.map(renderProviderVisitCard).join("")
+                ? renderProviderVisitTimeline(upcoming)
                 : `<p class="empty-note">Brak nadchodzących wizyt. Zarezerwuj coś jako klient, aby zobaczyć synchronizację.</p>`
             }
           </div>
         </div>
         ${providerBottomNav("dashboard")}
+      </div>`;
+  }
+
+  /** Lista wizyt z kartami „Wolne” w lukach między kolejnymi terminami tego samego dnia. */
+  function renderProviderVisitTimeline(upcoming) {
+    let html = "";
+    for (let i = 0; i < upcoming.length; i++) {
+      html += renderProviderVisitCard(upcoming[i]);
+      const next = upcoming[i + 1];
+      if (!next) continue;
+      const cur = upcoming[i];
+      if (cur.dateISO !== next.dateISO) continue;
+      const gapFrom = timeToMin(cur.to);
+      const gapTo = timeToMin(next.from);
+      if (!(gapTo > gapFrom)) continue;
+      html += renderProviderFreeSlotCard(cur.dateISO, minToTime(gapFrom), minToTime(gapTo));
+    }
+    return html;
+  }
+
+  function renderProviderFreeSlotCard(dateISO, from, to) {
+    const durationMin = Math.max(0, timeToMin(to) - timeToMin(from));
+    return `
+      <div class="visit-card visit-card--provider visit-card--free" data-status="free" data-date="${escapeHtml(dateISO)}"
+        aria-label="Wolne ${escapeHtml(from)}–${escapeHtml(to)}, ${escapeHtml(formatDuration(durationMin))}">
+        <div class="visit-card__schedule">
+          <time class="visit-card__range" datetime="${escapeHtml(dateISO + "T" + from)}">${escapeHtml(from)}–${escapeHtml(to)}</time>
+          <span class="visit-card__duration" aria-label="Czas trwania: ${escapeHtml(formatDuration(durationMin))}">
+            <span class="visit-card__clock" aria-hidden="true"></span>
+            ${escapeHtml(formatDuration(durationMin))}
+          </span>
+        </div>
       </div>`;
   }
 

@@ -7463,6 +7463,22 @@ body.prov-cal-dragging * {
   --visit-status-color: var(--accent-client);
 }
 
+.visit-card--provider.visit-card--free,
+.visit-card--provider[data-status="free"] {
+  --visit-status-color: color-mix(in srgb, var(--text-muted) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
+  padding-bottom: 0.85rem;
+}
+
+.visit-card--free .visit-card__schedule {
+  margin-bottom: 0;
+}
+
+.visit-card--free .visit-card__range {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
 .visit-card__schedule {
   display: flex;
   align-items: center;
