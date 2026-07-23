@@ -41,6 +41,7 @@
   const PWA = {
     registration: null,
     waitingWorker: null,
+    updateAvailable: false,
     updateNotified: false,
     deferredInstall: null,
   };
@@ -1501,8 +1502,14 @@
           </nav>
 
           <div class="app-menu__version" data-role="app-version">
-            <button type="button" class="app-menu__link app-menu__link--version" data-action="check-pwa-update" title="Sprawdź aktualizacje">
-              <span>Wersja aplikacji</span>
+            <button type="button" class="app-menu__link app-menu__link--version${
+              PWA.updateAvailable ? " has-update" : ""
+            }" data-action="check-pwa-update" title="${
+              PWA.updateAvailable ? "Zainstaluj aktualizację" : "Sprawdź aktualizacje"
+            }">
+              <span>Wersja aplikacji${
+                PWA.updateAvailable ? `<span class="app-menu__update-badge">Nowa</span>` : ""
+              }</span>
               <span class="app-menu__version-num">${escapeHtml(APP_VERSION)}</span>
             </button>
           </div>
@@ -1597,16 +1604,49 @@
     return true;
   }
 
-  /** Automatyczna aktualizacja — bez pytania użytkownika. */
-  function applyPwaUpdateAutomatically(worker) {
-    if (!worker || PWA.updateNotified) return;
+  function syncPwaUpdateButtons() {
+    document.querySelectorAll('[data-action="check-pwa-update"]').forEach(function (btn) {
+      btn.classList.toggle("has-update", !!PWA.updateAvailable);
+      btn.title = PWA.updateAvailable ? "Zainstaluj aktualizację" : "Sprawdź aktualizacje";
+      const label = btn.querySelector("span:first-child");
+      if (!label) return;
+      let badge = label.querySelector(".app-menu__update-badge");
+      if (PWA.updateAvailable) {
+        if (!badge) {
+          badge = document.createElement("span");
+          badge.className = "app-menu__update-badge";
+          badge.textContent = "Nowa";
+          label.appendChild(badge);
+        }
+      } else if (badge) {
+        badge.remove();
+      }
+    });
+  }
+
+  /** Nowa wersja SW jest gotowa — komunikat + badge; użytkownik klika „Wersja aplikacji”. */
+  function notifyPwaUpdateAvailable(worker) {
+    if (!worker) return;
+    PWA.waitingWorker = worker;
+    PWA.updateAvailable = true;
+    syncPwaUpdateButtons();
+    if (PWA.updateNotified) return;
     PWA.updateNotified = true;
+    showToast("Dostępna aktualizacja — kliknij „Wersja aplikacji”, aby zainstalować.");
+  }
+
+  function applyPwaUpdateNow(worker) {
+    const w = worker || PWA.waitingWorker;
+    if (!w) return false;
     showToast("Aktualizuję aplikację…");
-    activateWaitingWorker(worker);
+    PWA.updateAvailable = false;
+    activateWaitingWorker(w);
+    return true;
   }
 
   function trackServiceWorker(reg) {
-    if (!reg) return;
+    if (!reg || reg._lokalnieTracked) return;
+    reg._lokalnieTracked = true;
     PWA.registration = reg;
 
     reg.addEventListener("updatefound", function () {
@@ -1614,23 +1654,23 @@
       if (!installing) return;
       installing.addEventListener("statechange", function () {
         if (installing.state === "installed" && navigator.serviceWorker.controller) {
-          applyPwaUpdateAutomatically(installing);
+          notifyPwaUpdateAvailable(installing);
         }
       });
     });
   }
 
-  /** Przy każdym starcie: sprawdź i od razu wdróż nową wersję, jeśli jest. */
+  /** Przy starcie / co godzinę: wykryj update i pokaż komunikat (bez auto-przeładowania). */
   function checkPwaUpdateOnLaunch(reg) {
     if (!reg) return;
     if (reg.waiting) {
-      applyPwaUpdateAutomatically(reg.waiting);
+      notifyPwaUpdateAvailable(reg.waiting);
       return;
     }
     reg
       .update()
       .then(function () {
-        if (reg.waiting) applyPwaUpdateAutomatically(reg.waiting);
+        if (reg.waiting) notifyPwaUpdateAvailable(reg.waiting);
       })
       .catch(function () {});
   }
@@ -1644,7 +1684,7 @@
         checkPwaUpdateOnLaunch(reg);
         setInterval(function () {
           reg.update().then(function () {
-            if (reg.waiting) applyPwaUpdateAutomatically(reg.waiting);
+            if (reg.waiting) notifyPwaUpdateAvailable(reg.waiting);
           }).catch(function () {});
         }, 60 * 60 * 1000);
       })
@@ -1792,24 +1832,85 @@
 
   /** Tap w „Wersja aplikacji”: wymuś sprawdzenie (auto-wdrożenie jeśli jest update). */
   function checkPwaUpdate() {
-    if (!("serviceWorker" in navigator)) return;
+    if (!("serviceWorker" in navigator)) {
+      showToast("Aktualizacje PWA niedostępne w tej przeglądarce.");
+      return;
+    }
+
+    // Już jest gotowa nowa wersja — zainstaluj po kliknięciu.
+    if (PWA.updateAvailable && (PWA.waitingWorker || (PWA.registration && PWA.registration.waiting))) {
+      applyPwaUpdateNow(PWA.waitingWorker || PWA.registration.waiting);
+      return;
+    }
+
+    showToast("Sprawdzam aktualizacje…");
     navigator.serviceWorker.getRegistration("./").then(function (reg) {
       if (!reg) {
         registerServiceWorker();
+        showToast("Brak Service Workera — spróbuj ponownie za chwilę.");
         return;
       }
       trackServiceWorker(reg);
-      PWA.updateNotified = false;
-      if (reg.waiting || PWA.waitingWorker) {
-        applyPwaUpdateAutomatically(reg.waiting || PWA.waitingWorker);
+      PWA.registration = reg;
+
+      if (reg.waiting) {
+        notifyPwaUpdateAvailable(reg.waiting);
+        applyPwaUpdateNow(reg.waiting);
         return;
       }
+
+      var settled = false;
+      function finishNoUpdate() {
+        if (settled) return;
+        settled = true;
+        PWA.updateAvailable = false;
+        syncPwaUpdateButtons();
+        showToast("Masz aktualną wersję " + APP_VERSION);
+      }
+
+      function watchInstalling(worker) {
+        if (!worker) return false;
+        worker.addEventListener("statechange", function () {
+          if (worker.state === "installed") {
+            if (navigator.serviceWorker.controller) {
+              settled = true;
+              notifyPwaUpdateAvailable(worker);
+              applyPwaUpdateNow(worker);
+            } else {
+              finishNoUpdate();
+            }
+          }
+        });
+        return true;
+      }
+
+      if (watchInstalling(reg.installing)) return;
+
       reg
         .update()
         .then(function () {
-          if (reg.waiting) applyPwaUpdateAutomatically(reg.waiting);
+          if (reg.waiting) {
+            settled = true;
+            notifyPwaUpdateAvailable(reg.waiting);
+            applyPwaUpdateNow(reg.waiting);
+            return;
+          }
+          if (watchInstalling(reg.installing)) return;
+          // Daj chwilę na updatefound → installing → installed.
+          window.setTimeout(function () {
+            if (reg.waiting) {
+              settled = true;
+              notifyPwaUpdateAvailable(reg.waiting);
+              applyPwaUpdateNow(reg.waiting);
+              return;
+            }
+            if (watchInstalling(reg.installing)) return;
+            finishNoUpdate();
+          }, 1200);
         })
-        .catch(function () {});
+        .catch(function () {
+          showToast("Nie udało się sprawdzić aktualizacji.");
+        });
     });
   }
 
@@ -2733,76 +2834,144 @@
     else ensureProvCalVisibleDays();
     if (!opts.keepSelection) window.AppState.provCalSelection = null;
     saveState();
-    renderAll();
+    if (opts.render !== false) renderAll();
   }
 
   /** ±1 dzień w kalendarzu usługodawcy (gest swipe / nawigacja). */
-  function shiftProvCalDate(deltaDays) {
+  function shiftProvCalDate(deltaDays, opts) {
     const cur = ensureProvCalDate();
     const iso = isoAddDays(cur, deltaDays);
-    pickProvCalDate(iso, { keepView: true });
+    pickProvCalDate(iso, Object.assign({ keepView: true }, opts || {}));
     hapticTap(12);
   }
 
+  /** Widoczna (niezerowa) instancja kalendarza — demo ma 2 ekrany. */
+  function resolveVisibleProvCalGcal(preferred) {
+    if (preferred && preferred.isConnected && preferred.offsetWidth > 8) return preferred;
+    const nodes = document.querySelectorAll('[data-role="prov-cal-gcal"]');
+    let best = null;
+    let bestArea = 0;
+    for (let i = 0; i < nodes.length; i++) {
+      const r = nodes[i].getBoundingClientRect();
+      const area = Math.max(0, r.width) * Math.max(0, r.height);
+      if (area > bestArea) {
+        bestArea = area;
+        best = nodes[i];
+      }
+    }
+    return best || nodes[0] || null;
+  }
+
+  function readProvCalTranslateX(el) {
+    if (!el) return 0;
+    const t = el.style.transform || "";
+    const px = t.match(/translate3d\(([-\d.]+)px/i);
+    if (px) return Number(px[1]) || 0;
+    const pct = t.match(/translate3d\(([-\d.]+)%/i);
+    if (pct) return ((Number(pct[1]) || 0) / 100) * (el.offsetWidth || 0);
+    return 0;
+  }
+
+  function renderProvCalGcalHtml(dateISO) {
+    const visits = providerVisits();
+    const dayVisits = visits.filter(function (b) {
+      return b.dateISO === dateISO;
+    });
+    if (ensureProvCalVisibleDays() > 1) return renderProvCalGoogleWeek(dateISO, visits);
+    return renderProvCalGoogleDay(dateISO, dayVisits);
+  }
+
   /**
-   * Swipe dnia ze standardową animacją (jak Google/Apple Calendar):
-   * content wyjeżdża w kierunku gestu, nowy wjeżdża z przeciwnej strony.
+   * Swipe dnia: dwa panele w torze (outgoing|incoming), body w overflow:hidden —
+   * kalendarz nie odrywa się od krawędzi, dni płynnie się przesuwają.
    */
-  function shiftProvCalDateAnimated(deltaDays) {
+  function shiftProvCalDateAnimated(deltaDays, opts) {
+    opts = opts || {};
     const dir = deltaDays > 0 ? 1 : -1;
-    const gcal = document.querySelector('[data-role="prov-cal-gcal"]');
-    if (!gcal || Math.abs(deltaDays) < 1) {
+    const outgoing = resolveVisibleProvCalGcal(opts.gcal);
+    if (!outgoing || Math.abs(deltaDays) < 1) {
       shiftProvCalDate(deltaDays);
       return;
     }
-    if (gcal.classList.contains("gcal--sliding")) return;
+    const body = outgoing.closest('[data-role="prov-cal-body"]') || resolveProvCalBody(outgoing);
+    if (!body || body.classList.contains("prov-cal-body--animating-days")) return;
 
-    const body = document.querySelector('[data-role="prov-cal-body"]');
-    if (body) body.classList.add("prov-cal-body--day-swipe");
+    const scrollTop = body.scrollTop;
+    const startX = readProvCalTranslateX(outgoing);
+    const width = Math.max(body.clientWidth, outgoing.offsetWidth, 280);
 
-    gcal.classList.add("gcal--sliding");
-    gcal.style.transition = "transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease";
-    gcal.style.transform = "translate3d(" + (dir > 0 ? "-42%" : "42%") + ",0,0)";
-    gcal.style.opacity = "0.35";
+    const nextISO = isoAddDays(ensureProvCalDate(), deltaDays);
+    window.AppState.provCalDate = nextISO;
+    window.AppState.provCalPickerMonth = nextISO.slice(0, 7);
+    if (!opts.keepSelection) window.AppState.provCalSelection = null;
+    saveState();
+    hapticTap(12);
 
-    window.setTimeout(function () {
-      shiftProvCalDate(deltaDays);
+    const host = document.createElement("div");
+    host.innerHTML = String(renderProvCalGcalHtml(nextISO) || "").trim();
+    const incoming = host.firstElementChild;
+    if (!incoming) {
+      renderAll();
+      return;
+    }
+
+    body.classList.add("prov-cal-body--day-swipe", "prov-cal-body--animating-days");
+
+    const track = document.createElement("div");
+    track.className = "prov-cal-day-track";
+    track.setAttribute("data-role", "prov-cal-day-track");
+
+    outgoing.classList.remove("gcal--sliding", "gcal--swipe-top");
+    outgoing.style.transition = "";
+    outgoing.style.opacity = "";
+    outgoing.style.transform = "";
+    outgoing.style.flex = "0 0 " + width + "px";
+    outgoing.style.width = width + "px";
+    outgoing.style.maxWidth = width + "px";
+    incoming.style.flex = "0 0 " + width + "px";
+    incoming.style.width = width + "px";
+    incoming.style.maxWidth = width + "px";
+    incoming.style.transform = "";
+    incoming.style.opacity = "1";
+
+    outgoing.replaceWith(track);
+    if (dir > 0) {
+      track.appendChild(outgoing);
+      track.appendChild(incoming);
+      track.style.transform = "translate3d(" + startX + "px,0,0)";
+    } else {
+      track.appendChild(incoming);
+      track.appendChild(outgoing);
+      track.style.transform = "translate3d(" + (-width + startX) + "px,0,0)";
+    }
+
+    body.scrollTop = scrollTop;
+    void track.offsetWidth;
+
+    const durationMs = 300;
+    track.style.transition = "transform " + durationMs + "ms cubic-bezier(0.4, 0, 0.2, 1)";
+    track.style.transform = dir > 0 ? "translate3d(" + -width + "px,0,0)" : "translate3d(0,0,0)";
+
+    let done = false;
+    function finish() {
+      if (done) return;
+      done = true;
+      renderAll();
       requestAnimationFrame(function () {
-        const next = document.querySelector('[data-role="prov-cal-gcal"]');
-        const body2 = document.querySelector('[data-role="prov-cal-body"]');
-        if (body2) body2.classList.add("prov-cal-body--day-swipe");
-        if (!next) {
-          if (body2) body2.classList.remove("prov-cal-body--day-swipe");
-          return;
-        }
-        next.classList.add("gcal--sliding");
-        next.style.transition = "none";
-        next.style.transform = "translate3d(" + (dir > 0 ? "48%" : "-48%") + ",0,0)";
-        next.style.opacity = "0.4";
-        void next.offsetWidth;
-        next.style.transition =
-          "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.28s ease";
-        next.style.transform = "translate3d(0,0,0)";
-        next.style.opacity = "1";
-
-        function clear() {
-          next.classList.remove("gcal--sliding");
-          next.style.transition = "";
-          next.style.transform = "";
-          next.style.opacity = "";
-          if (body2) body2.classList.remove("prov-cal-body--day-swipe");
-        }
-        next.addEventListener(
-          "transitionend",
-          function (event) {
-            if (event.propertyName && event.propertyName.indexOf("transform") === -1) return;
-            clear();
-          },
-          { once: true }
-        );
-        window.setTimeout(clear, 380);
+        const b = resolveProvCalBody();
+        if (b) b.scrollTop = scrollTop;
       });
-    }, 200);
+    }
+    track.addEventListener(
+      "transitionend",
+      function (event) {
+        if (event.target !== track) return;
+        if (event.propertyName && event.propertyName.indexOf("transform") === -1) return;
+        finish();
+      },
+      { once: true }
+    );
+    window.setTimeout(finish, durationMs + 80);
   }
 
   function setProvCalView(view) {
@@ -3210,7 +3379,7 @@
       panel.style.paddingTop = "0";
       panel.style.paddingBottom = "0";
     });
-    window.setTimeout(finish, 320);
+    window.setTimeout(finish, 340);
   }
 
   function toggleProvCalMonthPanel() {
@@ -3396,26 +3565,38 @@
 
   const PROV_CAL_DOW_SHORT = ["ND.", "PN.", "WT.", "ŚR.", "CZ.", "PT.", "SB."];
 
-  /** Etykieta / liczba widoku: tylko 1 / 3 / 7. */
+  /** Liczba widoku na badge / w menu: 1–7 (bez snapowania do 1/3/7). */
   function snapProvCalViewBadge(days) {
-    const n = clampProvCalVisibleDays(days);
-    if (n <= 1) return 1;
-    if (n <= 4) return 3;
-    return 7;
+    return clampProvCalVisibleDays(days);
   }
 
   function provCalViewBadgeLabel(days) {
     const n = snapProvCalViewBadge(days);
     if (n === 1) return "Widok: 1 dzień";
-    if (n === 7) return "Widok: tydzień";
-    return "Widok: 3 dni";
+    return "Widok: " + n + " dni";
   }
 
   const PROV_CAL_VIEW_OPTIONS = [
-    { days: 1, label: "1 dzień", icon: "day" },
-    { days: 3, label: "3 dni", icon: "days3" },
-    { days: 7, label: "Tydzień", icon: "week" },
+    { days: 1, label: "1 dzień" },
+    { days: 2, label: "2 dni" },
+    { days: 3, label: "3 dni" },
+    { days: 4, label: "4 dni" },
+    { days: 5, label: "5 dni" },
+    { days: 6, label: "6 dni" },
+    { days: 7, label: "7 dni" },
   ];
+
+  /** Ikona kalendarza z cyfrą — ta sama co w rogu widoku dnia/tygodnia. */
+  function renderProvCalViewBadge(num) {
+    return `
+      <span class="gcal-week__view-badge" aria-hidden="true">
+        <svg class="gcal-week__view-badge-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="18" rx="3" />
+          <path d="M16 2v4M8 2v4M3 10h18" />
+        </svg>
+        <span class="gcal-week__view-badge-num">${escapeHtml(String(num))}</span>
+      </span>`;
+  }
 
   function ensureProvCalViewCloud() {
     let el = document.getElementById("prov-cal-view-cloud");
@@ -3444,7 +3625,7 @@
   }
 
   function openProvCalViewCloud(trigger) {
-    if (!trigger || window.AppState.provCalMonthOpen) return;
+    if (!trigger) return;
     const cloud = ensureProvCalViewCloud();
     if (!cloud.hidden) {
       closeProvCalViewCloud();
@@ -3458,7 +3639,7 @@
         <button type="button" class="prov-cal-view-cloud__item${on ? " is-on" : ""}"
           role="menuitemradio" aria-checked="${on ? "true" : "false"}"
           data-action="prov-cal-set-view" data-days="${opt.days}">
-          <span class="prov-cal-view-cloud__icon prov-cal-view-cloud__icon--${escapeHtml(opt.icon)}" aria-hidden="true"></span>
+          ${renderProvCalViewBadge(opt.days)}
           <span class="prov-cal-view-cloud__label">${escapeHtml(opt.label)}</span>
         </button>`;
     }).join("");
@@ -3483,31 +3664,30 @@
     trigger.setAttribute("aria-expanded", "true");
   }
 
-  /**
-   * Sticky nagłówki dni — zawsze w DOM.
-   * Przy otwartym miesiącu są schowane CSS-em i simultaneousnie wracają przy zamykaniu panelu
-   * (żeby nie było „pustki” z samym separatorem).
-   */
-  function renderProvCalStickyDayHeads(daysHtml) {
+  /** Przycisk widoku 1–7 — stała pozycja w .prov-cal-top (nad panelem miesiąca). */
+  function renderProvCalViewCornerBtn() {
     const days = ensureProvCalVisibleDays();
     const badge = String(snapProvCalViewBadge(days));
+    return `
+      <button type="button" class="gcal-week__corner prov-cal-view-corner" data-action="prov-cal-view-menu"
+        aria-label="${escapeHtml(provCalViewBadgeLabel(days))}"
+        aria-haspopup="menu" aria-expanded="false">
+        ${renderProvCalViewBadge(badge)}
+      </button>`;
+  }
+
+  /**
+   * Sticky nagłówki dni — zawsze w DOM.
+   * Ikona widoku jest w .prov-cal-top (nie tu), tu tylko spacer o tej samej szerokości.
+   */
+  function renderProvCalStickyDayHeads(daysHtml) {
     const underMonth = !!window.AppState.provCalMonthOpen;
     return `
       <div class="gcal-week__sticky${underMonth ? " gcal-week__sticky--under-month" : ""}"${
         underMonth ? ' aria-hidden="true"' : ""
       }>
         <div class="gcal-week__head">
-          <button type="button" class="gcal-week__corner" data-action="prov-cal-view-menu"
-            aria-label="${escapeHtml(provCalViewBadgeLabel(days))}"
-            aria-haspopup="menu" aria-expanded="false">
-            <span class="gcal-week__view-badge" aria-hidden="true">
-              <svg class="gcal-week__view-badge-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="4" width="18" height="18" rx="3" />
-                <path d="M16 2v4M8 2v4M3 10h18" />
-              </svg>
-              <span class="gcal-week__view-badge-num">${escapeHtml(badge)}</span>
-            </span>
-          </button>
+          <div class="gcal-week__corner gcal-week__corner--spacer" aria-hidden="true"></div>
           <div class="gcal-week__days">${daysHtml}</div>
         </div>
       </div>`;
@@ -3911,7 +4091,10 @@
               </div>
             </div>
           </header>
-          ${renderProvCalMonthPanel(selected, visits)}
+          <div class="prov-cal-top__anchor">
+            ${renderProvCalViewCornerBtn()}
+            ${renderProvCalMonthPanel(selected, visits)}
+          </div>
         </div>
         <div class="prov-cal-body" data-role="prov-cal-body">
           ${weekView ? renderProvCalGoogleWeek(selected, visits) : renderProvCalGoogleDay(selected, dayVisits)}
@@ -7984,6 +8167,8 @@
       locked: false,
       moved: false,
       gcal: null,
+      body: null,
+      underlay: null,
     };
 
     function canSwipe(target) {
@@ -7991,16 +8176,46 @@
       if (window.AppState.provCalMonthOpen) return false;
       if (document.body.classList.contains("prov-cal-dragging")) return false;
       if (document.body.classList.contains("prov-cal-pinching")) return false;
+      const body = target.closest('[data-role="prov-cal-body"]');
+      if (body && body.classList.contains("prov-cal-body--animating-days")) return false;
       return !!target.closest("[data-prov-cal-day-swipe]");
     }
 
+    function ensureUnderlay() {
+      const gcal = swipe.gcal;
+      if (!gcal || swipe.underlay || !gcal.parentNode) return;
+      const under = gcal.cloneNode(true);
+      under.removeAttribute("data-role");
+      under.removeAttribute("data-prov-cal-day-swipe");
+      under.classList.add("gcal--swipe-underlay");
+      under.querySelectorAll("[id]").forEach(function (el) {
+        el.removeAttribute("id");
+      });
+      gcal.parentNode.insertBefore(under, gcal);
+      gcal.classList.add("gcal--swipe-top");
+      swipe.underlay = under;
+      if (swipe.body) swipe.body.classList.add("prov-cal-body--day-swipe");
+    }
+
+    function clearUnderlay() {
+      if (swipe.underlay) {
+        swipe.underlay.remove();
+        swipe.underlay = null;
+      }
+      if (swipe.gcal) swipe.gcal.classList.remove("gcal--swipe-top");
+    }
+
     function resetVisual(spring) {
-      const gcal = swipe.gcal || document.querySelector('[data-role="prov-cal-gcal"]');
-      if (!gcal) return;
+      const gcal = swipe.gcal || resolveVisibleProvCalGcal(null);
+      const body = swipe.body;
+      if (!gcal) {
+        clearUnderlay();
+        if (body) body.classList.remove("prov-cal-body--day-swipe");
+        return;
+      }
       if (spring) {
         gcal.classList.add("gcal--sliding");
-        gcal.style.transition =
-          "transform 0.24s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease";
+        gcal.style.transition = "transform 0.24s cubic-bezier(0.4, 0, 0.2, 1)";
         gcal.style.transform = "translate3d(0,0,0)";
         gcal.style.opacity = "1";
         window.setTimeout(function () {
@@ -8008,12 +8223,20 @@
           gcal.style.transition = "";
           gcal.style.transform = "";
           gcal.style.opacity = "";
+          clearUnderlay();
+          if (body && !body.classList.contains("prov-cal-body--animating-days")) {
+            body.classList.remove("prov-cal-body--day-swipe");
+          }
         }, 260);
       } else {
         gcal.classList.remove("gcal--sliding");
         gcal.style.transition = "";
         gcal.style.transform = "";
         gcal.style.opacity = "";
+        clearUnderlay();
+        if (body && !body.classList.contains("prov-cal-body--animating-days")) {
+          body.classList.remove("prov-cal-body--day-swipe");
+        }
       }
     }
 
@@ -8030,6 +8253,7 @@
         swipe.moved = false;
         swipe.dx = 0;
         swipe.gcal = gcal;
+        swipe.body = gcal.closest('[data-role="prov-cal-body"]');
         swipe.startX = event.touches[0].clientX;
         swipe.startY = event.touches[0].clientY;
       },
@@ -8051,18 +8275,23 @@
             return;
           }
           swipe.locked = true;
+          ensureUnderlay();
         }
+        if (event.cancelable) event.preventDefault();
         swipe.moved = true;
         swipe.dx = dx;
         const gcal = swipe.gcal;
         if (!gcal) return;
-        // Lekki opór poza progiem (rubber-band).
-        const resisted = Math.abs(dx) > THRESHOLD ? Math.sign(dx) * (THRESHOLD + (Math.abs(dx) - THRESHOLD) * 0.35) : dx;
+        // Lekki opór poza progiem (rubber-band) — pod spodem underlay trzyma krawędź.
+        const resisted =
+          Math.abs(dx) > THRESHOLD
+            ? Math.sign(dx) * (THRESHOLD + (Math.abs(dx) - THRESHOLD) * 0.28)
+            : dx;
         gcal.style.transition = "none";
+        gcal.style.opacity = "1";
         gcal.style.transform = "translate3d(" + resisted + "px,0,0)";
-        gcal.style.opacity = String(Math.max(0.55, 1 - Math.abs(resisted) / 420));
       },
-      { passive: true }
+      { passive: false }
     );
 
     document.addEventListener(
@@ -8072,6 +8301,7 @@
         const dx = swipe.dx;
         const wasLocked = swipe.locked;
         const moved = swipe.moved;
+        const gcal = swipe.gcal;
         swipe.active = false;
         swipe.locked = false;
         swipe.moved = false;
@@ -8088,8 +8318,11 @@
           window._provCalSwipeSuppressClick = false;
         }, 450);
 
+        clearUnderlay();
         // w lewo → następny dzień, w prawo → poprzedni (standard kalendarzy mobilnych)
-        shiftProvCalDateAnimated(dx < 0 ? 1 : -1);
+        shiftProvCalDateAnimated(dx < 0 ? 1 : -1, { gcal: gcal });
+        swipe.gcal = null;
+        swipe.body = null;
       },
       { passive: true }
     );
