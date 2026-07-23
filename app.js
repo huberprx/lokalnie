@@ -173,8 +173,11 @@
   // najbardziej wysuniętego w lewo widocznego kafelka daty.
   function updateBookingMonthLabel(strip) {
     if (!strip) return;
-    const schedule = strip.closest(".booking__schedule");
-    const label = schedule && schedule.querySelector('[data-role="booking-mobile-month"]');
+    const schedule =
+      strip.closest(".booking__schedule") || strip.closest(".prov-cal-add__schedule") || strip.closest(".prov-cal-add");
+    const label =
+      (schedule && schedule.querySelector('[data-role="booking-mobile-month"]')) ||
+      (schedule && schedule.querySelector('[data-role="prov-cal-add-month"]'));
     if (!label) return;
     const chosen = leftmostDatedChild(strip, ".date-chip[data-date]");
     if (!chosen) return;
@@ -420,7 +423,9 @@
     return out;
   }
 
-  function renderDateStripHtml(availDates, activeDate) {
+  function renderDateStripHtml(availDates, activeDate, opts) {
+    opts = opts || {};
+    const action = opts.action || "pick-date";
     if (!availDates.length) return `<p class="empty-note">Brak dostępnych terminów.</p>`;
     const availSet = new Set(availDates);
     const today = demoTodayISO();
@@ -437,7 +442,7 @@
         const bookable = open && !past;
         return `
         <button type="button" class="date-chip${on ? " date-chip--active" : ""}${red ? " date-chip--holiday" : ""}${past ? " date-chip--closed" : ""}${!bookable && !past ? " date-chip--unavailable" : ""}"
-          data-date="${escapeHtml(dateISO)}"${bookable ? ` data-action="pick-date"` : " disabled aria-disabled=\"true\""}>
+          data-date="${escapeHtml(dateISO)}"${bookable ? ` data-action="${escapeHtml(action)}"` : " disabled aria-disabled=\"true\""}>
           <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span>
           <span class="date-chip__day">${dt.getDate()}</span>
         </button>`;
@@ -4093,9 +4098,11 @@
   function defaultProvCalAddDraft() {
     return {
       clientName: "",
-      serviceId: null,
+      serviceIds: [],
       dateISO: ensureProvCalDate(),
       slotId: null,
+      servicePickOpen: false,
+      expandedServiceIds: [],
     };
   }
 
@@ -4103,17 +4110,41 @@
     const cur = window.AppState.provCalAddDraft;
     if (cur && typeof cur === "object") {
       if (!cur.dateISO) cur.dateISO = ensureProvCalDate();
+      if (!Array.isArray(cur.serviceIds)) {
+        cur.serviceIds = cur.serviceId ? [cur.serviceId] : [];
+      }
+      if (typeof cur.servicePickOpen !== "boolean") cur.servicePickOpen = false;
       return cur;
     }
     window.AppState.provCalAddDraft = defaultProvCalAddDraft();
     return window.AppState.provCalAddDraft;
   }
 
+  function provCalAddSelectedServices(p, draft) {
+    const ids = (draft && draft.serviceIds) || [];
+    return ((p && p.services) || []).filter(function (s) {
+      return ids.indexOf(s.id) !== -1;
+    });
+  }
+
+  function provCalAddServiceTotals(selected) {
+    const duration = (selected || []).reduce(function (a, s) {
+      return a + (s.durationMin || 0);
+    }, 0);
+    const hasNullPrice = (selected || []).some(function (s) {
+      return s.price == null;
+    });
+    const price = (selected || []).reduce(function (a, s) {
+      return a + (s.price || 0);
+    }, 0);
+    return { duration: duration, price: price, hasNullPrice: hasNullPrice, count: (selected || []).length };
+  }
+
   function captureProvCalAddClientName() {
-    const input = document.querySelector('[data-role="prov-cal-add-client"]');
     const draft = window.AppState.provCalAddDraft;
-    if (!input || !draft) return;
-    draft.clientName = String(input.value || "").trim();
+    if (!draft) return;
+    const clientInput = document.querySelector('[data-role="prov-cal-add-client"]');
+    if (clientInput) draft.clientName = String(clientInput.value || "").trim();
   }
 
   function openProvCalAdd() {
@@ -4121,7 +4152,9 @@
     window.AppState.provCalAddDraft = defaultProvCalAddDraft();
     const p = myProvider();
     const services = (p && p.services) || [];
-    if (services.length === 1) window.AppState.provCalAddDraft.serviceId = services[0].id;
+    if (services.length === 1) {
+      window.AppState.provCalAddDraft.serviceIds = [services[0].id];
+    }
     setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
     closeProvCalViewCloud();
     saveState();
@@ -4139,13 +4172,22 @@
     renderAll();
   }
 
-  function setProvCalAddService(serviceId) {
+  function toggleProvCalAddService(serviceId) {
+    if (!serviceId) return;
     captureProvCalAddClientName();
     const draft = ensureProvCalAddDraft();
-    draft.serviceId = serviceId || null;
+    if (!Array.isArray(draft.serviceIds)) draft.serviceIds = [];
+    const idx = draft.serviceIds.indexOf(serviceId);
+    if (idx === -1) draft.serviceIds.push(serviceId);
+    else draft.serviceIds.splice(idx, 1);
     draft.slotId = null;
+    draft.servicePickOpen = true;
     saveState();
     renderAll();
+  }
+
+  function setProvCalAddService(serviceId) {
+    toggleProvCalAddService(serviceId);
   }
 
   function setProvCalAddDate(dateISO) {
@@ -4167,6 +4209,65 @@
     renderAll();
   }
 
+  function toggleProvCalAddServiceDesc(serviceId) {
+    captureProvCalAddClientName();
+    const draft = ensureProvCalAddDraft();
+    if (!Array.isArray(draft.expandedServiceIds)) draft.expandedServiceIds = [];
+    const idx = draft.expandedServiceIds.indexOf(serviceId);
+    if (idx === -1) draft.expandedServiceIds.push(serviceId);
+    else draft.expandedServiceIds.splice(idx, 1);
+    saveState();
+    renderAll();
+  }
+
+  function renderProvCalAddServiceRows(services, draft) {
+    const selectedId = draft && draft.serviceId;
+    const expandedIds = (draft && draft.expandedServiceIds) || [];
+    return (services || [])
+      .map(function (s) {
+        const on = s.id === selectedId;
+        const expanded = expandedIds.indexOf(s.id) !== -1;
+        const detail = serviceDetailText(s);
+        const hasDetail = serviceHasDetail(s);
+        const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
+        return `
+        <article class="service-row${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}" data-service-id="${escapeHtml(s.id)}">
+          <div class="service-row__content service-row__content--with-check">
+            <button type="button" class="service-row__main" data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
+              <span class="service-row__name">${escapeHtml(s.name)}</span>
+              ${s.subtitle ? `<span class="service-row__sub">${escapeHtml(s.subtitle)}</span>` : ""}
+            </button>
+            <div class="service-row__meta">
+              <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
+              <span class="service-row__price">${escapeHtml(formatPrice(s.price))}</span>
+            </div>
+            <div class="service-row__foot">
+              ${
+                hasDetail
+                  ? `<button type="button" class="service-row__more" data-action="prov-cal-add-toggle-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}">
+                      <span class="service-row__more-label">${expanded ? "Mniej" : "Więcej"}</span>
+                      <span class="service-row__chev" aria-hidden="true"></span>
+                    </button>`
+                  : `<span class="service-row__foot-spacer" aria-hidden="true"></span>`
+              }
+              <button type="button" class="service-row__check${on ? " service-row__check--on" : ""}" data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
+                <span class="service-row__check-visual" aria-hidden="true"></span>
+              </button>
+            </div>
+            ${
+              hasDetail
+                ? `<div class="service-row__detail"${expanded ? "" : " hidden"}>
+                    ${detail ? `<p class="service-row__detail-text">${escapeHtml(detail)}</p>` : ""}
+                    ${renderServicePhotoStrip(s)}
+                  </div>`
+                : ""
+            }
+          </div>
+        </article>`;
+      })
+      .join("");
+  }
+
   function confirmProvCalAdd() {
     captureProvCalAddClientName();
     const draft = ensureProvCalAddDraft();
@@ -4177,10 +4278,8 @@
       showToast("Podaj imię klienta.");
       return;
     }
-    const svc = (p.services || []).find(function (s) {
-      return s.id === draft.serviceId;
-    });
-    if (!svc) {
+    const selected = provCalAddSelectedServices(p, draft);
+    if (!selected.length) {
       showToast("Wybierz usługę.");
       return;
     }
@@ -4188,7 +4287,8 @@
       showToast("Wybierz dzień i godzinę.");
       return;
     }
-    const slots = computeSlots(p, draft.dateISO, svc.durationMin || 15);
+    const totals = provCalAddServiceTotals(selected);
+    const slots = computeSlots(p, draft.dateISO, totals.duration || 15);
     const slot = slots.find(function (s) {
       return s.id === draft.slotId;
     });
@@ -4204,8 +4304,12 @@
       providerId: p.id,
       providerName: p.name,
       clientName: clientName,
-      serviceIds: [svc.id],
-      serviceNames: [svc.name],
+      serviceIds: selected.map(function (s) {
+        return s.id;
+      }),
+      serviceNames: selected.map(function (s) {
+        return s.name;
+      }),
       dateISO: draft.dateISO,
       from: slot.from,
       to: slot.to,
@@ -4237,63 +4341,69 @@
     const p = myProvider();
     const draft = ensureProvCalAddDraft();
     const services = (p && p.services) || [];
-    const svc = services.find(function (s) {
-      return s.id === draft.serviceId;
-    });
-    const duration = (svc && svc.durationMin) || 30;
-    const availDays = ((p && p.availability) || []).filter(function (d) {
-      return computeSlots(p, d.dateISO, duration).length > 0;
-    });
+    const selected = provCalAddSelectedServices(p, draft);
+    const totals = provCalAddServiceTotals(selected);
+    const duration = totals.duration || 30;
+    const availDates = ((p && p.availability) || [])
+      .map(function (d) {
+        return d.dateISO;
+      })
+      .filter(function (dateISO) {
+        return computeSlots(p, dateISO, duration).length > 0;
+      });
     let activeDate = draft.dateISO;
-    if (!availDays.some(function (d) {
-      return d.dateISO === activeDate;
-    })) {
-      activeDate = (availDays[0] && availDays[0].dateISO) || ensureProvCalDate();
+    if (availDates.indexOf(activeDate) === -1) {
+      activeDate = availDates[0] || ensureProvCalDate();
       draft.dateISO = activeDate;
     }
-    const slots = svc ? computeSlots(p, activeDate, duration) : [];
-
-    const serviceChips = services.length
+    const hasSvc = selected.length > 0;
+    const slots = hasSvc ? computeSlots(p, activeDate, duration) : [];
+    const serviceMenu = services.length
       ? services
           .map(function (s) {
-            const on = s.id === draft.serviceId;
-            return `<button type="button" class="prov-cal-add__chip${on ? " is-on" : ""}" data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}">
-              <span class="prov-cal-add__chip-name">${escapeHtml(s.name)}</span>
-              <span class="prov-cal-add__chip-meta">${escapeHtml(formatDuration(s.durationMin || 0))}</span>
+            const on = (draft.serviceIds || []).indexOf(s.id) !== -1;
+            const meta = [formatDuration(s.durationMin), formatPrice(s.price)].filter(Boolean).join(" · ");
+            const selectLabel = (on ? "Odznacz" : "Zaznacz") + " " + s.name;
+            return `<button type="button" class="avail-loc-pick__opt prov-cal-add__service-opt${on ? " is-selected" : ""}" role="option"
+              data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}"
+              aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
+              <span class="avail-loc-pick__opt-label">${escapeHtml(s.name)}</span>
+              ${meta ? `<span class="prov-cal-add__service-opt-meta">${escapeHtml(meta)}</span>` : ""}
+              <span class="service-row__check-visual${on ? " is-on" : ""}" aria-hidden="true"></span>
             </button>`;
           })
           .join("")
-      : `<p class="empty-note">Brak usług — dodaj je w zakładce Usługi.</p>`;
+      : `<p class="empty-note prov-cal-add__service-empty">Brak usług — dodaj je w zakładce Usługi.</p>`;
+    const dateStrip = hasSvc
+      ? renderDateStripHtml(availDates, activeDate, { action: "prov-cal-add-date" })
+      : `<p class="empty-note">Najpierw wybierz usługę.</p>`;
+    const timeList = !hasSvc
+      ? ""
+      : slots.length
+        ? slots
+            .map(function (s) {
+              const on = draft.slotId === s.id;
+              return `
+          <button type="button" class="time-row time-row--chip${on ? " time-row--selected" : ""}" data-action="prov-cal-add-slot" data-slot="${escapeHtml(s.id)}"
+            aria-label="Wybierz ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${on ? "true" : "false"}">
+            <span class="time-row__info">
+              <span class="time-row__range">${escapeHtml(s.from)}→${escapeHtml(s.to)}</span>
+              <span class="time-row__place">${escapeHtml(s.locationLabel || "—")}</span>
+            </span>
+          </button>`;
+            })
+            .join("")
+        : `<p class="empty-note">Brak wolnych godzin tego dnia.</p>`;
 
-    const dateStrip = availDays.length
-      ? availDays
-          .map(function (d) {
-            const dt = new Date(d.dateISO + "T12:00:00");
-            const on = d.dateISO === activeDate;
-            const red = isRedCalendarDay(d.dateISO);
-            return `<button type="button" class="date-chip${on ? " date-chip--active" : ""}${red ? " date-chip--holiday" : ""}" data-action="prov-cal-add-date" data-date="${escapeHtml(d.dateISO)}">
-              <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span><span class="date-chip__day">${dt.getDate()}</span>
-            </button>`;
-          })
-          .join("")
-      : `<p class="empty-note">Brak dostępności w kalendarzu.</p>`;
-
-    const timeList =
-      !svc
-        ? `<p class="empty-note">Najpierw wybierz usługę.</p>`
-        : slots.length
-          ? slots
-              .map(function (s) {
-                const on = draft.slotId === s.id;
-                return `<button type="button" class="time-row${on ? " time-row--selected" : ""}" data-action="prov-cal-add-slot" data-slot="${escapeHtml(s.id)}">
-                  <span class="time-row__range">${escapeHtml(s.from)}→${escapeHtml(s.to)}</span>
-                  ${s.locationLabel ? `<span class="time-row__place">${escapeHtml(s.locationLabel)}</span>` : ""}
-                </button>`;
-              })
-              .join("")
-          : `<p class="empty-note">Brak wolnych godzin w tym dniu.</p>`;
-
-    const canSave = !!svc && !!draft.slotId;
+    const canSave = hasSvc && !!draft.slotId;
+    const priceText = !hasSvc ? "—" : totals.hasNullPrice ? "wycena indyw." : formatPrice(totals.price);
+    const durText = !hasSvc ? "—" : formatDuration(totals.duration || 0);
+    const serviceLabel = !hasSvc
+      ? "Wybierz usługę"
+      : selected.map(function (s) {
+          return s.name;
+        }).join(", ");
+    const servicePickOpen = !!draft.servicePickOpen;
 
     return `
       <div class="prov-cal-add" data-role="prov-cal-add">
@@ -4304,28 +4414,58 @@
             <button type="button" class="prov-cal-add__close" data-action="close-prov-cal-add" aria-label="Zamknij">×</button>
           </header>
           <div class="prov-cal-add__body">
-            <label class="prov-cal-add__field">
-              <span class="prov-cal-add__label">Klient</span>
-              <input type="text" class="prov-cal-add__input" data-role="prov-cal-add-client"
-                value="${escapeHtml(draft.clientName || "")}" placeholder="Imię i nazwisko" autocomplete="name" />
+            <label class="prov-cal-add__field" aria-label="Klient">
+              <span class="prov-cal-add__client-row">
+                <span class="prov-cal-add__client-avatar" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="8.2" r="3.4" />
+                    <path d="M5.2 19.2c.9-3.2 3.4-4.8 6.8-4.8s5.9 1.6 6.8 4.8" />
+                  </svg>
+                </span>
+                <input type="text" class="prov-cal-add__input" data-role="prov-cal-add-client"
+                  value="${escapeHtml(draft.clientName || "")}" placeholder="Imię i nazwisko" autocomplete="name" />
+              </span>
             </label>
-            <div class="prov-cal-add__section">
-              <span class="prov-cal-add__label">Usługa</span>
-              <div class="prov-cal-add__chips">${serviceChips}</div>
+
+            <div class="prov-cal-add__field" aria-label="Usługa">
+              <div class="avail-loc-pick avail-loc-pick--compact prov-cal-add__service-pick${servicePickOpen ? " is-open" : ""}" data-role="prov-cal-add-service-pick">
+                <button type="button" class="avail-loc-pick__btn" data-action="toggle-prov-cal-add-service"
+                  aria-haspopup="listbox" aria-expanded="${servicePickOpen ? "true" : "false"}" aria-label="Wybierz usługi">
+                  <span class="prov-cal-add__client-avatar" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z" />
+                      <path d="M7 7h.01" />
+                    </svg>
+                  </span>
+                  <span class="avail-edit__loc-content">
+                    <span class="avail-loc-pick__label${hasSvc ? "" : " avail-loc-pick__label--placeholder"}">${escapeHtml(serviceLabel)}</span>
+                  </span>
+                  <span class="avail-loc-pick__chevron" aria-hidden="true"></span>
+                </button>
+                <div class="avail-loc-pick__menu" data-role="prov-cal-add-service-menu" role="listbox" aria-multiselectable="true"${servicePickOpen ? "" : " hidden"}>${serviceMenu}</div>
+              </div>
             </div>
-            <div class="prov-cal-add__section">
-              <span class="prov-cal-add__label">Dzień</span>
-              <div class="date-strip prov-cal-add__dates">${dateStrip}</div>
-            </div>
-            <div class="prov-cal-add__section">
-              <span class="prov-cal-add__label">Godzina${activeDate ? " · " + escapeHtml(formatDateLong(activeDate)) : ""}</span>
-              <div class="time-list prov-cal-add__times">${timeList}</div>
+
+            <div class="booking__schedule prov-cal-add__schedule">
+              <div class="booking__label-row">
+                <h3 class="booking__label booking__label--caps">Wybierz datę</h3>
+                <span class="booking__month" data-role="prov-cal-add-month">${escapeHtml(monthLabelFromISO(activeDate || availDates[0]))}</span>
+              </div>
+              <div class="date-strip" data-role="prov-cal-add-date-strip">${dateStrip}</div>
+
+              <h3 class="booking__label booking__label--caps"${hasSvc && activeDate ? "" : " hidden"}>Wolne terminy</h3>
+              <div class="time-list time-list--horizontal"${hasSvc && activeDate ? "" : " hidden"}>${timeList}</div>
             </div>
           </div>
-          <div class="prov-cal-add__foot">
-            <button type="button" class="btn btn--primary prov-cal-add__save" data-action="confirm-prov-cal-add"${canSave ? "" : " disabled"}>
-              Dodaj termin
-            </button>
+          <div class="prov-cal-add__foot booking-confirm-bar">
+            <div class="bottom-nav__summary${hasSvc ? "" : " bottom-nav__summary--empty"}">
+              <span class="bottom-nav__summary-label">Suma:</span>
+              <div class="bottom-nav__summary-meta">
+                <span class="bottom-nav__summary-dur">${escapeHtml(durText)}</span>
+                <span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>
+              </div>
+            </div>
+            <button type="button" class="bottom-nav__book" data-action="confirm-prov-cal-add"${canSave ? "" : " disabled"}>Dodaj</button>
           </div>
         </div>
       </div>`;
@@ -6003,15 +6143,22 @@
   function closeAvailPickMenus(except) {
     document
       .querySelectorAll(
-        '[data-role="avail-loc-pick"].is-open, [data-role="avail-repeat-pick"].is-open'
+        '[data-role="avail-loc-pick"].is-open, [data-role="avail-repeat-pick"].is-open, [data-role="prov-cal-add-service-pick"].is-open'
       )
       .forEach(function (pick) {
         if (except && pick === except) return;
         pick.classList.remove("is-open");
-        const btn = pick.querySelector('[data-action="toggle-avail-loc"], [data-action="toggle-avail-repeat"]');
-        const menu = pick.querySelector('[data-role="avail-loc-menu"], [data-role="avail-repeat-menu"]');
+        const btn = pick.querySelector(
+          '[data-action="toggle-avail-loc"], [data-action="toggle-avail-repeat"], [data-action="toggle-prov-cal-add-service"]'
+        );
+        const menu = pick.querySelector(
+          '[data-role="avail-loc-menu"], [data-role="avail-repeat-menu"], [data-role="prov-cal-add-service-menu"]'
+        );
         if (btn) btn.setAttribute("aria-expanded", "false");
         if (menu) menu.hidden = true;
+        if (pick.getAttribute("data-role") === "prov-cal-add-service-pick" && window.AppState.provCalAddDraft) {
+          window.AppState.provCalAddDraft.servicePickOpen = false;
+        }
       });
   }
 
@@ -6553,7 +6700,7 @@
     requestAnimationFrame(function () {
       syncBottomNavIndicators(prevBottomNavTab);
     });
-    document.querySelectorAll('[data-role="booking-date-strip"]').forEach(updateBookingMonthLabel);
+    document.querySelectorAll('[data-role="booking-date-strip"], [data-role="prov-cal-add-date-strip"]').forEach(updateBookingMonthLabel);
     requestAnimationFrame(function () {
       const availGrid = document.querySelector('[data-role="avail-week-grid"]');
       if (availGrid) initAvailStripScroll(availGrid);
@@ -7346,7 +7493,8 @@
   document.addEventListener("click", function (event) {
     if (
       !event.target.closest('[data-role="avail-loc-pick"]') &&
-      !event.target.closest('[data-role="avail-repeat-pick"]')
+      !event.target.closest('[data-role="avail-repeat-pick"]') &&
+      !event.target.closest('[data-role="prov-cal-add-service-pick"]')
     ) {
       closeAvailPickMenus();
     }
@@ -7667,9 +7815,22 @@
         event.preventDefault();
         closeProvCalAdd();
         break;
+      case "toggle-prov-cal-add-service": {
+        event.preventDefault();
+        const pick = btn.closest('[data-role="prov-cal-add-service-pick"]');
+        const willOpen = !(pick && pick.classList.contains("is-open"));
+        const addDraft = window.AppState.provCalAddDraft;
+        if (addDraft) addDraft.servicePickOpen = willOpen;
+        toggleAvailPickMenu(pick, btn, "prov-cal-add-service-menu");
+        break;
+      }
       case "prov-cal-add-service":
         event.preventDefault();
-        setProvCalAddService(d.serviceId);
+        toggleProvCalAddService(d.serviceId);
+        break;
+      case "prov-cal-add-toggle-desc":
+        event.preventDefault();
+        toggleProvCalAddServiceDesc(d.serviceId);
         break;
       case "prov-cal-add-date":
         event.preventDefault();
@@ -7821,7 +7982,7 @@
     function (event) {
       const target = event.target;
       if (!target || !target.closest) return;
-      const bookingStrip = target.closest('[data-role="booking-date-strip"]');
+      const bookingStrip = target.closest('[data-role="booking-date-strip"], [data-role="prov-cal-add-date-strip"]');
       if (bookingStrip) updateBookingMonthLabel(bookingStrip);
       const availGrid = target.closest('[data-role="avail-week-grid"]');
       if (availGrid) handleAvailStripScroll(availGrid);
