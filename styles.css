@@ -5733,16 +5733,23 @@ body.avatar-preview-open {
 }
 
 .prov-cal-add__service-pick .avail-loc-pick__btn {
+  align-items: flex-start;
   gap: 0.7rem;
   min-height: 2.55rem;
   font-size: 16px;
+}
+
+.prov-cal-add__service-pick .avail-loc-pick__btn .prov-cal-add__client-avatar,
+.prov-cal-add__service-pick .avail-loc-pick__btn .avail-loc-pick__chevron {
+  margin-top: 0.35rem;
 }
 
 .prov-cal-add__service-pick .avail-edit__loc-content {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  padding: 0.2rem 0;
 }
 
 .prov-cal-add__service-pick .avail-loc-pick__label {
@@ -5752,6 +5759,22 @@ body.avatar-preview-open {
 
 .prov-cal-add__service-pick .avail-loc-pick__label--placeholder {
   font-weight: 500;
+}
+
+.prov-cal-add__service-summary.visit-card__services {
+  width: 100%;
+  margin: 0;
+  padding-left: 1rem;
+  gap: 0.15rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: left;
+  color: var(--text);
+}
+
+.prov-cal-add__service-summary.visit-card__services li::marker {
+  color: var(--text);
 }
 
 .prov-cal-add__service-pick .avail-loc-pick__menu {

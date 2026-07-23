@@ -4430,6 +4430,20 @@
     renderAll();
   }
 
+  function renderProvCalAddServiceSummaryHtml(selected) {
+    const list = selected || [];
+    if (!list.length) {
+      return `<span class="avail-loc-pick__label avail-loc-pick__label--placeholder">Wybierz usługę</span>`;
+    }
+    return `<ul class="prov-cal-add__service-summary visit-card__services" aria-label="Wybrane usługi">
+      ${list
+        .map(function (s) {
+          return `<li>${escapeHtml(s.name)}</li>`;
+        })
+        .join("")}
+    </ul>`;
+  }
+
   function patchProvCalAddServiceUi() {
     const p = myProvider();
     const draft = window.AppState.provCalAddDraft;
@@ -4437,13 +4451,6 @@
     const selected = provCalAddSelectedServices(p, draft);
     const totals = provCalAddServiceTotals(selected);
     const hasSvc = selected.length > 0;
-    const serviceLabel = !hasSvc
-      ? "Wybierz usługę"
-      : selected
-          .map(function (s) {
-            return s.name;
-          })
-          .join(", ");
     const ids = draft.serviceIds || [];
 
     document.querySelectorAll('[data-role="prov-cal-add-service-menu"] [data-action="prov-cal-add-service"]').forEach(function (opt) {
@@ -4458,10 +4465,17 @@
       if (labelText) opt.setAttribute("aria-label", (on ? "Odznacz" : "Zaznacz") + " " + labelText);
     });
 
-    const labelEl = document.querySelector('[data-role="prov-cal-add-service-pick"] .avail-loc-pick__label');
-    if (labelEl) {
-      labelEl.textContent = serviceLabel;
-      labelEl.classList.toggle("avail-loc-pick__label--placeholder", !hasSvc);
+    const contentEl = document.querySelector('[data-role="prov-cal-add-service-pick"] [data-role="prov-cal-add-service-summary"]');
+    if (contentEl) contentEl.innerHTML = renderProvCalAddServiceSummaryHtml(selected);
+    const pickBtn = document.querySelector('[data-role="prov-cal-add-service-pick"] .avail-loc-pick__btn');
+    if (pickBtn) {
+      pickBtn.classList.toggle("prov-cal-add__service-btn--filled", hasSvc);
+      const names = selected
+        .map(function (s) {
+          return s.name;
+        })
+        .join(", ");
+      pickBtn.setAttribute("aria-label", hasSvc ? "Wybrane usługi: " + names : "Wybierz usługi");
     }
 
     const summary = document.querySelector(".prov-cal-add__foot .bottom-nav__summary");
@@ -4783,11 +4797,15 @@
           ? "wycena indyw."
           : formatPrice(totals.price);
     const durText = !hasSvc ? "—" : formatDuration(totals.duration || 0);
-    const serviceLabel = !hasSvc
-      ? "Wybierz usługę"
-      : selected.map(function (s) {
-          return s.name;
-        }).join(", ");
+    const serviceSummaryHtml = renderProvCalAddServiceSummaryHtml(selected);
+    const serviceAriaLabel = !hasSvc
+      ? "Wybierz usługi"
+      : "Wybrane usługi: " +
+        selected
+          .map(function (s) {
+            return s.name;
+          })
+          .join(", ");
     const servicePickOpen = !!draft.servicePickOpen;
     const clientPickOpen = !!draft.clientPickOpen;
 
@@ -4818,16 +4836,16 @@
 
             <div class="prov-cal-add__field" aria-label="Usługa">
               <div class="avail-loc-pick avail-loc-pick--compact prov-cal-add__service-pick${servicePickOpen ? " is-open" : ""}" data-role="prov-cal-add-service-pick">
-                <button type="button" class="avail-loc-pick__btn" data-action="toggle-prov-cal-add-service"
-                  aria-haspopup="listbox" aria-expanded="${servicePickOpen ? "true" : "false"}" aria-label="Wybierz usługi">
+                <button type="button" class="avail-loc-pick__btn${hasSvc ? " prov-cal-add__service-btn--filled" : ""}" data-action="toggle-prov-cal-add-service"
+                  aria-haspopup="listbox" aria-expanded="${servicePickOpen ? "true" : "false"}" aria-label="${escapeHtml(serviceAriaLabel)}">
                   <span class="prov-cal-add__client-avatar" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z" />
                       <path d="M7 7h.01" />
                     </svg>
                   </span>
-                  <span class="avail-edit__loc-content">
-                    <span class="avail-loc-pick__label${hasSvc ? "" : " avail-loc-pick__label--placeholder"}">${escapeHtml(serviceLabel)}</span>
+                  <span class="avail-edit__loc-content" data-role="prov-cal-add-service-summary">
+                    ${serviceSummaryHtml}
                   </span>
                   <span class="avail-loc-pick__chevron" aria-hidden="true"></span>
                 </button>
