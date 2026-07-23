@@ -2967,14 +2967,20 @@
           window.AppState.provCalSelection.bookingId === b.id
         );
         const densityCls = provCalDensityCls(height);
+        const availBlock = resolveAvailBlockForRange(dateISO, clampedFrom, clampedTo);
+        const toneCls = availBlock && availBlock.locationId ? " " + locationToneClass(myProvider(), availBlock.locationId) : "";
+        const locAttr =
+          availBlock && availBlock.locationId
+            ? ` data-location-id="${escapeHtml(String(availBlock.locationId))}"`
+            : "";
         return `
           <article class="gcal__event gcal__event--${escapeHtml(b.status)}${densityCls ? " " + densityCls : ""}${
             dim ? " gcal__event--dim" : ""
-          }${selected ? " gcal__event--selected" : ""}"
+          }${selected ? " gcal__event--selected" : ""}${toneCls}"
             style="top:${top}px;height:${height}px"
             data-role="prov-cal-slot" data-kind="booking" data-date="${escapeHtml(dateISO)}"
             data-action="select-prov-cal-slot" data-booking-id="${escapeHtml(b.id)}"
-            data-from-min="${clampedFrom}" data-to-min="${clampedTo}"
+            data-from-min="${clampedFrom}" data-to-min="${clampedTo}"${locAttr}
             data-search="${escapeHtml(hay)}" role="button" tabindex="0"
             aria-pressed="${selected ? "true" : "false"}"
             aria-label="${escapeHtml(svc + ", " + client + ", " + b.from + "–" + b.to)}">
@@ -3264,6 +3270,12 @@
     bk.from = minToTime(fromMin);
     bk.to = minToTime(toMin);
     if (dateISO) bk.dateISO = dateISO;
+    const block = resolveAvailBlockForRange(bk.dateISO, fromMin, toMin);
+    if (block && block.locationId) {
+      const p = myProvider();
+      bk.locationId = block.locationId;
+      bk.locationLabel = locationLabel(p, block.locationId) || bk.locationLabel || "";
+    }
     return true;
   }
 
@@ -3902,6 +3914,55 @@
       return d.dateISO === dateISO;
     });
     return (day && day.blocks) || [];
+  }
+
+  /**
+   * Blok dostępności pokrywający zakres wizyty — preferuj ten ze środkiem wizyty,
+   * potem największe nachodzenie (kolor lokalizacji dla kafła).
+   */
+  function resolveAvailBlockForRange(dateISO, fromMin, toMin) {
+    const blocks = providerAvailBlocksForDate(dateISO);
+    if (!blocks.length || !(toMin > fromMin)) return null;
+    const mid = (fromMin + toMin) / 2;
+    let best = null;
+    let bestScore = -1;
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      const f = timeToMinutes(block.from);
+      const t = timeToMinutes(block.to);
+      if (!(t > f)) continue;
+      const overlap = Math.max(0, Math.min(toMin, t) - Math.max(fromMin, f));
+      const containsMid = mid >= f && mid < t;
+      if (overlap <= 0 && !containsMid) continue;
+      let score = overlap;
+      if (containsMid) score += 10000;
+      if (fromMin >= f && fromMin < t) score += 100;
+      if (score > bestScore) {
+        bestScore = score;
+        best = block;
+      }
+    }
+    return best;
+  }
+
+  function clearProvCalLocToneClasses(el) {
+    if (!el || !el.classList) return;
+    for (let i = 0; i < 6; i++) el.classList.remove("loc-tone-" + i);
+  }
+
+  /** Ustaw klasę loc-tone-* na kafelku wizyty wg dostępności pod danym zakresem. */
+  function applyProvCalEventAvailTone(el, dateISO, fromMin, toMin) {
+    if (!el) return null;
+    const block = resolveAvailBlockForRange(dateISO, fromMin, toMin);
+    const p = myProvider();
+    clearProvCalLocToneClasses(el);
+    if (block && block.locationId) {
+      el.classList.add(locationToneClass(p, block.locationId));
+      el.setAttribute("data-location-id", String(block.locationId));
+    } else {
+      el.removeAttribute("data-location-id");
+    }
+    return block;
   }
 
   function mergeTimeIntervals(intervals) {
@@ -5118,7 +5179,8 @@
    */
   function renderAvailTimeField(name, value, ariaLabel) {
     const v = normalizeAvailTimeValue(value);
-    return `<span class="avail-edit__time-wrap" data-role="avail-time-field">
+    const side = name === "to" ? "to" : "from";
+    return `<span class="avail-edit__time-wrap avail-edit__time-wrap--${side}" data-role="avail-time-field">
       <input class="avail-edit__time" type="time" name="${escapeHtml(name)}" value="${escapeHtml(v)}" step="300" required aria-label="${escapeHtml(ariaLabel)}" />
     </span>`;
   }
@@ -7690,6 +7752,8 @@
         newFrom = newTo - drag.duration;
       }
       applyProvCalSlotLayout(drag.el, newFrom, newTo);
+      // Kolor kafła = lokalizacja dostępności pod aktualną pozycją (na żywo przy przeciąganiu).
+      applyProvCalEventAvailTone(drag.el, drag.dateISO, newFrom, newTo);
       if (!drag.weekView) updateProvCalDragTime(newFrom);
       drag.el.classList.toggle(
         "gcal__event--invalid",

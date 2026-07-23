@@ -6311,8 +6311,9 @@ body.avatar-preview-open {
   padding: 0.22rem 0.4rem 0.22rem 0.55rem;
   border-radius: 0;
   overflow: hidden;
-  /* Zarezerwowane: zawsze lekkie zielone tło (jak po zaznaczeniu) */
-  background: color-mix(in srgb, var(--accent-provider) 16%, var(--surface));
+  /* Kolor z lokalizacji dostępności (--loc / loc-tone-*), inaczej accent usługodawcy. */
+  --event-accent: var(--loc, var(--accent-provider));
+  background: color-mix(in srgb, var(--event-accent) 16%, var(--surface));
   color: var(--text);
   border: 0;
   box-shadow: none;
@@ -6330,22 +6331,22 @@ body.avatar-preview-open {
   left: 0;
   width: 3px;
   border-radius: 0;
-  background: var(--accent-provider);
+  background: var(--event-accent);
   pointer-events: none;
   transition: width 0.12s ease, background 0.12s ease;
 }
 
 .gcal__event--selected {
   z-index: 5;
-  background: color-mix(in srgb, var(--accent-provider) 22%, var(--surface));
-  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent-provider) 55%, transparent);
+  background: color-mix(in srgb, var(--event-accent) 22%, var(--surface));
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--event-accent) 55%, transparent);
   transform: scale(1.035);
   transform-origin: left center;
 }
 
 .gcal__event--selected::before {
   width: 4px;
-  background: var(--accent-provider);
+  background: var(--event-accent);
 }
 
 .gcal__event--dragging.gcal__event--selected {
@@ -6357,7 +6358,7 @@ body.avatar-preview-open {
 }
 
 .gcal__event--proposed::before {
-  background: color-mix(in srgb, var(--accent-provider) 70%, var(--text-muted));
+  background: color-mix(in srgb, var(--event-accent) 70%, var(--text-muted));
 }
 
 .gcal__event[data-role="prov-cal-slot"] {
@@ -6407,7 +6408,7 @@ body.prov-cal-pinching .gcal__event[data-role="prov-cal-slot"] {
     cursor: grab;
   }
   .gcal__event[data-kind="booking"]:hover {
-    background: color-mix(in srgb, var(--accent-provider) 22%, var(--surface));
+    background: color-mix(in srgb, var(--event-accent) 22%, var(--surface));
   }
 }
 
@@ -8399,6 +8400,9 @@ body.prov-cal-dragging * {
 
 /* —— Edytor dnia (Calendly-style) —— */
 .avail-edit--day {
+  /* Jedna treść: godziny / lokalizacja / powtórzenie — ten sam krój i rozmiar. */
+  --avail-edit-font-size: 16px;
+  --avail-edit-font-weight: 600;
   gap: 0.65rem;
   width: 100%;
   max-width: none;
@@ -8407,6 +8411,34 @@ body.prov-cal-dragging * {
   border-radius: 0;
   box-sizing: border-box;
   background: var(--surface-2);
+  font-family: inherit;
+  font-size: var(--avail-edit-font-size);
+  font-weight: var(--avail-edit-font-weight);
+  line-height: 1.25;
+  color: var(--text);
+}
+
+.avail-edit--day .avail-edit__time,
+.avail-edit--day .avail-edit__dash,
+.avail-edit--day .avail-edit__unavailable-label,
+.avail-edit--day .avail-loc-pick--compact .avail-loc-pick__btn,
+.avail-edit--day .avail-loc-pick--compact .avail-loc-pick__label,
+.avail-edit--day .avail-loc-pick__opt-label {
+  font-family: inherit;
+  font-size: var(--avail-edit-font-size);
+  font-weight: var(--avail-edit-font-weight);
+  line-height: 1.25;
+}
+
+.avail-edit--day .avail-edit__time::-webkit-datetime-edit,
+.avail-edit--day .avail-edit__time::-webkit-datetime-edit-fields-wrapper,
+.avail-edit--day .avail-edit__time::-webkit-datetime-edit-hour-field,
+.avail-edit--day .avail-edit__time::-webkit-datetime-edit-minute-field,
+.avail-edit--day .avail-edit__time::-webkit-datetime-edit-text {
+  font-family: inherit;
+  font-size: var(--avail-edit-font-size);
+  font-weight: var(--avail-edit-font-weight);
+  line-height: 1.25;
 }
 
 .avail-edit__slots {
@@ -8480,11 +8512,12 @@ body.prov-cal-dragging * {
 }
 
 .avail-edit__time {
+  position: relative;
   box-sizing: border-box;
-  width: 5rem;
+  width: 4.6rem;
   min-height: 2.75rem;
   margin: 0;
-  padding: 0.5rem 0.1rem;
+  padding: 0.5rem 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -8499,16 +8532,47 @@ body.prov-cal-dragging * {
   -webkit-tap-highlight-color: rgba(0, 0, 0, 0.06);
 }
 
+/* Myślnik równo między cyframi: od → do prawej, do → do lewej. */
+.avail-edit__time-wrap--from .avail-edit__time {
+  text-align: right;
+}
+
+.avail-edit__time-wrap--to .avail-edit__time {
+  text-align: left;
+}
+
+.avail-edit__time-wrap--from .avail-edit__time::-webkit-datetime-edit,
+.avail-edit__time-wrap--from .avail-edit__time::-webkit-datetime-edit-fields-wrapper {
+  text-align: right;
+  width: 100%;
+}
+
+.avail-edit__time-wrap--to .avail-edit__time::-webkit-datetime-edit,
+.avail-edit__time-wrap--to .avail-edit__time::-webkit-datetime-edit-fields-wrapper {
+  text-align: left;
+  width: 100%;
+}
+
 .avail-edit__time:focus {
   outline: none;
 }
 
-/* Widoczny, klikalny wskaźnik pickera (bez rozciągania poza input). */
+/*
+  Ukryj natywne ikony zegara przy obu polach time —
+  zostaje tylko jedna ikona po lewej (.avail-edit__time-icon).
+  Indicator nadal wypełnia input, żeby cały obszar otwierał picker.
+*/
 .avail-edit__time::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   margin: 0;
   padding: 0;
+  opacity: 0;
   cursor: pointer;
-  opacity: 0.55;
+  color: transparent;
+  background: transparent;
 }
 
 .avail-edit__time::-webkit-datetime-edit,
@@ -8523,9 +8587,10 @@ body.prov-cal-dragging * {
 
 .avail-edit__dash {
   flex: 0 0 auto;
-  margin: 0 0.35rem;
+  margin: 0 0.55rem;
   color: var(--text-muted);
   font-weight: 500;
+  text-align: center;
 }
 
 .avail-edit__icon-btn {
@@ -8759,7 +8824,7 @@ body.prov-cal-dragging * {
 
 .avail-loc-pick--compact .avail-loc-pick__label--placeholder {
   color: var(--text-muted);
-  font-weight: 500;
+  font-weight: var(--avail-edit-font-weight, 600);
 }
 
 /* Ikona select: chevron góra + dół (jak w natywnych listach). */
