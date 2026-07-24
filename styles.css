@@ -7060,6 +7060,47 @@ body.prov-cal-dragging .gcal__event[data-role="prov-cal-slot"] {
   pointer-events: auto;
 }
 
+/* Podpowiedź krawędzi przy przeciąganiu — auto-przesuwanie okna dni. */
+.gcal--drag-edge-left .gcal-week__cols-clip::before,
+.gcal--drag-edge-right .gcal-week__cols-clip::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 22px;
+  z-index: 8;
+  pointer-events: none;
+  animation: gcal-drag-edge-pulse 0.85s ease-in-out infinite;
+}
+
+.gcal--drag-edge-left .gcal-week__cols-clip::before {
+  left: 0;
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--accent-provider) 34%, transparent),
+    transparent
+  );
+}
+
+.gcal--drag-edge-right .gcal-week__cols-clip::after {
+  right: 0;
+  background: linear-gradient(
+    to left,
+    color-mix(in srgb, var(--accent-provider) 34%, transparent),
+    transparent
+  );
+}
+
+@keyframes gcal-drag-edge-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 /* Pinch zoom osi — przeglądarka nie może przejąć gestu (scroll / page-zoom). */
 body.prov-cal-pinching,
 body.prov-cal-pinching .prov-cal-body,

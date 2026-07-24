@@ -9126,7 +9126,11 @@
     const HOLD_MS = 300;
     const MOUSE_THRESHOLD = 4;
     const AUTO_EDGE = 52;
+    /** Wąska strefa pozioma (jak GCal) — nie pół kolumny dnia. */
+    const H_EDGE = 22;
     const AUTO_STEP = 14;
+    /** Dwell w strefie krawędzi przed przesunięciem dnia (jeden skok; kolejny po re-entry). */
+    const EDGE_DWELL_MS = 480;
     const drag = {
       active: false,
       el: null,
@@ -9151,6 +9155,11 @@
       holdTimer: 0,
       autoRAF: 0,
       autoDir: 0,
+      edgeDir: 0,
+      lastEdgeShiftAt: 0,
+      /** true dopiero gdy wskaźnik był poza strefą krawędzi w trakcie tego dragu. */
+      edgeEligible: false,
+      edgeEnterAt: 0,
     };
 
     function isWeekView() {
@@ -9220,12 +9229,40 @@
       }
     }
 
+    function clearDragEdgeHint() {
+      drag.edgeDir = 0;
+      document.querySelectorAll(".gcal--drag-edge-left, .gcal--drag-edge-right").forEach(function (el) {
+        el.classList.remove("gcal--drag-edge-left", "gcal--drag-edge-right");
+      });
+    }
+
+    function colsClipRect() {
+      const root = dragRootGcal();
+      const clip =
+        (root && root.querySelector('[data-role="prov-cal-cols-clip"]')) ||
+        document.querySelector('[data-role="prov-cal-cols-clip"]');
+      return clip ? clip.getBoundingClientRect() : null;
+    }
+
+    /** -1 / 1 gdy wskaźnik w wąskiej strefie lewej/prawej krawędzi okna dni. */
+    function horizontalEdgeDir(clientX) {
+      const rect = colsClipRect();
+      if (!rect) return 0;
+      if (clientX <= rect.left + H_EDGE) return -1;
+      if (clientX >= rect.right - H_EDGE) return 1;
+      return 0;
+    }
+
     function stopAutoScroll() {
       if (drag.autoRAF) {
         cancelAnimationFrame(drag.autoRAF);
         drag.autoRAF = 0;
       }
       drag.autoDir = 0;
+      clearDragEdgeHint();
+      drag.lastEdgeShiftAt = 0;
+      drag.edgeEnterAt = 0;
+      drag.edgeEligible = false;
     }
 
     function resetDrag() {
@@ -9236,7 +9273,7 @@
       hideProvCalDragTime();
       document.body.classList.remove("prov-cal-dragging");
       document.querySelectorAll(".gcal--drag-active").forEach(function (el) {
-        el.classList.remove("gcal--drag-active");
+        el.classList.remove("gcal--drag-active", "gcal--drag-edge-left", "gcal--drag-edge-right");
       });
       drag.active = false;
       drag.el = null;
@@ -9253,6 +9290,11 @@
       drag.armed = true;
       drag.weekView = isWeekView();
       drag.el.classList.add("gcal__event--dragging");
+      // Start w strefie krawędzi (termin w skrajnej kolumnie) — nie shiftuj, aż wyjedziesz i wrócisz.
+      drag.edgeEligible = horizontalEdgeDir(drag.lastClientX) === 0;
+      drag.edgeEnterAt = 0;
+      drag.lastEdgeShiftAt = 0;
+      drag.edgeDir = 0;
       // Przechwyć wskaźnik i zablokuj natywny scroll / hit-test obcych slotów (Safari).
       document.body.classList.add("prov-cal-dragging");
       const gcal = dragRootGcal();
@@ -9301,8 +9343,12 @@
       let targetDate = drag.dateISO;
       let track;
       if (drag.weekView) {
-        const d = columnDateUnderPoint(drag.lastClientX, drag.lastClientY);
-        if (d) targetDate = d;
+        // Kolumna = pod palcem. Gdy edge zablokowany (start/po skoku) i palec
+        // nadal na brzegu — nie przeskakuj dnia na skrajną kolumnę.
+        if (drag.edgeEligible || !horizontalEdgeDir(drag.lastClientX)) {
+          const d = columnDateUnderPoint(drag.lastClientX, drag.lastClientY);
+          if (d) targetDate = d;
+        }
         track = trackForDate(targetDate) || drag.el.parentElement;
       } else {
         track = drag.el.closest(".gcal__track");
@@ -9348,22 +9394,144 @@
       }
     }
 
-    function autoScrollTick() {
-      drag.autoRAF = 0;
-      if (!drag.armed || !drag.autoDir) return;
+    function syncDragLiveToState(dateISO, fromMin, toMin) {
+      if (!(toMin > fromMin) || !dateISO) return;
+      if (drag.kind === "free") {
+        window.AppState.provCalSelection = normalizeProvCalSelection({
+          kind: "free",
+          dateISO: dateISO,
+          fromMin: fromMin,
+          toMin: toMin,
+        });
+        return;
+      }
+      if (drag.bookingId) moveBookingTimes(drag.bookingId, fromMin, toMin, dateISO);
+    }
+
+    function reattachDragAfterRender() {
+      let el = null;
+      if (drag.kind === "free") {
+        el = document.querySelector('[data-role="prov-cal-slot"][data-kind="free"]');
+      } else if (drag.bookingId) {
+        el = document.querySelector(
+          '[data-role="prov-cal-slot"][data-booking-id="' + String(drag.bookingId) + '"]'
+        );
+      }
+      if (!el) return false;
+      drag.el = el;
+      drag.weekView = isWeekView();
+      el.classList.add("gcal__event--dragging");
+      document.body.classList.add("prov-cal-dragging");
+      const gcal = dragRootGcal();
+      if (gcal) {
+        gcal.classList.add("gcal--drag-active");
+        gcal.classList.remove("gcal--drag-edge-left", "gcal--drag-edge-right");
+      }
+      captureDragPointer();
+      updateDragLayout();
+      return true;
+    }
+
+    /** Po skoku dnia: zatrzymaj edge-scroll, aż palec wyjedzie ze strefy i wróci. */
+    function armEdgeCooldownAfterShift() {
+      drag.edgeEligible = false;
+      drag.edgeEnterAt = 0;
+      drag.lastEdgeShiftAt = 0;
+      clearDragEdgeHint();
+    }
+
+    /** Przytrzymanie przy lewej/prawej krawędzi okna dni — przesuń widok i przenieś blok (jak GCal). */
+    function tryEdgeDayShift() {
+      if (!drag.armed || !drag.allowMove || !drag.el) return;
+      const root = dragRootGcal();
+      if (!colsClipRect()) {
+        clearDragEdgeHint();
+        return;
+      }
+      const dir = horizontalEdgeDir(drag.lastClientX);
+      if (!dir) {
+        // Poza krawędzią — odblokuj edge-scroll na kolejne celowe wejście.
+        drag.edgeEligible = true;
+        drag.edgeEnterAt = 0;
+        drag.lastEdgeShiftAt = 0;
+        if (drag.edgeDir) clearDragEdgeHint();
+        return;
+      }
+
+      // Start dragu / cooldown po skoku — zwykły ruch bez kolejnego auto-shift.
+      if (!drag.edgeEligible) {
+        if (drag.edgeDir) clearDragEdgeHint();
+        return;
+      }
+
+      drag.edgeDir = dir;
+      if (root) {
+        root.classList.toggle("gcal--drag-edge-left", dir === -1);
+        root.classList.toggle("gcal--drag-edge-right", dir === 1);
+      }
+
+      const now = performance.now();
+      if (!drag.edgeEnterAt) drag.edgeEnterAt = now;
+      // Jeden skok po dwell; kolejny dopiero po wyjechaniu ze strefy (edgeEligible).
+      if (now - drag.edgeEnterAt < EDGE_DWELL_MS) return;
+
+      updateDragLayout();
+      const fromMin = Number(drag.el.getAttribute("data-from-min"));
+      const toMin = Number(drag.el.getAttribute("data-to-min"));
+      if (!(toMin > fromMin)) return;
+
+      const days = provCalVisibleDayList(ensureProvCalDate(), ensureProvCalVisibleDays());
+      if (!days.length) return;
+      const edgeDate = dir < 0 ? days[0] : days[days.length - 1];
+      const nextDate = isoAddDays(edgeDate, dir);
+
+      drag.moved = true;
+      drag.dateISO = nextDate;
+      syncDragLiveToState(nextDate, fromMin, toMin);
+
       const body = document.querySelector('[data-role="prov-cal-body"]');
-      if (!body) return;
-      const before = body.scrollTop;
-      const max = body.scrollHeight - body.clientHeight;
-      body.scrollTop = Math.max(0, Math.min(max, before + AUTO_STEP * drag.autoDir));
-      if (body.scrollTop !== before) updateDragLayout();
-      drag.autoRAF = requestAnimationFrame(autoScrollTick);
+      const scrollTop = body ? body.scrollTop : 0;
+      // Bez haptic (shiftProvCalDate) — przy trzymaniu na krawędzi byłby spam.
+      pickProvCalDate(nextDate, { keepSelection: true, render: false });
+      renderAll();
+      const bodyAfter = document.querySelector('[data-role="prov-cal-body"]');
+      if (bodyAfter) bodyAfter.scrollTop = scrollTop;
+      // Zatrzymaj serię skoków — palec często zostaje na brzegu po renderze.
+      armEdgeCooldownAfterShift();
+      if (!reattachDragAfterRender()) {
+        resetDrag();
+      }
+    }
+
+    function dragAnimTick() {
+      drag.autoRAF = 0;
+      if (!drag.armed) return;
+      let keep = false;
+      if (drag.autoDir) {
+        const body = document.querySelector('[data-role="prov-cal-body"]');
+        if (body) {
+          const before = body.scrollTop;
+          const max = body.scrollHeight - body.clientHeight;
+          body.scrollTop = Math.max(0, Math.min(max, before + AUTO_STEP * drag.autoDir));
+          if (body.scrollTop !== before) updateDragLayout();
+        }
+        keep = true;
+      }
+      tryEdgeDayShift();
+      // Podtrzymuj pętlę tylko podczas aktywnego (eligible) czekania na krawędzi — nie po cooldownie.
+      if (drag.edgeDir && drag.edgeEligible) keep = true;
+      if (keep && drag.armed) drag.autoRAF = requestAnimationFrame(dragAnimTick);
+    }
+
+    function ensureDragAnimLoop() {
+      if (!drag.armed) return;
+      if (!drag.autoRAF) drag.autoRAF = requestAnimationFrame(dragAnimTick);
     }
 
     function updateAutoScroll(clientY) {
       const body = document.querySelector('[data-role="prov-cal-body"]');
-      if (!body) {
-        stopAutoScroll();
+      if (!body || !drag.armed) {
+        drag.autoDir = 0;
         return;
       }
       const rect = body.getBoundingClientRect();
@@ -9371,11 +9539,7 @@
       if (clientY < rect.top + AUTO_EDGE) dir = -1;
       else if (clientY > rect.bottom - AUTO_EDGE) dir = 1;
       drag.autoDir = dir;
-      if (dir === 0) {
-        stopAutoScroll();
-        return;
-      }
-      if (!drag.autoRAF) drag.autoRAF = requestAnimationFrame(autoScrollTick);
+      ensureDragAnimLoop();
     }
 
     function commitBookingDrag() {
@@ -9497,6 +9661,7 @@
         drag.moved = true;
         updateDragLayout();
         updateAutoScroll(event.clientY);
+        ensureDragAnimLoop();
       },
       { capture: true, passive: false }
     );
@@ -9514,6 +9679,7 @@
         drag.moved = true;
         updateDragLayout();
         updateAutoScroll(t.clientY);
+        ensureDragAnimLoop();
       },
       { capture: true, passive: false }
     );
@@ -9576,8 +9742,25 @@
         event.preventDefault();
         event.stopPropagation();
         const wasMoved = drag.moved && drag.armed;
+        const kind = drag.kind;
+        const bookingId = drag.bookingId;
+        const startFrom = drag.startFrom;
+        const startTo = drag.startTo;
+        const startDate = drag.startDate;
         resetDrag();
-        if (wasMoved) renderAll();
+        if (!wasMoved) return;
+        // Edge-shift zapisuje pozycję na żywo w AppState — trzeba cofnąć.
+        if (kind === "booking" && bookingId && startDate) {
+          moveBookingTimes(bookingId, startFrom, startTo, startDate);
+        } else if (kind === "free" && startDate) {
+          window.AppState.provCalSelection = normalizeProvCalSelection({
+            kind: "free",
+            dateISO: startDate,
+            fromMin: startFrom,
+            toMin: startTo,
+          });
+        }
+        renderAll();
       },
       true
     );
