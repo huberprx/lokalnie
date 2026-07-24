@@ -4212,13 +4212,38 @@ body.avatar-preview-open {
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20h9'/%3E%3Cpath d='M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
-/* Wariant B listy ofert (rezerwacja) — układ jak Usługi usługodawcy */
+/* Wariant B listy ofert (rezerwacja) — płaska lista z separatorami */
+.service-list:has(.service-row--booking-b) {
+  gap: 0;
+}
+
 .service-row--booking-b {
+  position: relative;
   flex-direction: column;
   align-items: stretch;
   gap: 0;
-  padding: 0.55rem 0.6rem;
+  padding: 0.7rem 0.15rem;
+  border: none !important;
+  border-radius: 0;
+  background: transparent !important;
   cursor: default;
+  box-shadow: none;
+  transition: none;
+}
+
+.service-row--booking-b::after {
+  content: "";
+  position: absolute;
+  left: 0.15rem;
+  right: 0.15rem;
+  bottom: 0;
+  height: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+.service-row--booking-b:last-child::after {
+  display: none;
 }
 
 .service-row--booking-b .service-row__top {
@@ -4247,13 +4272,14 @@ body.avatar-preview-open {
 }
 
 .service-row--booking-b .service-row__check--radio .service-row__check-visual::after {
-  width: 0.48rem;
-  height: 0.48rem;
-  margin: 0;
-  border: none;
-  border-radius: 50%;
+  width: 0.42rem;
+  height: 0.24rem;
+  margin-top: -0.08rem;
+  border-left: 1.5px solid transparent;
+  border-bottom: 1.5px solid transparent;
+  border-radius: 0;
   background: transparent;
-  transform: none;
+  transform: rotate(-45deg);
 }
 
 .service-row--booking-b .service-row__check--radio:hover .service-row__check-visual {
@@ -4264,13 +4290,14 @@ body.avatar-preview-open {
 .service-row--booking-b .service-row__check--radio.service-row__check--on .service-row__check-visual {
   opacity: 1;
   border-color: var(--accent-client);
-  background: color-mix(in srgb, var(--accent-client) 12%, var(--surface));
-  box-shadow: none;
+  background: var(--accent-client);
+  box-shadow: 0 0 0 2px var(--accent-client-soft);
 }
 
 .service-row--booking-b .service-row__check--radio.service-row__check--on .service-row__check-visual::after {
-  background: var(--accent-client);
-  border: none;
+  border-left-color: #fff;
+  border-bottom-color: #fff;
+  background: transparent;
 }
 
 .service-row--booking-b .service-row__thumb--btn {
@@ -4644,11 +4671,11 @@ body.service-photo-preview-open {
   }
 }
 
-.service-row:not(.service-row--static):hover {
+.service-row:not(.service-row--static):not(.service-row--booking-b):hover {
   border-color: var(--accent-client);
 }
 
-.service-row--selected {
+.service-row--selected:not(.service-row--booking-b) {
   border-color: var(--accent-client);
   background: var(--accent-client-soft);
 }
