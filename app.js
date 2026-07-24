@@ -77,6 +77,7 @@
       searchOpenSlug: null,
       myCalMonth: null,
       myCalDate: null,
+      myCalMonthOpen: false,
       provCalDate: null,
       provCalHourH: 60,
       provCalView: "week",
@@ -366,14 +367,10 @@
   function renderServicesPanelHead(p, draft, opts) {
     opts = opts || {};
     const mobile = !!opts.mobile;
-    const multiHint = p.multiSelect
-      ? `<span class="booking__multi-hint">Możesz wybrać kilka</span>`
-      : "";
     const labelClass = mobile ? "booking__label booking__label--caps" : "booking__panel-label";
     return `
       <div class="booking__panel-head${mobile ? " booking__panel-head--mobile" : ""}">
         <h3 class="${labelClass}">Usługi</h3>
-        ${multiHint}
       </div>`;
   }
 
@@ -1318,6 +1315,7 @@
         searchOpenSlug: typeof stored.searchOpenSlug === "string" ? stored.searchOpenSlug : base.searchOpenSlug,
         myCalMonth: typeof stored.myCalMonth === "string" ? stored.myCalMonth : base.myCalMonth,
         myCalDate: typeof stored.myCalDate === "string" ? stored.myCalDate : base.myCalDate,
+        myCalMonthOpen: typeof stored.myCalMonthOpen === "boolean" ? stored.myCalMonthOpen : base.myCalMonthOpen,
         provCalDate: typeof stored.provCalDate === "string" ? stored.provCalDate : base.provCalDate,
         provCalHourH:
           typeof stored.provCalHourH === "number" && stored.provCalHourH > 0
@@ -2276,19 +2274,37 @@
     }).join("");
 
     return `
-      <div class="search-filters${open ? " search-filters--open" : ""}" id="search-filters-panel" data-role="search-filters"${open ? "" : " hidden"}>
-        ${subRow}
-        <div class="search-filters__section">
-          <p class="search-filters__label">Dzień</p>
-          <div class="filter-scroll filter-scroll--dates" data-filter-scroll>
-            <div class="filter-scroll__track date-strip date-strip--filters">${dateChips}</div>
+      <div class="search-filters${open ? " search-filters--open" : ""}" id="search-filters-panel" data-role="search-filters"
+        aria-hidden="${open ? "false" : "true"}"${open ? "" : " inert"}>
+        <div class="search-filters__inner">
+          ${subRow}
+          <div class="search-filters__section">
+            <p class="search-filters__label">Dzień</p>
+            <div class="filter-scroll filter-scroll--dates" data-filter-scroll>
+              <div class="filter-scroll__track date-strip date-strip--filters">${dateChips}</div>
+            </div>
+          </div>
+          <div class="search-filters__section">
+            <p class="search-filters__label">Pora dnia</p>
+            <div class="period-chips">${periodChips}</div>
           </div>
         </div>
-        <div class="search-filters__section">
-          <p class="search-filters__label">Pora dnia</p>
-          <div class="period-chips">${periodChips}</div>
-        </div>
       </div>`;
+  }
+
+  function applySearchFiltersOpen(open) {
+    const panel = document.querySelector('[data-role="search-filters"]');
+    const btn = document.querySelector('[data-action="toggle-search-filters"]');
+    if (!panel || !btn) {
+      renderAll();
+      return;
+    }
+    panel.classList.toggle("search-filters--open", !!open);
+    panel.setAttribute("aria-hidden", open ? "false" : "true");
+    if (open) panel.removeAttribute("inert");
+    else panel.setAttribute("inert", "");
+    btn.classList.toggle("filter-toggle--open", !!open);
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
   }
 
   function renderSearch() {
@@ -2373,125 +2389,264 @@
       });
   }
 
-  function ensureMyCalMonth(visits) {
+  function ensureMyCalDate() {
+    if (window.AppState.myCalDate) return window.AppState.myCalDate;
+    const today = demoTodayISO();
+    window.AppState.myCalDate = today;
+    window.AppState.myCalMonth = today.slice(0, 7);
+    return today;
+  }
+
+  function ensureMyCalMonth() {
     if (window.AppState.myCalMonth) return window.AppState.myCalMonth;
-    const next = visits.find(function (b) {
-      return b.dateISO >= new Date().toISOString().slice(0, 10);
-    });
-    const ref = (next && next.dateISO) || (visits[0] && visits[0].dateISO) || new Date().toISOString().slice(0, 10);
-    window.AppState.myCalMonth = ref.slice(0, 7);
+    const selected = ensureMyCalDate();
+    window.AppState.myCalMonth = selected.slice(0, 7);
     return window.AppState.myCalMonth;
   }
 
-  function renderMyVisitCalendar(calMonth, visitDates, selectedDate) {
-    const visitSet = new Set(visitDates);
-    const parts = String(calMonth || "").split("-");
-    const year = Number(parts[0]) || new Date().getFullYear();
-    const month = Number(parts[1]) || new Date().getMonth() + 1;
+  function renderMyCalDayHead(dateISO, selectedISO, visitSet) {
+    const d = new Date(dateISO + "T12:00:00");
+    if (isNaN(d.getTime())) return "";
+    const isToday = dateISO === demoTodayISO();
+    const isSel = dateISO === selectedISO;
+    const sun = d.getDay() === 0;
+    const hasVisit = visitSet && visitSet.has(dateISO);
+    return `
+      <button type="button" class="gcal-week__dayhead${isToday ? " gcal-week__dayhead--today" : ""}${
+        isSel ? " gcal-week__dayhead--sel" : ""
+      }${sun ? " gcal-week__dayhead--sun" : ""}${hasVisit ? " gcal-week__dayhead--busy" : ""}"
+        data-action="my-cal-pick-date" data-date="${escapeHtml(dateISO)}"
+        aria-label="${escapeHtml(PROV_CAL_DOW_SHORT[d.getDay()] + " " + d.getDate())}${hasVisit ? ", wizyty" : ""}"
+        aria-pressed="${isSel ? "true" : "false"}">
+        <span class="gcal-week__dow">${PROV_CAL_DOW_SHORT[d.getDay()]}</span>
+        <span class="gcal-week__num">${d.getDate()}</span>
+      </button>`;
+  }
+
+  function renderMyCalWeekStrip(selectedISO, visitSet) {
+    const weekStart = mondayISOFrom(selectedISO);
+    const underMonth = !!window.AppState.myCalMonthOpen;
+    let days = "";
+    for (let i = 0; i < 7; i++) {
+      days += renderMyCalDayHead(addDaysISO(weekStart, i), selectedISO, visitSet);
+    }
+    return `
+      <div class="gcal-week__sticky my-cal-week${underMonth ? " gcal-week__sticky--under-month" : ""}"${
+        underMonth ? ' aria-hidden="true"' : ""
+      }>
+        <div class="gcal-week__head my-cal-week__head">
+          <div class="gcal-week__days-clip">
+            <div class="gcal-week__days">${days}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function renderMyCalMonthPanel(selectedISO, visitSet) {
+    if (!window.AppState.myCalMonthOpen) return "";
+    const pickerMonth = ensureMyCalMonth();
+    const parts = pickerMonth.split("-");
+    const year = Number(parts[0]) || 2026;
+    const month = Number(parts[1]) || 1;
+    const today = demoTodayISO();
     const first = new Date(year, month - 1, 1);
     const daysInMonth = new Date(year, month, 0).getDate();
     const startPad = (first.getDay() + 6) % 7;
-    const todayISO = demoTodayISO();
-
-    const totalCells = 7 * 6;
+    const totalCells = 42;
     let cells = "";
     for (let i = 0; i < startPad; i++) {
-      cells += `<span class="cal__day cal__day--pad" aria-hidden="true"></span>`;
+      cells += `<span class="gcal-month__day gcal-month__day--pad" aria-hidden="true"></span>`;
     }
     for (let day = 1; day <= daysInMonth; day++) {
-      const dateISO = `${year}-${pad(month)}-${pad(day)}`;
+      const dateISO = year + "-" + pad(month) + "-" + pad(day);
+      const selected = dateISO === selectedISO;
+      const isToday = dateISO === today;
       const hasVisit = visitSet.has(dateISO);
-      const selected = dateISO === selectedDate;
-      const isToday = dateISO === todayISO;
-      const red = isRedCalendarDay(dateISO);
+      const red = isSunday(dateISO) || isRedCalendarDay(dateISO);
       cells += `
         <button type="button"
-          class="cal__day cal__day--selectable${hasVisit ? " cal__day--visit" : ""}${selected ? " cal__day--selected" : ""}${isToday ? " cal__day--today" : ""}${red ? " cal__day--holiday" : ""}"
+          class="gcal-month__day${selected ? " gcal-month__day--on" : ""}${isToday ? " gcal-month__day--today" : ""}${hasVisit ? " gcal-month__day--busy" : ""}${red ? " gcal-month__day--red" : ""}"
           data-action="my-cal-pick-date" data-date="${escapeHtml(dateISO)}"
           aria-pressed="${selected ? "true" : "false"}"
           aria-label="${day}${hasVisit ? ", wizyty" : ""}">
-          <span class="cal__day-num">${day}</span>
-          ${hasVisit ? `<span class="cal__day-dot" aria-hidden="true"></span>` : ""}
+          <span class="gcal-month__day-num">${day}</span>
+          ${hasVisit ? `<span class="gcal-month__day-dot" aria-hidden="true"></span>` : ""}
         </button>`;
     }
     const filled = startPad + daysInMonth;
     for (let i = filled; i < totalCells; i++) {
-      cells += `<span class="cal__day cal__day--pad" aria-hidden="true"></span>`;
+      cells += `<span class="gcal-month__day gcal-month__day--pad" aria-hidden="true"></span>`;
     }
 
+    const reveal = !!window._myCalMonthAnimateReveal;
     return `
-      <div class="cal my-cal">
-        <div class="cal__nav">
-          <button type="button" class="cal__nav-btn" data-action="my-cal-prev" aria-label="Poprzedni miesiąc">‹</button>
-          <span class="cal__title">${escapeHtml(MONTHS[month - 1])} ${year}</span>
-          <button type="button" class="cal__nav-btn" data-action="my-cal-next" aria-label="Następny miesiąc">›</button>
+      <div class="gcal-month${reveal ? "" : " gcal-month--instant"}" data-role="my-cal-month-panel">
+        <div class="gcal-month__cal" data-role="my-cal-month-swipe">
+          <div class="gcal-month__weekdays">${CAL_WEEKDAYS.map(function (w) {
+            return `<span>${w}</span>`;
+          }).join("")}</div>
+          <div class="gcal-month__grid">${cells}</div>
         </div>
-        <div class="cal__weekdays">${CAL_WEEKDAYS.map((w) => `<span>${w}</span>`).join("")}</div>
-        <div class="cal__grid">${cells}</div>
       </div>`;
   }
 
-  function renderMyCalendar() {
-    const list = clientVisits();
-    const visitDates = list.map(function (b) {
-      return b.dateISO;
+  function myCalMonthPanels() {
+    return Array.prototype.slice.call(document.querySelectorAll('[data-role="my-cal-month-panel"]'));
+  }
+
+  function setMyCalMonthOpen(wantOpen, opts) {
+    opts = opts || {};
+    const cur = !!window.AppState.myCalMonthOpen;
+    if (!!wantOpen === cur && !opts.force) return;
+
+    if (wantOpen) {
+      window._myCalMonthClosing = false;
+      window.AppState.myCalMonthOpen = true;
+      window.AppState.myCalMonth = ensureMyCalDate().slice(0, 7);
+      window._myCalMonthAnimateReveal = opts.animate !== false;
+      if (opts.persist !== false) saveState();
+      if (opts.render !== false) renderAll();
+      window._myCalMonthAnimateReveal = false;
+      return;
+    }
+
+    if (opts.animate === false) {
+      window._myCalMonthClosing = false;
+      window.AppState.myCalMonthOpen = false;
+      if (opts.persist !== false) saveState();
+      if (opts.render !== false) renderAll();
+      return;
+    }
+
+    const panels = myCalMonthPanels().filter(function (panel) {
+      return panel.offsetWidth > 8;
     });
-    const calMonth = ensureMyCalMonth(list);
-    const selectedDate = window.AppState.myCalDate || null;
-    const filtered = selectedDate
-      ? list.filter(function (b) {
-          return b.dateISO === selectedDate;
-        })
-      : list;
+    if (!panels.length) {
+      window.AppState.myCalMonthOpen = false;
+      if (opts.persist !== false) saveState();
+      if (opts.render !== false) renderAll();
+      return;
+    }
+    if (window._myCalMonthClosing) return;
+    window._myCalMonthClosing = true;
+    let done = false;
+    function finish() {
+      if (done) return;
+      done = true;
+      window._myCalMonthClosing = false;
+      window.AppState.myCalMonthOpen = false;
+      if (opts.persist !== false) saveState();
+      if (opts.render !== false) renderAll();
+    }
+    document.querySelectorAll(".app-screen--my-cal .gcal-week__sticky--under-month").forEach(function (el) {
+      el.classList.add("gcal-week__sticky--revealing");
+      el.removeAttribute("aria-hidden");
+    });
+    panels.forEach(function (panel) {
+      const h = Math.max(panel.offsetHeight, panel.scrollHeight);
+      panel.style.maxHeight = h + "px";
+      panel.style.opacity = "1";
+      panel.style.transform = "translateY(0)";
+      panel.classList.add("gcal-month--closing");
+      void panel.offsetHeight;
+      panel.style.maxHeight = "0px";
+      panel.style.opacity = "0";
+      panel.style.transform = "translateY(-0.35rem)";
+      panel.style.paddingTop = "0";
+      panel.style.paddingBottom = "0";
+    });
+    window.setTimeout(finish, 340);
+  }
 
-    const listTitle = selectedDate
-      ? `Wizyty · ${formatDateLong(selectedDate)}`
-      : "Wizyty";
-
-    return `
-      <div class="app-screen app-screen--client">
-        <div class="app-scroll">
-          <header class="screen-head screen-head--with-back">
-            <button type="button" class="screen-head__back" data-action="go-screen" data-screen="search" aria-label="Wróć">
-              <span class="screen-head__back-icon" aria-hidden="true"></span>
-            </button>
-            <h2 class="screen-head__title">Mój kalendarz</h2>
-          </header>
-          <section class="my-cal-section" aria-label="Kalendarz wizyt">
-            ${renderMyVisitCalendar(calMonth, visitDates, selectedDate)}
-          </section>
-          <section class="my-cal-visits" aria-label="${escapeHtml(listTitle)}">
-            <h3 class="booking__label booking__label--caps">${escapeHtml(listTitle)}</h3>
-            <div class="visit-list">
-              ${
-                filtered.length
-                  ? filtered.map(renderClientVisitCard).join("")
-                  : selectedDate
-                    ? `<p class="empty-note">Brak wizyt w tym dniu.</p>`
-                    : `<p class="empty-note">Brak rezerwacji. Zarezerwuj usługę w zakładce „Szukaj”.</p>`
-              }
-            </div>
-          </section>
-        </div>
-        ${bottomNav("myCalendar")}
-      </div>`;
+  function toggleMyCalMonthPanel() {
+    setMyCalMonthOpen(!window.AppState.myCalMonthOpen);
   }
 
   function shiftMyCalMonth(delta) {
-    const ref = window.AppState.myCalMonth || new Date().toISOString().slice(0, 7);
+    const ref = ensureMyCalMonth();
     const parts = ref.split("-").map(Number);
     const d = new Date(parts[0], parts[1] - 1 + delta, 1);
     window.AppState.myCalMonth = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+    window.AppState.myCalMonthOpen = true;
     saveState();
     renderAll();
   }
 
   function pickMyCalDate(dateISO) {
     if (!dateISO) return;
-    window.AppState.myCalDate = window.AppState.myCalDate === dateISO ? null : dateISO;
+    window.AppState.myCalDate = dateISO;
     window.AppState.myCalMonth = dateISO.slice(0, 7);
     saveState();
     renderAll();
+  }
+
+  function goMyCalToday() {
+    const today = demoTodayISO();
+    window.AppState.myCalDate = today;
+    window.AppState.myCalMonth = today.slice(0, 7);
+    saveState();
+    renderAll();
+  }
+
+  function renderMyCalendar() {
+    const list = clientVisits();
+    const visitSet = new Set(
+      list.map(function (b) {
+        return b.dateISO;
+      })
+    );
+    const selectedDate = ensureMyCalDate();
+    const pickerMonth = ensureMyCalMonth();
+    const monthOpen = !!window.AppState.myCalMonthOpen;
+    const monthLabel = monthLabelFromISO(pickerMonth + "-01") || "Miesiąc";
+    const filtered = list.filter(function (b) {
+      return b.dateISO === selectedDate;
+    });
+    const listTitle = `Wizyty · ${formatDateLong(selectedDate)}`;
+
+    return `
+      <div class="app-screen app-screen--client app-screen--my-cal">
+        <div class="my-cal-top">
+          <header class="screen-head screen-head--prov-cal">
+            <div class="prov-cal-head">
+              <div class="prov-cal-head__title-row">
+                <button type="button" class="screen-head__back" data-action="go-screen" data-screen="search" aria-label="Wróć">
+                  <span class="screen-head__back-icon" aria-hidden="true"></span>
+                </button>
+                <h2 class="screen-head__title">Mój kalendarz</h2>
+              </div>
+              <div class="prov-cal-head__actions">
+                <div class="prov-cal__tools" role="toolbar" aria-label="Narzędzia kalendarza">
+                  <button type="button" class="prov-cal__tool prov-cal__tool--month-label${monthOpen ? " is-on" : ""}"
+                    data-action="my-cal-month-toggle"
+                    aria-label="${escapeHtml(monthLabel)}" aria-pressed="${monthOpen ? "true" : "false"}">
+                    <span class="prov-cal__month-name">${escapeHtml(monthLabel)}</span>
+                    <span class="prov-cal__month-chevron" aria-hidden="true"></span>
+                  </button>
+                </div>
+                <button type="button" class="prov-cal__today-btn" data-action="my-cal-today">Dzisiaj</button>
+              </div>
+            </div>
+          </header>
+          <div class="my-cal-top__anchor">
+            ${renderMyCalMonthPanel(selectedDate, visitSet)}
+          </div>
+        </div>
+        <div class="my-cal-body app-scroll">
+          ${renderMyCalWeekStrip(selectedDate, visitSet)}
+          <section class="my-cal-visits" aria-label="${escapeHtml(listTitle)}">
+            <h3 class="booking__label booking__label--caps">${escapeHtml(listTitle)}</h3>
+            <div class="visit-list">
+              ${
+                filtered.length
+                  ? filtered.map(renderClientVisitCard).join("")
+                  : `<p class="empty-note">Brak wizyt w tym dniu.</p>`
+              }
+            </div>
+          </section>
+        </div>
+        ${bottomNav("myCalendar")}
+      </div>`;
   }
 
   function resolveAvailDates(p, durationMin) {
@@ -7902,8 +8057,12 @@
     });
   }
 
-  // Poziome przewijanie wierszy filtrów — delegacja (przetrwa re-render).
+  // Poziome przeciąganie myszką: filtry + karuzela wariantów (przetrwa re-render).
   const filterDrag = { active: false, el: null, startX: 0, startScroll: 0, moved: false };
+
+  function dragScrollTarget(event) {
+    return event.target.closest("[data-filter-scroll], .service-variant-carousel__track");
+  }
 
   function bindFilterScroll() {
     if (bindFilterScroll.done) return;
@@ -7912,14 +8071,21 @@
     document.addEventListener(
       "pointerdown",
       function (event) {
-        const el = event.target.closest("[data-filter-scroll]");
+        const el = dragScrollTarget(event);
         if (!el || event.button !== 0) return;
+        // Na touch zostaje natywne pan-x; tu głównie desktop / mysz.
+        if (event.pointerType === "touch") return;
         filterDrag.active = true;
         filterDrag.el = el;
         filterDrag.startX = event.clientX;
         filterDrag.startScroll = el.scrollLeft;
         filterDrag.moved = false;
         el.classList.add("filter-scroll--dragging");
+        try {
+          el.setPointerCapture(event.pointerId);
+        } catch (err) {
+          /* ignore */
+        }
       },
       true
     );
@@ -7930,9 +8096,11 @@
         if (!filterDrag.active || !filterDrag.el) return;
         const dx = event.clientX - filterDrag.startX;
         if (Math.abs(dx) > 3) filterDrag.moved = true;
+        if (!filterDrag.moved) return;
+        event.preventDefault();
         filterDrag.el.scrollLeft = filterDrag.startScroll - dx;
       },
-      true
+      { capture: true, passive: false }
     );
 
     function endFilterDrag() {
@@ -7954,6 +8122,21 @@
         filterDrag.moved = false;
       },
       true
+    );
+
+    // Kółko myszy na karuzeli wariantów → przewijanie w poziomie.
+    document.addEventListener(
+      "wheel",
+      function (event) {
+        const track = event.target.closest(".service-variant-carousel__track");
+        if (!track) return;
+        if (track.scrollWidth <= track.clientWidth + 1) return;
+        const dx = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+        if (!dx) return;
+        event.preventDefault();
+        track.scrollLeft += dx;
+      },
+      { passive: false }
     );
   }
 
@@ -8927,6 +9110,8 @@
       case "cal-next": shiftCalMonth(1); break;
       case "my-cal-prev": shiftMyCalMonth(-1); break;
       case "my-cal-next": shiftMyCalMonth(1); break;
+      case "my-cal-month-toggle": toggleMyCalMonthPanel(); break;
+      case "my-cal-today": goMyCalToday(); break;
       case "my-cal-pick-date": pickMyCalDate(d.date); break;
       case "avail-week-prev":
         event.preventDefault();
@@ -9192,7 +9377,7 @@
       case "toggle-search-filters":
         window.AppState.searchFiltersOpen = !window.AppState.searchFiltersOpen;
         saveState();
-        renderAll();
+        applySearchFiltersOpen(window.AppState.searchFiltersOpen);
         break;
       case "toggle-filter-date":
         {
@@ -10753,10 +10938,11 @@
         if (!event.target.closest) return;
         const prov = event.target.closest('[data-role="prov-cal-month-swipe"]');
         const avail = event.target.closest('[data-role="avail-month-swipe"]');
-        if (!prov && !avail) return;
+        const myCal = event.target.closest('[data-role="my-cal-month-swipe"]');
+        if (!prov && !avail && !myCal) return;
         swipe.active = true;
         swipe.locked = false;
-        swipe.kind = avail ? "avail" : "prov";
+        swipe.kind = avail ? "avail" : myCal ? "my" : "prov";
         swipe.startX = event.touches[0].clientX;
         swipe.startY = event.touches[0].clientY;
       },
@@ -10795,6 +10981,11 @@
         if (!wasLocked || Math.abs(dx) < 48) return;
         if (kind === "avail") {
           shiftAvailPickerMonth(dx < 0 ? 1 : -1);
+          return;
+        }
+        if (kind === "my") {
+          if (!window.AppState.myCalMonthOpen) return;
+          shiftMyCalMonth(dx < 0 ? 1 : -1);
           return;
         }
         if (!window.AppState.provCalMonthOpen) return;
@@ -11030,6 +11221,10 @@
       }
       if (window.AppState.provCalMonthOpen) {
         setProvCalMonthOpen(false);
+        return;
+      }
+      if (window.AppState.myCalMonthOpen) {
+        setMyCalMonthOpen(false);
         return;
       }
       closeProviderCardMenu();

@@ -2880,28 +2880,34 @@ body.pwa-install-help-open {
 }
 
 .search-filters {
+  display: grid;
+  grid-template-rows: 0fr;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid transparent;
+  opacity: 0;
+  transition:
+    grid-template-rows 0.3s ease,
+    opacity 0.22s ease,
+    margin 0.3s ease,
+    padding 0.3s ease,
+    border-color 0.22s ease;
+}
+
+.search-filters--open {
+  grid-template-rows: 1fr;
+  margin: 0 0 0.65rem;
+  padding: 0.55rem 0 0.15rem;
+  border-top-color: var(--border);
+  opacity: 1;
+}
+
+.search-filters__inner {
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
-  margin: 0 0 0.65rem;
-  padding: 0.55rem 0 0.15rem;
-  border-top: 1px solid var(--border);
-  animation: search-filters-in 0.22s ease;
-}
-
-.search-filters[hidden] {
-  display: none !important;
-}
-
-@keyframes search-filters-in {
-  from {
-    opacity: 0;
-    transform: translateY(-0.25rem);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  min-height: 0;
+  overflow: hidden;
 }
 
 .search-filters__section {
@@ -2981,7 +2987,7 @@ body.pwa-install-help-open {
 
 @media (prefers-reduced-motion: reduce) {
   .search-filters {
-    animation: none;
+    transition: none;
   }
 }
 
@@ -4114,15 +4120,38 @@ body.avatar-preview-open {
   padding-bottom: 0;
 }
 
-.service-row--static {
-  align-items: center;
-  cursor: default;
+/* Lista usług u usługodawcy — jak oferty u klienta: płasko + separatory */
+.service-list:has(.service-row--static) {
+  gap: 0;
 }
 
-.service-row--static.service-row--has-variants {
+.service-row--static {
+  position: relative;
   flex-direction: column;
   align-items: stretch;
-  gap: 0.4rem;
+  gap: 0;
+  padding: 0.7rem 0.15rem;
+  border: none !important;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none;
+  cursor: default;
+  transition: none;
+}
+
+.service-row--static::after {
+  content: "";
+  position: absolute;
+  left: 0.15rem;
+  right: 0.15rem;
+  bottom: 0;
+  height: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+.service-row--static:last-child::after {
+  display: none;
 }
 
 .service-row--static .service-row__top {
@@ -4202,22 +4231,22 @@ body.avatar-preview-open {
   height: 2rem;
   margin: 0;
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
+  border: none;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  transition: color 0.15s ease, opacity 0.15s ease;
 }
 
 .service-row__edit:hover {
   color: var(--accent-provider, var(--accent-client));
-  border-color: color-mix(in srgb, var(--accent-provider, var(--accent-client)) 40%, var(--border));
-  background: color-mix(in srgb, var(--accent-provider, var(--accent-client)) 8%, var(--surface));
+  background: transparent;
 }
 
 .service-row__edit:active {
   transform: scale(0.94);
+  opacity: 0.85;
 }
 
 .service-row__edit-icon {
@@ -4296,10 +4325,22 @@ body.avatar-preview-open {
   scrollbar-width: none;
   -ms-overflow-style: none;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  cursor: grab;
+  user-select: none;
 }
 
 .service-variant-carousel__track::-webkit-scrollbar {
   display: none;
+}
+
+.service-variant-carousel__track.filter-scroll--dragging {
+  cursor: grabbing;
+}
+
+.service-variant-carousel__track.filter-scroll--dragging .service-variant-chip {
+  pointer-events: none;
 }
 
 .service-variant-chip {
@@ -5689,35 +5730,88 @@ body.service-photo-preview-open {
   opacity: 0.35;
 }
 
-.my-cal-section {
-  margin-bottom: 1.1rem;
-  padding: 0.75rem 0.7rem 0.85rem;
+/* Mój kalendarz — jak kalendarz usługodawcy: tydzień + wysuwany miesiąc */
+.app-screen--my-cal {
+  padding: 0;
+  overscroll-behavior: none;
+  --prov-cal-month-ms: 320ms;
+  --prov-cal-month-ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.my-cal-top {
+  flex-shrink: 0;
+  padding: 0.55rem var(--app-pad-x) 0.15rem;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-}
-
-.my-cal {
-  flex: none;
-  min-height: 0;
-}
-
-.my-cal .cal__grid {
-  height: auto;
-  min-height: 0;
-  grid-template-rows: repeat(6, minmax(2.35rem, auto));
-}
-
-.my-cal .cal__day {
+  border-bottom: 0;
+  z-index: 7;
+  overflow: visible;
   position: relative;
+}
+
+.my-cal-top__anchor {
+  position: relative;
+  z-index: 8;
+  min-height: 0;
+}
+
+.my-cal-top:has(.gcal-month) {
+  box-shadow: 0 4px 10px -4px color-mix(in srgb, var(--text) 16%, transparent);
+}
+
+.my-cal-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0 var(--app-pad-x) 0.85rem;
+}
+
+.my-cal-week {
+  margin: 0 0 0.55rem;
+  padding-bottom: 0.2rem;
+  background: var(--surface);
+}
+
+/* Bez guttera godzin — pełna szerokość na 7 dni (nadpisuje .gcal-week__head: 3.1rem 1fr) */
+.app-screen--my-cal .my-cal-week__head,
+.app-screen--my-cal .gcal-week__head {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.app-screen--my-cal .gcal-week__days {
+  width: 100%;
+  --gcal-days: 7;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.my-cal-visits {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  aspect-ratio: auto;
-  min-height: 2.35rem;
-  padding: 0.2rem 0 0.4rem;
-  cursor: pointer;
+  gap: 0.55rem;
+  padding-top: 0.35rem;
+}
+
+.my-cal-visits .booking__label {
+  margin: 0;
+}
+
+.app-screen--my-cal .prov-cal__today-btn {
+  border-color: color-mix(in srgb, var(--accent-client) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent-client) 10%, var(--surface));
+  color: var(--accent-client);
+}
+
+.app-screen--my-cal .gcal-month__day-dot {
+  background: var(--accent-client);
+}
+
+.app-screen--my-cal .gcal-week__dayhead--sel .gcal-week__num {
+  background: var(--accent-client);
+  color: #fff;
+}
+
+.app-screen--my-cal .gcal-month__day--on .gcal-month__day-num {
+  background: var(--accent-client);
+  color: #fff;
 }
 
 .cal__day--selectable {
@@ -5741,16 +5835,6 @@ body.service-photo-preview-open {
   border-radius: 50%;
   background: var(--accent-client);
   transform: translateX(-50%);
-}
-
-.my-cal-visits {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-}
-
-.my-cal-visits .booking__label {
-  margin: 0;
 }
 
 /* ── Kalendarz wizyt usługodawcy (Booksy Biz–style day view) ── */
@@ -6748,7 +6832,8 @@ body.service-photo-preview-open {
   --prov-cal-month-ease: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.app-screen--prov-cal .gcal-month {
+.app-screen--prov-cal .gcal-month,
+.app-screen--my-cal .gcal-month {
   margin: 0;
   padding: 0.55rem 0 0.35rem;
   border-top: 0;
@@ -6757,11 +6842,13 @@ body.service-photo-preview-open {
   animation: prov-cal-month-reveal var(--prov-cal-month-ms) var(--prov-cal-month-ease) both;
 }
 
-.app-screen--prov-cal .gcal-month.gcal-month--instant {
+.app-screen--prov-cal .gcal-month.gcal-month--instant,
+.app-screen--my-cal .gcal-month.gcal-month--instant {
   animation: none;
 }
 
-.app-screen--prov-cal .gcal-month.gcal-month--closing {
+.app-screen--prov-cal .gcal-month.gcal-month--closing,
+.app-screen--my-cal .gcal-month.gcal-month--closing {
   animation: none;
   pointer-events: none;
   overflow: hidden;
@@ -6790,7 +6877,8 @@ body.service-photo-preview-open {
 }
 
 /* Pasek dnia/tygodnia: schowany pod otwartym miesiącem, wraca razem z zamykaniem. */
-.app-screen--prov-cal .gcal-week__sticky {
+.app-screen--prov-cal .gcal-week__sticky,
+.app-screen--my-cal .gcal-week__sticky {
   overflow: hidden;
   max-height: 4.75rem;
   opacity: 1;
@@ -6803,7 +6891,8 @@ body.service-photo-preview-open {
     box-shadow var(--prov-cal-month-ms) var(--prov-cal-month-ease);
 }
 
-.app-screen--prov-cal .gcal-week__sticky--under-month:not(.gcal-week__sticky--revealing) {
+.app-screen--prov-cal .gcal-week__sticky--under-month:not(.gcal-week__sticky--revealing),
+.app-screen--my-cal .gcal-week__sticky--under-month:not(.gcal-week__sticky--revealing) {
   max-height: 0;
   opacity: 0;
   padding-bottom: 0;
@@ -6812,7 +6901,8 @@ body.service-photo-preview-open {
   pointer-events: none;
 }
 
-.app-screen--prov-cal .gcal-week__sticky--revealing {
+.app-screen--prov-cal .gcal-week__sticky--revealing,
+.app-screen--my-cal .gcal-week__sticky--revealing {
   max-height: 4.75rem;
   opacity: 1;
   transform: translateY(0);
@@ -6829,8 +6919,13 @@ body.service-photo-preview-open {
   padding-left: 3.1rem;
 }
 
+.app-screen--my-cal .gcal-month__cal {
+  padding-left: 0;
+}
+
 @media (max-width: 899px) {
-  .app-fullscreen .app-screen--prov-cal .gcal-month {
+  .app-fullscreen .app-screen--prov-cal .gcal-month,
+  .app-fullscreen .app-screen--my-cal .gcal-month {
     margin-left: calc(-1 * var(--app-pad-x) + 0.1rem);
     margin-right: calc(-1 * var(--app-pad-x));
   }
@@ -6838,15 +6933,24 @@ body.service-photo-preview-open {
   .app-fullscreen .app-screen--prov-cal .gcal-month__cal {
     padding-left: 2.45rem;
   }
+
+  .app-fullscreen .app-screen--my-cal .gcal-month__cal {
+    padding-left: 0;
+  }
 }
 
-.device-frame[data-view="mobile"] .app-screen--prov-cal .gcal-month {
+.device-frame[data-view="mobile"] .app-screen--prov-cal .gcal-month,
+.device-frame[data-view="mobile"] .app-screen--my-cal .gcal-month {
   margin-left: calc(-1 * var(--app-pad-x) + 0.1rem);
   margin-right: calc(-1 * var(--app-pad-x));
 }
 
 .device-frame[data-view="mobile"] .app-screen--prov-cal .gcal-month__cal {
   padding-left: 2.45rem;
+}
+
+.device-frame[data-view="mobile"] .app-screen--my-cal .gcal-month__cal {
+  padding-left: 0;
 }
 
 /* Dostępność: pełna szerokość miesiąca w .avail-top */
@@ -8833,9 +8937,11 @@ body.prov-cal-resizing * {
 .visit-card--provider::before {
   content: "";
   position: absolute;
-  inset: 0 auto 0 0;
+  top: 0.55rem;
+  bottom: 0.55rem;
+  left: 0;
   width: 0.28rem;
-  border-radius: 0;
+  border-radius: 999px;
   background: var(--visit-accent);
 }
 
