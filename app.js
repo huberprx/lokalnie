@@ -613,8 +613,13 @@
     };
   }
 
+  /** Pełny opis oferty (description; stary subtitle tylko jako fallback). */
+  function serviceOfferText(s) {
+    return String((s && (s.description || s.subtitle)) || "").trim();
+  }
+
   function serviceDetailText(s) {
-    return s.description || s.subtitle || "";
+    return serviceOfferText(s);
   }
 
   function servicePhotos(s) {
@@ -622,7 +627,7 @@
   }
 
   function serviceHasDetail(s) {
-    return !!serviceDetailText(s) || servicePhotos(s).length > 0;
+    return !!serviceOfferText(s) || servicePhotos(s).length > 0;
   }
 
   function renderServicePhotoStrip(s) {
@@ -2468,7 +2473,7 @@
           <div class="service-row__content${p.multiSelect ? " service-row__content--with-check" : ""}">
             <button type="button" class="service-row__main" data-action="toggle-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
               <span class="service-row__name">${escapeHtml(s.name)}</span>
-              ${s.subtitle ? `<span class="service-row__sub">${escapeHtml(s.subtitle)}</span>` : ""}
+              ${detail ? `<span class="service-row__sub">${escapeHtml(detail)}</span>` : ""}
             </button>
             <div class="service-row__meta">
               <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
@@ -2518,7 +2523,7 @@
       .map(function (s) {
         const on = selectedIds.indexOf(s.id) !== -1;
         const expanded = expandedIds.indexOf(s.id) !== -1;
-        const detail = serviceDetailText(s);
+        const detail = serviceOfferText(s);
         const photos = servicePhotos(s);
         const hasDesc = !!detail;
         const thumb = photos[0] || "";
@@ -2538,7 +2543,7 @@
             <button type="button" class="service-row__static-main service-row__static-main--btn"${hasDesc ? ` data-action="toggle-service-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}"` : " disabled aria-disabled=\"true\""} aria-label="${escapeHtml(hasDesc ? expandLabel : s.name)}" title="${escapeHtml(hasDesc ? expandLabel : s.name)}">
               <span class="service-row__body">
                 <span class="service-row__name">${escapeHtml(s.name)}</span>
-                <span class="service-row__sub">${escapeHtml(s.subtitle || "")}</span>
+                ${hasDesc ? `<span class="service-row__sub">${escapeHtml(detail)}</span>` : ""}
               </span>
               <span class="service-row__meta">
                 <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
@@ -5136,7 +5141,7 @@
           <div class="service-row__content service-row__content--with-check">
             <button type="button" class="service-row__main" data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
               <span class="service-row__name">${escapeHtml(s.name)}</span>
-              ${s.subtitle ? `<span class="service-row__sub">${escapeHtml(s.subtitle)}</span>` : ""}
+              ${detail ? `<span class="service-row__sub">${escapeHtml(detail)}</span>` : ""}
             </button>
             <div class="service-row__meta">
               <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
@@ -5621,7 +5626,6 @@
     return {
       id: "__new__",
       name: "",
-      subtitle: "",
       description: "",
       durationMin: 30,
       price: null,
@@ -5646,7 +5650,6 @@
     window.AppState.params.provider = Object.assign({}, window.AppState.params.provider || {}, {
       editServiceDraft: {
         name: String(form.elements.name && form.elements.name.value || ""),
-        subtitle: String(form.elements.subtitle && form.elements.subtitle.value || ""),
         description: String(form.elements.description && form.elements.description.value || ""),
         durationMin: Number(form.elements.durationMin && form.elements.durationMin.value) || 30,
         price:
@@ -5710,12 +5713,8 @@
           <input class="service-edit__input" name="name" type="text" required maxlength="80" value="${escapeHtml(s.name || "")}" />
         </label>
         <label class="service-edit__field">
-          <span class="service-edit__label">Krótki opis</span>
-          <input class="service-edit__input" name="subtitle" type="text" maxlength="120" value="${escapeHtml(s.subtitle || "")}" />
-        </label>
-        <label class="service-edit__field">
-          <span class="service-edit__label">Opis szczegółowy</span>
-          <textarea class="service-edit__input service-edit__textarea" name="description" rows="6" maxlength="500">${escapeHtml(s.description || "")}</textarea>
+          <span class="service-edit__label">Opis</span>
+          <textarea class="service-edit__input service-edit__textarea" name="description" rows="6" maxlength="500" placeholder="Pierwsza linia widać na liście, reszta po rozwinięciu przez klienta">${escapeHtml(s.description || s.subtitle || "")}</textarea>
         </label>
         ${renderServiceEditPhotos(photos)}
         <div class="service-edit__row">
@@ -5765,7 +5764,7 @@
         <div class="service-row__static-main">
           <span class="service-row__body">
             <span class="service-row__name">${escapeHtml(s.name)}</span>
-            <span class="service-row__sub">${escapeHtml(s.subtitle || "")}</span>
+            <span class="service-row__sub">${escapeHtml(serviceOfferText(s))}</span>
           </span>
           <span class="service-row__meta">
             <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
@@ -5893,7 +5892,6 @@
     if (!isNew && !s) return;
 
     const name = String(form.elements.name && form.elements.name.value || "").trim();
-    const subtitle = String(form.elements.subtitle && form.elements.subtitle.value || "").trim();
     const description = String(form.elements.description && form.elements.description.value || "").trim();
     const durationMin = Number(form.elements.durationMin && form.elements.durationMin.value);
     const priceRaw = form.elements.price && form.elements.price.value;
@@ -5918,7 +5916,6 @@
       s = {
         id: "svc-" + Date.now().toString(36),
         name: name,
-        subtitle: subtitle,
         durationMin: Math.round(durationMin),
         price: price,
         photos: photos,
@@ -5927,8 +5924,8 @@
       p.services.push(s);
     } else {
       s.name = name;
-      s.subtitle = subtitle;
       s.description = description || undefined;
+      delete s.subtitle;
       s.durationMin = Math.round(durationMin);
       s.price = price;
       s.photos = photos;

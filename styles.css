@@ -4351,6 +4351,14 @@ body.avatar-preview-open {
   display: none !important;
 }
 
+/* Pierwsza linia opisu zostaje w nagłówku; pełny tekst tylko w rozwinięciu */
+.service-row--booking-b.service-row--expanded .service-row__sub {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .service-list__add {
   width: 100%;
   margin-top: 0.85rem;
