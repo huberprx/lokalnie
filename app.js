@@ -8897,17 +8897,106 @@
   function bindProvCalEmptyTap() {
     if (bindProvCalEmptyTap.done) return;
     bindProvCalEmptyTap.done = true;
+    const tap = {
+      active: false,
+      pointerId: null,
+      x: 0,
+      y: 0,
+      track: null,
+      dateISO: null,
+    };
+
+    function resolveEmptyTapTrack(target) {
+      if (!target || !target.closest) return null;
+      if (target.closest('[data-role="prov-cal-slot"]')) return null;
+      if (target.closest('[data-role="prov-cal-resize"]')) return null;
+      let track = target.closest('[data-role="prov-cal-track"]');
+      if (!track) {
+        // Trafienie w tło kolumny / clip — weź tor z kolumny dnia.
+        const col = target.closest(".gcal-week__col[data-date], [data-role='prov-cal-cols-track'] > [data-date]");
+        if (col) track = col.querySelector('[data-role="prov-cal-track"]');
+      }
+      if (!track) return null;
+      if (!track.closest('[data-role="prov-cal-body"]')) return null;
+      return track;
+    }
+
+    function armEmptyTap(event) {
+      if (event.button != null && event.button !== 0) return;
+      if (window.AppState.provCalAddOpen || window.AppState.provCalMonthOpen) return;
+      if (document.body.classList.contains("prov-cal-dragging")) return;
+      if (document.body.classList.contains("prov-cal-pinching")) return;
+      if (document.body.classList.contains("prov-cal-resizing")) return;
+      const track = resolveEmptyTapTrack(event.target);
+      if (!track) {
+        tap.active = false;
+        return;
+      }
+      tap.active = true;
+      tap.pointerId = event.pointerId;
+      tap.x = event.clientX;
+      tap.y = event.clientY;
+      tap.track = track;
+      tap.dateISO =
+        track.getAttribute("data-date") ||
+        (track.closest("[data-date]") && track.closest("[data-date]").getAttribute("data-date")) ||
+        ensureProvCalDate();
+    }
+
+    function cancelEmptyTapIfMoved(event) {
+      if (!tap.active) return;
+      if (tap.pointerId != null && event.pointerId != null && event.pointerId !== tap.pointerId) return;
+      if (Math.abs(event.clientX - tap.x) > 10 || Math.abs(event.clientY - tap.y) > 10) {
+        tap.active = false;
+      }
+    }
+
+    function commitEmptyTap(event) {
+      if (!tap.active || !tap.track) return;
+      if (tap.pointerId != null && event.pointerId != null && event.pointerId !== tap.pointerId) return;
+      const track = tap.track;
+      const dateISO = tap.dateISO;
+      const y = event.clientY;
+      tap.active = false;
+      tap.track = null;
+      if (window._provCalSlotIgnoreClick || window._provCalResizeIgnoreClick || window._provCalSwipeSuppressClick) {
+        return;
+      }
+      // Po poziomym swipe dnia nie dokładaj szkicu.
+      if (track.closest(".prov-cal-body--day-swipe, .prov-cal-body--animating-days")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      window._provCalEmptyTapHandled = true;
+      setTimeout(function () {
+        window._provCalEmptyTapHandled = false;
+      }, 0);
+      placeProvCalFreeSelection(dateISO, y, track);
+    }
+
+    document.addEventListener("pointerdown", armEmptyTap, true);
+    document.addEventListener("pointermove", cancelEmptyTapIfMoved, true);
+    document.addEventListener("pointerup", commitEmptyTap, true);
+    document.addEventListener(
+      "pointercancel",
+      function () {
+        tap.active = false;
+        tap.track = null;
+      },
+      true
+    );
+
+    // Fallback (gdy pointer events nie dają clicka / są zablokowane).
     document.addEventListener(
       "click",
       function (event) {
+        if (window._provCalEmptyTapHandled) return;
         if (window._provCalSlotIgnoreClick || window._provCalResizeIgnoreClick || window._provCalSwipeSuppressClick) {
           return;
         }
         if (window.AppState.provCalAddOpen || window.AppState.provCalMonthOpen) return;
-        const track = event.target.closest && event.target.closest('[data-role="prov-cal-track"]');
-        if (!track || !track.closest('[data-role="prov-cal-body"]')) return;
-        if (event.target.closest('[data-role="prov-cal-slot"]')) return;
-        if (event.target.closest('[data-role="prov-cal-resize"]')) return;
+        const track = resolveEmptyTapTrack(event.target);
+        if (!track) return;
+        if (track.closest(".prov-cal-body--day-swipe, .prov-cal-body--animating-days")) return;
         event.preventDefault();
         event.stopPropagation();
         const dateISO =

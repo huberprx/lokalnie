@@ -6823,14 +6823,17 @@ body.avatar-preview-open {
   display: grid;
   grid-template-columns: repeat(var(--gcal-days, 7), minmax(0, 1fr));
   min-width: 0;
+  height: 100%;
 }
 
 .gcal-week__cols-clip {
   border-left: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  height: 100%;
 }
 
 .gcal-week__col {
   min-width: 0;
+  height: 100%;
   border-right: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
 }
 
@@ -6916,7 +6919,10 @@ body.avatar-preview-open {
 .gcal__track {
   position: relative;
   border-left: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  height: 100%;
   min-height: 100%;
+  /* Cała kolumna dnia przyjmuje tap (pusty przedział), nie tylko obszar wizyt. */
+  cursor: pointer;
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
