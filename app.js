@@ -628,11 +628,7 @@
 
   function defaultServiceVariantId(s) {
     const list = serviceVariants(s);
-    if (!list.length) return null;
-    const match = list.find(function (v) {
-      return v.durationMin === s.durationMin && v.price === s.price;
-    });
-    return (match || list[0]).id;
+    return list.length ? list[0].id : null;
   }
 
   function resolveServiceVariant(s, variantId) {
@@ -2557,7 +2553,10 @@
         const hasDesc = !!detail;
         const thumb = photos[0] || "";
         const variants = serviceVariants(s);
-        const variantId = selectedVariantIdForService(draft, s);
+        // Cena/czas: domyślnie pierwsza opcja; podświetlenie chipa dopiero po checkmarku oferty.
+        const variantId = on
+          ? selectedVariantIdForService(draft, s)
+          : defaultServiceVariantId(s);
         const resolved = resolveServiceVariant(s, variantId);
         const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
         const expandLabel = (expanded ? "Zwiń" : "Rozwiń") + " szczegóły: " + s.name;
@@ -2586,7 +2585,7 @@
               <span class="service-row__check-visual" aria-hidden="true"></span>
             </button>
           </div>
-          ${renderServiceVariantCarousel(s, resolved.id, { interactive: true })}
+          ${renderServiceVariantCarousel(s, on ? resolved.id : null, { interactive: true })}
           ${
             hasDesc
               ? `<div class="service-row__detail"${expanded ? "" : " hidden"}>
