@@ -3871,28 +3871,6 @@ body.avatar-preview-open {
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'%3E%3Cpath d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z'/%3E%3C/svg%3E");
 }
 
-.provider-card__switch:hover {
-  background: var(--surface-2);
-  border-color: var(--text-muted);
-  color: var(--text);
-}
-
-.provider-card__switch--on {
-  background: var(--surface-2);
-  border-color: var(--text-muted);
-  color: var(--text);
-}
-
-.provider-card__switch-icon {
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='7' width='20' height='10' rx='5'/%3E%3Ccircle cx='9' cy='12' r='3' fill='black' stroke='none'/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='7' width='20' height='10' rx='5'/%3E%3Ccircle cx='9' cy='12' r='3' fill='black' stroke='none'/%3E%3C/svg%3E");
-}
-
-.provider-card__switch--on .provider-card__switch-icon {
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='7' width='20' height='10' rx='5'/%3E%3Ccircle cx='15' cy='12' r='3' fill='black' stroke='none'/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='7' width='20' height='10' rx='5'/%3E%3Ccircle cx='15' cy='12' r='3' fill='black' stroke='none'/%3E%3C/svg%3E");
-}
-
 /* ---- Popover menu karty usługodawcy ---- */
 .provider-card-popover {
   position: fixed;
@@ -4141,6 +4119,20 @@ body.avatar-preview-open {
   cursor: default;
 }
 
+.service-row--static.service-row--has-variants {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+
+.service-row--static .service-row__top {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  min-width: 0;
+}
+
 .service-row__thumb {
   flex-shrink: 0;
   width: 3.1rem;
@@ -4155,8 +4147,8 @@ body.avatar-preview-open {
   position: relative;
   display: grid;
   place-items: center;
-  background: color-mix(in srgb, var(--text-muted) 8%, var(--surface-2));
-  border-color: color-mix(in srgb, var(--text-muted) 22%, var(--border));
+  background: transparent;
+  border-color: transparent;
 }
 
 /* Ikona oferty — ta sama co w menu „Usługi”, szara */
@@ -4277,6 +4269,79 @@ body.avatar-preview-open {
   gap: 0.55rem;
   width: 100%;
   min-width: 0;
+}
+
+/* Karuzela wariantów czasu/ceny — pod krótkim opisem */
+.service-variant-carousel {
+  min-width: 0;
+  margin: 0.05rem 0 0.2rem;
+}
+
+.service-row--booking-b .service-variant-carousel {
+  padding-left: calc(3.1rem + 0.55rem);
+  padding-right: 2.55rem;
+}
+
+.service-row--static .service-variant-carousel {
+  padding-left: calc(3.1rem + 0.55rem);
+  padding-right: 2.4rem;
+}
+
+.service-variant-carousel__track {
+  display: flex;
+  gap: 0.35rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.05rem 0.05rem 0.15rem;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.service-variant-carousel__track::-webkit-scrollbar {
+  display: none;
+}
+
+.service-variant-chip {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.28rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+span.service-variant-chip {
+  cursor: default;
+}
+
+.service-variant-chip:not(.service-variant-chip--on) {
+  opacity: 0.72;
+  color: var(--text-muted);
+}
+
+.service-variant-chip--on {
+  opacity: 1;
+  background: var(--accent-client);
+  border-color: var(--accent-client);
+  color: #fff;
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent-client) 32%, transparent);
+}
+
+.app-screen--provider .service-variant-chip--on {
+  background: var(--accent-provider);
+  border-color: var(--accent-provider);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent-provider) 32%, transparent);
 }
 
 .service-row--booking-b .service-row__check--radio {
@@ -4691,17 +4756,46 @@ body.service-photo-preview-open {
   gap: 0.65rem;
 }
 
+.service-edit__variants {
+  --avail-trail: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.service-edit__variants-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+/* Jak wiersz dostępności: pola + × + */
+.service-edit__variant {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.15rem;
+  min-width: 0;
+  min-height: 2.25rem;
+}
+
+.service-edit__variant-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.service-edit__variant .avail-edit__icon-btn,
+.service-edit__variant .avail-edit__icon-spacer {
+  margin-bottom: 0.15rem;
+}
+
 .service-edit__actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 0.35rem;
-}
-
-@media (max-width: 420px) {
-  .service-edit__row {
-    grid-template-columns: 1fr;
-  }
 }
 
 .service-row:not(.service-row--static):not(.service-row--booking-b):hover {
@@ -8680,7 +8774,7 @@ body.prov-cal-resizing * {
   position: relative;
   overflow: hidden;
   padding: 0.9rem 0.9rem 0.9rem 1.15rem;
-  background: color-mix(in srgb, var(--visit-accent) 16%, var(--surface));
+  background: var(--surface);
 }
 
 .visit-card--provider::before {

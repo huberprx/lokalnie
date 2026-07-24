@@ -111,6 +111,11 @@
           subtitle: "Klasyczne strzyżenie maszynką i nożyczkami",
           description: "Klasyczne strzyżenie maszynką i nożyczkami. Mycie głowy, modelowanie i stylizacja w cenie. Czas ok. 30 min w zależności od długości włosów.",
           photos: ["assets/services/svc-haircut.jpg", "assets/services/svc-fade.jpg"],
+          variants: [
+            { id: "svc-gb-1-short", durationMin: 20, price: 50, label: "Krótko" },
+            { id: "svc-gb-1-std", durationMin: 30, price: 60, label: "Standard" },
+            { id: "svc-gb-1-long", durationMin: 45, price: 80, label: "Długie" },
+          ],
         },
         {
           id: "svc-gb-2",
@@ -120,6 +125,11 @@
           subtitle: "Modelowanie i wyrównanie linii brody",
           description: "Modelowanie i wyrównanie linii brody. Strzyżenie nadmiaru, konturowanie i olejek po goleniu.",
           photos: ["assets/services/svc-beard.jpg"],
+          variants: [
+            { id: "svc-gb-2-quick", durationMin: 15, price: 35, label: "Szybkie" },
+            { id: "svc-gb-2-std", durationMin: 20, price: 40, label: "Standard" },
+            { id: "svc-gb-2-full", durationMin: 30, price: 55, label: "Pełne" },
+          ],
         },
         {
           id: "svc-gb-3",
@@ -136,6 +146,10 @@
           price: 70,
           subtitle: "Precyzyjny fade z boków i karku",
           photos: ["assets/services/svc-fade.jpg"],
+          variants: [
+            { id: "svc-gb-4-std", durationMin: 35, price: 70, label: "Classic" },
+            { id: "svc-gb-4-deep", durationMin: 50, price: 90, label: "Deep fade" },
+          ],
         },
         {
           id: "svc-gb-5",
@@ -152,6 +166,10 @@
           price: 50,
           subtitle: "Tradycyjne golenie z gorącym kompresem",
           photos: ["assets/services/svc-shave.jpg"],
+          variants: [
+            { id: "svc-gb-6-std", durationMin: 25, price: 50, label: "Klasyczne" },
+            { id: "svc-gb-6-ritual", durationMin: 40, price: 75, label: "Rytuał" },
+          ],
         },
       ],
       availability: [],

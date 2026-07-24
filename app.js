@@ -105,8 +105,6 @@
       availEditDrafts: {},
       appMenuOpen: false,
       clientAvatarUrl: null,
-      /** Wariant UI ekranu rezerwacji: "A" (obecny) | "B" (kopia do testów ofert). */
-      bookingUiVariant: "A",
     };
   }
 
@@ -459,7 +457,6 @@
 
   function refreshBookingServiceLists(screen, ctx) {
     const html = ctx.services;
-    const variant = (ctx && ctx.bookingUiVariant) || getBookingUiVariant();
     const mobile =
       screen.querySelector('[data-role="booking-mobile-services"]') ||
       screen.querySelector(".booking-mobile .booking__services-list");
@@ -467,12 +464,10 @@
       const scrollTop = mobile.scrollTop;
       mobile.innerHTML = html;
       mobile.scrollTop = scrollTop;
-      mobile.setAttribute("data-booking-variant", variant);
     }
     const layoutList = screen.querySelector(".booking-layout .booking__services-list");
     if (layoutList) {
       layoutList.innerHTML = html;
-      layoutList.setAttribute("data-booking-variant", variant);
     }
   }
 
@@ -553,7 +548,6 @@
 
     if (window.AppState.screen.client === "booking") {
       document.querySelectorAll(".app-screen--booking").forEach(function (bookingScreen) {
-        bookingScreen.setAttribute("data-booking-variant", ctx.bookingUiVariant || getBookingUiVariant());
         if (clientUsesDesktopBookingLayout()) {
           const layout = bookingScreen.querySelector(".booking-layout");
           if (layout) {
@@ -570,7 +564,7 @@
 
     const profileServices = document.querySelector(".app-screen--client .profile .service-list");
     if (profileServices && window.AppState.screen.client === "profile") {
-      profileServices.innerHTML = renderServiceRows(p, draft.serviceIds || []);
+      profileServices.innerHTML = renderBookingServiceRows(p, draft.serviceIds || []);
       updated = true;
     }
 
@@ -605,6 +599,7 @@
     window.AppState.draft = {
       slug: p.slug,
       serviceIds: defaultServiceIds(p),
+      serviceVariants: {},
       expandedServiceIds: [],
       dateISO: null,
       slotId: null,
@@ -617,6 +612,69 @@
   /** Pełny opis oferty (description; stary subtitle tylko jako fallback). */
   function serviceOfferText(s) {
     return String((s && (s.description || s.subtitle)) || "").trim();
+  }
+
+  /** Pierwsza linia opisu na liście. */
+  function serviceListSummary(s) {
+    const full = serviceOfferText(s);
+    if (!full) return "";
+    const line = full.split(/\r?\n/)[0].trim();
+    return line || full;
+  }
+
+  function serviceVariants(s) {
+    return Array.isArray(s && s.variants) ? s.variants.filter(Boolean) : [];
+  }
+
+  function defaultServiceVariantId(s) {
+    const list = serviceVariants(s);
+    if (!list.length) return null;
+    const match = list.find(function (v) {
+      return v.durationMin === s.durationMin && v.price === s.price;
+    });
+    return (match || list[0]).id;
+  }
+
+  function resolveServiceVariant(s, variantId) {
+    const list = serviceVariants(s);
+    if (!list.length) {
+      return { id: null, durationMin: s.durationMin, price: s.price, label: "" };
+    }
+    const found = list.find(function (v) {
+      return v.id === variantId;
+    });
+    const v = found || list.find(function (x) {
+      return x.id === defaultServiceVariantId(s);
+    }) || list[0];
+    return {
+      id: v.id,
+      durationMin: v.durationMin,
+      price: v.price,
+      label: v.label || "",
+    };
+  }
+
+  function ensureDraftServiceVariants(draft) {
+    if (!draft) return;
+    if (!draft.serviceVariants || typeof draft.serviceVariants !== "object") {
+      draft.serviceVariants = {};
+    }
+  }
+
+  function selectedVariantIdForService(draft, service) {
+    ensureDraftServiceVariants(draft);
+    const map = draft.serviceVariants;
+    const current = map[service.id];
+    if (current) return current;
+    const def = defaultServiceVariantId(service);
+    if (def) map[service.id] = def;
+    return def;
+  }
+
+  function variantChipLabel(v) {
+    const dur = formatDuration(v.durationMin);
+    const price = formatPrice(v.price);
+    return dur + " · " + price;
   }
 
   function serviceDetailText(s) {
@@ -672,7 +730,6 @@
       calendarGrid: renderCalendarGrid(p, activeDate, calMonth, availDates, totals),
       svcNames: draftServices(p).map((s) => s.name).join(", "),
       canConfirm: !!draft.slotId,
-      bookingUiVariant: getBookingUiVariant(),
     };
   }
 
@@ -708,12 +765,11 @@
 
   function renderBookingLayoutBlock(p, ctx) {
     const totals = ctx.totals;
-    const variant = (ctx && ctx.bookingUiVariant) || getBookingUiVariant();
     return `
-      <div class="booking-layout" data-booking-variant="${escapeHtml(variant)}">
+      <div class="booking-layout">
         <aside class="booking__services">
           ${renderServicesPanelHead(p, ctx.draft)}
-          <div class="booking__services-list service-list" data-booking-variant="${escapeHtml(variant)}">${ctx.services}</div>
+          <div class="booking__services-list service-list">${ctx.services}</div>
         </aside>
 
         <section class="booking__calendar">
@@ -1112,9 +1168,6 @@
 
     const infoOpen = !!(opts.bookingHeader && window.AppState.draft && window.AppState.draft.providerInfoOpen);
     const favBtn = `<button type="button" class="provider-card__action provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__action-icon provider-card__fav-icon" aria-hidden="true"></span></button>`;
-    const variantB = getBookingUiVariant() === "B";
-    const switchLabel = variantB ? "Wariant ofert B (włączony) — przełącz na A" : "Wariant ofert A — przełącz na B";
-    const switchBtn = `<button type="button" class="provider-card__action provider-card__switch${variantB ? " provider-card__switch--on" : ""}" data-action="toggle-booking-ui-variant" aria-label="${escapeHtml(switchLabel)}" title="${escapeHtml(switchLabel)}" aria-pressed="${variantB ? "true" : "false"}"><span class="provider-card__action-icon provider-card__switch-icon" aria-hidden="true"></span></button>`;
     const infoBtn = `<button type="button" class="provider-card__action provider-card__info${infoOpen ? " provider-card__info--open" : ""}" data-action="toggle-booking-provider-info" data-slug="${escapeHtml(p.slug)}" aria-expanded="${infoOpen ? "true" : "false"}" aria-controls="booking-provider-info" aria-label="Informacje o ${escapeHtml(p.name)}" title="Informacje"><span class="provider-card__action-icon provider-card__info-icon" aria-hidden="true"></span></button>`;
     const menuBtn = `<button type="button" class="provider-card__action provider-card__menu" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Więcej opcji dla ${escapeHtml(p.name)}" title="Więcej opcji"><span class="provider-card__action-icon provider-card__menu-icon" aria-hidden="true"></span></button>`;
 
@@ -1125,7 +1178,6 @@
           ${nameHtml}
           <div class="provider-card__toolbar">
             ${favBtn}
-            ${opts.bookingHeader ? switchBtn : ""}
           </div>
         </div>
         ${renderAvatarTrigger(p, "provider-card__avatar")}
@@ -1329,7 +1381,6 @@
             : base.availEditDrafts,
         appMenuOpen: !!stored.appMenuOpen,
         clientAvatarUrl: typeof stored.clientAvatarUrl === "string" ? stored.clientAvatarUrl : base.clientAvatarUrl,
-        bookingUiVariant: stored.bookingUiVariant === "B" ? "B" : "A",
       };
     } else {
       window.AppState = base;
@@ -1422,12 +1473,32 @@
     return (provider.services || []).filter((s) => (d.serviceIds || []).indexOf(s.id) !== -1);
   }
 
+  function draftServiceResolved(provider) {
+    const d = window.AppState.draft;
+    return draftServices(provider).map(function (s) {
+      const variantId = selectedVariantIdForService(d, s);
+      const v = resolveServiceVariant(s, variantId);
+      return {
+        service: s,
+        variantId: v.id,
+        durationMin: v.durationMin,
+        price: v.price,
+      };
+    });
+  }
+
   function draftTotals(provider) {
-    const svcs = draftServices(provider);
-    const duration = svcs.reduce((a, s) => a + s.durationMin, 0);
-    const hasNullPrice = svcs.some((s) => s.price == null);
-    const price = svcs.reduce((a, s) => a + (s.price || 0), 0);
-    return { duration, price, hasNullPrice, count: svcs.length };
+    const rows = draftServiceResolved(provider);
+    const duration = rows.reduce(function (a, r) {
+      return a + (r.durationMin || 0);
+    }, 0);
+    const hasNullPrice = rows.some(function (r) {
+      return r.price == null;
+    });
+    const price = rows.reduce(function (a, r) {
+      return a + (r.price || 0);
+    }, 0);
+    return { duration, price, hasNullPrice, count: rows.length };
   }
 
   // ─────────────────────────────────────────────────────────
@@ -2443,93 +2514,51 @@
     }
   }
 
-  function getBookingUiVariant() {
-    return window.AppState.bookingUiVariant === "B" ? "B" : "A";
-  }
-
-  function toggleBookingUiVariant() {
-    window.AppState.bookingUiVariant = getBookingUiVariant() === "B" ? "A" : "B";
-    saveState();
-    refreshBookingDraftUI();
-  }
-
-  /** Lista ofert na ekranie rezerwacji — A obecny UI, B kopia do eksperymentów. */
-  function renderBookingServiceRows(p, selectedIds) {
-    if (getBookingUiVariant() === "B") return renderServiceRowsB(p, selectedIds);
-    return renderServiceRows(p, selectedIds);
-  }
-
-  function renderServiceRows(p, selectedIds) {
-    const draft = window.AppState.draft;
-    const expandedIds = (draft && draft.expandedServiceIds) || [];
-
-    return (p.services || [])
-      .map((s) => {
-        const on = selectedIds.indexOf(s.id) !== -1;
-        const expanded = expandedIds.indexOf(s.id) !== -1;
-        const detail = serviceDetailText(s);
-        const hasDetail = serviceHasDetail(s);
-        const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
-
+  function renderServiceVariantCarousel(s, selectedVariantId, opts) {
+    opts = opts || {};
+    const interactive = !!opts.interactive;
+    const variants = serviceVariants(s);
+    if (!variants.length) return "";
+    const chips = variants
+      .map(function (v) {
+        const on = v.id === selectedVariantId;
+        const label = variantChipLabel(v);
+        const aria = (v.label ? v.label + ", " : "") + label;
+        if (!interactive) {
+          return `<span class="service-variant-chip${on ? " service-variant-chip--on" : ""}" aria-hidden="true">${escapeHtml(label)}</span>`;
+        }
         return `
-        <article class="service-row${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}" data-service-id="${escapeHtml(s.id)}">
-          <div class="service-row__content${p.multiSelect ? " service-row__content--with-check" : ""}">
-            <button type="button" class="service-row__main" data-action="toggle-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
-              <span class="service-row__name">${escapeHtml(s.name)}</span>
-              ${detail ? `<span class="service-row__sub">${escapeHtml(detail)}</span>` : ""}
-            </button>
-            <div class="service-row__meta">
-              <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
-              <span class="service-row__price">${escapeHtml(formatPrice(s.price))}</span>
-            </div>
-            ${
-              hasDetail || p.multiSelect
-                ? `<div class="service-row__foot">
-                    ${
-                      hasDetail
-                        ? `<button type="button" class="service-row__more" data-action="toggle-service-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}">
-                            <span class="service-row__more-label">${expanded ? "Mniej" : "Więcej"}</span>
-                            <span class="service-row__chev" aria-hidden="true"></span>
-                          </button>`
-                        : `<span class="service-row__foot-spacer" aria-hidden="true"></span>`
-                    }
-                    ${
-                      p.multiSelect
-                        ? `<button type="button" class="service-row__check${on ? " service-row__check--on" : ""}" data-action="toggle-service-check" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
-                            <span class="service-row__check-visual" aria-hidden="true"></span>
-                          </button>`
-                        : ""
-                    }
-                  </div>`
-                : ""
-            }
-            ${
-              hasDetail
-                ? `<div class="service-row__detail"${expanded ? "" : " hidden"}>
-                    ${detail ? `<p class="service-row__detail-text">${escapeHtml(detail)}</p>` : ""}
-                    ${renderServicePhotoStrip(s)}
-                  </div>`
-                : ""
-            }
-          </div>
-        </article>`;
+          <button type="button" class="service-variant-chip${on ? " service-variant-chip--on" : ""}"
+            data-action="pick-service-variant" data-service-id="${escapeHtml(s.id)}" data-variant-id="${escapeHtml(v.id)}"
+            aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(aria)}">
+            ${escapeHtml(label)}
+          </button>`;
       })
       .join("");
+    return `
+      <div class="service-variant-carousel" data-role="service-variants" data-service-id="${escapeHtml(s.id)}"${interactive ? ` role="group" aria-label="Warianty: ${escapeHtml(s.name)}"` : " aria-hidden=\"true\""}>
+        <div class="service-variant-carousel__track">${chips}</div>
+      </div>`;
   }
 
-  /** Wariant B: układ jak lista Usług usługodawcy + checkmark, expand kliknięciem w panel. */
-  function renderServiceRowsB(p, selectedIds) {
+  /** Lista ofert (rezerwacja / profil) — płaskie separatory, miniatura, radio. */
+  function renderBookingServiceRows(p, selectedIds) {
     const draft = window.AppState.draft;
     const expandedIds = (draft && draft.expandedServiceIds) || [];
+    ensureDraftServiceVariants(draft);
 
     return (p.services || [])
       .map(function (s) {
         const on = selectedIds.indexOf(s.id) !== -1;
         const expanded = expandedIds.indexOf(s.id) !== -1;
         const detail = serviceOfferText(s);
+        const summary = serviceListSummary(s);
         const photos = servicePhotos(s);
         const hasDesc = !!detail;
         const thumb = photos[0] || "";
+        const variants = serviceVariants(s);
+        const variantId = selectedVariantIdForService(draft, s);
+        const resolved = resolveServiceVariant(s, variantId);
         const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
         const expandLabel = (expanded ? "Zwiń" : "Rozwiń") + " szczegóły: " + s.name;
 
@@ -2540,23 +2569,24 @@
           : `<span class="service-row__thumb service-row__thumb--empty" aria-hidden="true"></span>`;
 
         return `
-        <article class="service-row service-row--booking-b${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}" data-service-id="${escapeHtml(s.id)}">
+        <article class="service-row service-row--booking-b${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}${variants.length ? " service-row--has-variants" : ""}" data-service-id="${escapeHtml(s.id)}">
           <div class="service-row__top">
             ${thumbHtml}
             <button type="button" class="service-row__static-main service-row__static-main--btn"${hasDesc ? ` data-action="toggle-service-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}"` : " disabled aria-disabled=\"true\""} aria-label="${escapeHtml(hasDesc ? expandLabel : s.name)}" title="${escapeHtml(hasDesc ? expandLabel : s.name)}">
               <span class="service-row__body">
                 <span class="service-row__name">${escapeHtml(s.name)}</span>
-                ${hasDesc ? `<span class="service-row__sub">${escapeHtml(detail)}</span>` : ""}
+                ${summary ? `<span class="service-row__sub">${escapeHtml(summary)}</span>` : ""}
               </span>
               <span class="service-row__meta">
-                <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
-                <span class="service-row__price">${escapeHtml(formatPrice(s.price))}</span>
+                <span class="service-row__dur">${escapeHtml(formatDuration(resolved.durationMin))}</span>
+                <span class="service-row__price">${escapeHtml(formatPrice(resolved.price))}</span>
               </span>
             </button>
             <button type="button" class="service-row__check service-row__check--radio${on ? " service-row__check--on" : ""}" data-action="toggle-service-check" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
               <span class="service-row__check-visual" aria-hidden="true"></span>
             </button>
           </div>
+          ${renderServiceVariantCarousel(s, resolved.id, { interactive: true })}
           ${
             hasDesc
               ? `<div class="service-row__detail"${expanded ? "" : " hidden"}>
@@ -2788,7 +2818,7 @@
     const fav = window.AppState.favorites.indexOf(p.slug) !== -1;
     const totals = draftTotals(p);
     const selectedIds = (window.AppState.draft && window.AppState.draft.serviceIds) || [];
-    const services = renderServiceRows(p, selectedIds);
+    const services = renderBookingServiceRows(p, selectedIds);
 
     const ctaLabel = p.bookingMode === "approval" ? "Wyślij prośbę o termin" : "Rezerwuj termin";
     const ctaAction = p.bookingMode === "approval" ? "send-request" : "start-booking";
@@ -2840,9 +2870,8 @@
     const ctx = buildBookingContext(p);
     if (!ctx) return renderSearch();
 
-    const variant = ctx.bookingUiVariant || getBookingUiVariant();
     return `
-      <div class="app-screen app-screen--client app-screen--booking" data-booking-variant="${escapeHtml(variant)}">
+      <div class="app-screen app-screen--client app-screen--booking">
         <div class="booking-mobile">
           <div class="booking booking--mobile-split">
             <div class="booking__main">
@@ -2854,7 +2883,7 @@
               ${p.bookingMode === "approval" ? `<p class="profile__mode">Rezerwacja na akceptację — usługodawca zaproponuje termin.</p>` : ""}
 
               ${renderServicesPanelHead(p, ctx.draft, { mobile: true })}
-              <div class="booking__services-list service-list" data-role="booking-mobile-services" data-booking-variant="${escapeHtml(variant)}">${ctx.services}</div>
+              <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
             </div>
 
             <div class="booking__schedule" data-role="booking-mobile-schedule">
@@ -5644,6 +5673,7 @@
       durationMin: 30,
       price: null,
       photos: [],
+      variants: [{ id: "svc-new-v1", durationMin: 30, price: null, label: "" }],
     };
   }
 
@@ -5658,18 +5688,60 @@
     });
   }
 
+  function normalizeEditVariants(s) {
+    const list = serviceVariants(s);
+    if (list.length) {
+      return list.map(function (v, i) {
+        return {
+          id: v.id || "v-" + (i + 1),
+          durationMin: Number(v.durationMin) || 30,
+          price: v.price == null || v.price === "" ? null : Number(v.price),
+          label: v.label || "",
+        };
+      });
+    }
+    return [
+      {
+        id: ((s && s.id) || "svc-new") + "-v1",
+        durationMin: Number(s && s.durationMin) || 30,
+        price: s && s.price == null ? null : Number(s && s.price),
+        label: "",
+      },
+    ];
+  }
+
+  function readServiceEditVariantsFromForm(form) {
+    if (!form) return [];
+    const rows = form.querySelectorAll("[data-role='service-edit-variant']");
+    const out = [];
+    rows.forEach(function (row, i) {
+      const id = row.getAttribute("data-variant-id") || "v-" + (i + 1);
+      const priceEl = row.querySelector('[name="variantPrice"]');
+      const durEl = row.querySelector('[name="variantDuration"]');
+      const priceRaw = priceEl ? priceEl.value : "";
+      const durationMin = Number(durEl && durEl.value);
+      out.push({
+        id: id,
+        durationMin: Number.isFinite(durationMin) && durationMin >= 5 ? Math.round(durationMin) : 30,
+        price: priceRaw === "" || priceRaw == null ? null : Number(priceRaw),
+        label: "",
+      });
+    });
+    return out.length ? out : [{ id: "v-1", durationMin: 30, price: null, label: "" }];
+  }
+
   function captureServiceEditDraft() {
     const form = document.querySelector("form.service-edit");
     if (!form) return;
+    const variants = readServiceEditVariantsFromForm(form);
+    const first = variants[0];
     window.AppState.params.provider = Object.assign({}, window.AppState.params.provider || {}, {
       editServiceDraft: {
         name: String(form.elements.name && form.elements.name.value || ""),
         description: String(form.elements.description && form.elements.description.value || ""),
-        durationMin: Number(form.elements.durationMin && form.elements.durationMin.value) || 30,
-        price:
-          form.elements.price && form.elements.price.value === ""
-            ? null
-            : Number(form.elements.price && form.elements.price.value),
+        durationMin: first.durationMin,
+        price: first.price,
+        variants: variants,
       },
     });
   }
@@ -5678,6 +5750,85 @@
     const draft = window.AppState.params.provider && window.AppState.params.provider.editServiceDraft;
     if (!draft || !s) return s;
     return Object.assign({}, s, draft);
+  }
+
+  function renderServiceEditVariants(variants) {
+    const list = Array.isArray(variants) && variants.length ? variants : [{ id: "v-1", durationMin: 30, price: null }];
+    const rows = list
+      .map(function (v, i) {
+        const priceVal = v.price == null || v.price === "" ? "" : String(v.price);
+        const canRemove = list.length > 1;
+        const isLast = i === list.length - 1;
+        const showLabels = i === 0;
+        return `
+        <div class="service-edit__variant" data-role="service-edit-variant" data-variant-id="${escapeHtml(v.id || "v-" + (i + 1))}">
+          <div class="service-edit__variant-fields">
+            <label class="service-edit__field service-edit__field--price">
+              ${showLabels ? `<span class="service-edit__label">Cena (zł)</span>` : ""}
+              <input class="service-edit__input" name="variantPrice" type="number" min="0" max="99999" step="1" value="${escapeHtml(priceVal)}" placeholder="Indywid." aria-label="Cena wariantu ${i + 1}" />
+            </label>
+            <label class="service-edit__field service-edit__field--duration">
+              ${showLabels ? `<span class="service-edit__label">Czas (min)</span>` : ""}
+              <input class="service-edit__input" name="variantDuration" type="number" required min="5" max="480" step="5" value="${escapeHtml(String(v.durationMin || 30))}" aria-label="Czas wariantu ${i + 1}" />
+            </label>
+          </div>
+          ${
+            canRemove
+              ? `<button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--remove" data-action="remove-service-variant" data-index="${i}" aria-label="Usuń wariant ${i + 1}" title="Usuń">
+                  <span aria-hidden="true">×</span>
+                </button>`
+              : `<span class="avail-edit__icon-spacer" aria-hidden="true"></span>`
+          }
+          ${
+            isLast
+              ? `<button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--add" data-action="add-service-variant" aria-label="Dodaj wariant ceny i czasu" title="Dodaj">
+                  <span aria-hidden="true">+</span>
+                </button>`
+              : `<span class="avail-edit__icon-spacer" aria-hidden="true"></span>`
+          }
+        </div>`;
+      })
+      .join("");
+    return `
+      <div class="service-edit__variants" data-role="service-edit-variants">
+        <div class="service-edit__variants-list">${rows}</div>
+      </div>`;
+  }
+
+  function addServiceVariant() {
+    captureServiceEditDraft();
+    const draft = window.AppState.params.provider && window.AppState.params.provider.editServiceDraft;
+    if (!draft) return;
+    const variants = Array.isArray(draft.variants) ? draft.variants.slice() : normalizeEditVariants(draft);
+    const last = variants[variants.length - 1] || { durationMin: 30, price: null };
+    variants.push({
+      id: "v-" + Date.now().toString(36),
+      durationMin: last.durationMin || 30,
+      price: last.price == null ? null : last.price,
+      label: "",
+    });
+    draft.variants = variants;
+    draft.durationMin = variants[0].durationMin;
+    draft.price = variants[0].price;
+    window.AppState.params.provider.editServiceDraft = draft;
+    saveState();
+    renderAll();
+  }
+
+  function removeServiceVariant(index) {
+    captureServiceEditDraft();
+    const draft = window.AppState.params.provider && window.AppState.params.provider.editServiceDraft;
+    if (!draft) return;
+    const variants = Array.isArray(draft.variants) ? draft.variants.slice() : normalizeEditVariants(draft);
+    const i = Number(index);
+    if (!Number.isFinite(i) || i < 0 || i >= variants.length || variants.length <= 1) return;
+    variants.splice(i, 1);
+    draft.variants = variants;
+    draft.durationMin = variants[0].durationMin;
+    draft.price = variants[0].price;
+    window.AppState.params.provider.editServiceDraft = draft;
+    saveState();
+    renderAll();
   }
 
   function renderServiceEditPhotos(photos) {
@@ -5711,9 +5862,9 @@
   }
 
   function renderServiceEditForm(s, isNew) {
-    const priceVal = s.price == null ? "" : String(s.price);
     const serviceId = isNew ? "__new__" : s.id;
     const photos = getEditServicePhotos();
+    const variants = normalizeEditVariants(s);
     return `
       <form class="service-edit" data-service-id="${escapeHtml(serviceId)}" data-new="${isNew ? "true" : "false"}" onsubmit="return false;">
         <header class="screen-head screen-head--with-back">
@@ -5731,16 +5882,7 @@
           <textarea class="service-edit__input service-edit__textarea" name="description" rows="6" maxlength="500" placeholder="Pierwsza linia widać na liście, reszta po rozwinięciu przez klienta">${escapeHtml(s.description || s.subtitle || "")}</textarea>
         </label>
         ${renderServiceEditPhotos(photos)}
-        <div class="service-edit__row">
-          <label class="service-edit__field">
-            <span class="service-edit__label">Czas (min)</span>
-            <input class="service-edit__input" name="durationMin" type="number" required min="5" max="480" step="5" value="${escapeHtml(String(s.durationMin || 30))}" />
-          </label>
-          <label class="service-edit__field">
-            <span class="service-edit__label">Cena (zł)</span>
-            <input class="service-edit__input" name="price" type="number" min="0" max="99999" step="1" value="${escapeHtml(priceVal)}" placeholder="Indywidualna" />
-          </label>
-        </div>
+        ${renderServiceEditVariants(variants)}
         <div class="service-edit__actions">
           <button type="button" class="btn btn--primary" data-action="save-service" data-service-id="${escapeHtml(serviceId)}">${isNew ? "Dodaj" : "Zapisz"}</button>
           <button type="button" class="btn btn--ghost" data-action="cancel-edit-service">Anuluj</button>
@@ -5768,26 +5910,32 @@
     const list = (p ? p.services : [])
       .map(function (s) {
         const thumb = servicePhotos(s)[0];
+        const variants = serviceVariants(s);
+        const defId = defaultServiceVariantId(s);
+        const resolved = resolveServiceVariant(s, defId);
         return `
-      <div class="service-row service-row--static">
-        ${
-          thumb
-            ? `<img class="service-row__thumb" src="${escapeHtml(thumb)}" alt="" loading="lazy" />`
-            : `<span class="service-row__thumb service-row__thumb--empty" aria-hidden="true"></span>`
-        }
-        <div class="service-row__static-main">
-          <span class="service-row__body">
-            <span class="service-row__name">${escapeHtml(s.name)}</span>
-            <span class="service-row__sub">${escapeHtml(serviceOfferText(s))}</span>
-          </span>
-          <span class="service-row__meta">
-            <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
-            <span class="service-row__price">${escapeHtml(formatPrice(s.price))}</span>
-          </span>
+      <div class="service-row service-row--static${variants.length ? " service-row--has-variants" : ""}">
+        <div class="service-row__top">
+          ${
+            thumb
+              ? `<img class="service-row__thumb" src="${escapeHtml(thumb)}" alt="" loading="lazy" />`
+              : `<span class="service-row__thumb service-row__thumb--empty" aria-hidden="true"></span>`
+          }
+          <div class="service-row__static-main">
+            <span class="service-row__body">
+              <span class="service-row__name">${escapeHtml(s.name)}</span>
+              <span class="service-row__sub">${escapeHtml(serviceListSummary(s))}</span>
+            </span>
+            <span class="service-row__meta">
+              <span class="service-row__dur">${escapeHtml(formatDuration(resolved.durationMin))}</span>
+              <span class="service-row__price">${escapeHtml(formatPrice(resolved.price))}</span>
+            </span>
+          </div>
+          <button type="button" class="service-row__edit" data-action="edit-service" data-service-id="${escapeHtml(s.id)}" aria-label="Edytuj ${escapeHtml(s.name)}" title="Edytuj">
+            <span class="service-row__edit-icon" aria-hidden="true"></span>
+          </button>
         </div>
-        <button type="button" class="service-row__edit" data-action="edit-service" data-service-id="${escapeHtml(s.id)}" aria-label="Edytuj ${escapeHtml(s.name)}" title="Edytuj">
-          <span class="service-row__edit-icon" aria-hidden="true"></span>
-        </button>
+        ${renderServiceVariantCarousel(s, resolved.id, { interactive: false })}
       </div>`;
       })
       .join("");
@@ -5907,42 +6055,69 @@
 
     const name = String(form.elements.name && form.elements.name.value || "").trim();
     const description = String(form.elements.description && form.elements.description.value || "").trim();
-    const durationMin = Number(form.elements.durationMin && form.elements.durationMin.value);
-    const priceRaw = form.elements.price && form.elements.price.value;
-    const price = priceRaw === "" || priceRaw == null ? null : Number(priceRaw);
+    const variants = readServiceEditVariantsFromForm(form);
     const photos = getEditServicePhotos();
+    const first = variants[0];
 
     if (!name) {
       showToast("Podaj nazwę usługi.");
       return;
     }
-    if (!Number.isFinite(durationMin) || durationMin < 5) {
-      showToast("Podaj poprawny czas trwania.");
-      return;
+    for (let i = 0; i < variants.length; i++) {
+      const v = variants[i];
+      if (!Number.isFinite(v.durationMin) || v.durationMin < 5) {
+        showToast("Podaj poprawny czas trwania.");
+        return;
+      }
+      if (v.price != null && (!Number.isFinite(v.price) || v.price < 0)) {
+        showToast("Podaj poprawną cenę.");
+        return;
+      }
     }
-    if (price != null && (!Number.isFinite(price) || price < 0)) {
-      showToast("Podaj poprawną cenę.");
-      return;
-    }
+
+    const durationMin = Math.round(first.durationMin);
+    const price = first.price;
 
     if (isNew) {
       if (!Array.isArray(p.services)) p.services = [];
       s = {
         id: "svc-" + Date.now().toString(36),
         name: name,
-        durationMin: Math.round(durationMin),
+        durationMin: durationMin,
         price: price,
         photos: photos,
       };
       if (description) s.description = description;
+      if (variants.length > 1) {
+        s.variants = variants.map(function (v, i) {
+          return {
+            id: s.id + "-v" + (i + 1),
+            durationMin: Math.round(v.durationMin),
+            price: v.price,
+            label: v.label || "",
+          };
+        });
+      }
       p.services.push(s);
     } else {
       s.name = name;
       s.description = description || undefined;
       delete s.subtitle;
-      s.durationMin = Math.round(durationMin);
+      s.durationMin = durationMin;
       s.price = price;
       s.photos = photos;
+      if (variants.length > 1) {
+        s.variants = variants.map(function (v, i) {
+          return {
+            id: v.id && String(v.id).indexOf(s.id) === 0 ? v.id : s.id + "-v" + (i + 1),
+            durationMin: Math.round(v.durationMin),
+            price: v.price,
+            label: v.label || "",
+          };
+        });
+      } else {
+        delete s.variants;
+      }
     }
 
     if (window.AppState.params.provider) {
@@ -7955,17 +8130,28 @@
     if (!draft) return;
     const p = getProviderBySlug(draft.slug);
     if (!p) return;
+    ensureDraftServiceVariants(draft);
 
     const ids = draft.serviceIds || [];
     const idx = ids.indexOf(serviceId);
     const multi =
       mode === "multi" || (mode !== "single" && (!!p.multiSelect || !!draft.multiSelectMode));
+    const svc = (p.services || []).find(function (s) {
+      return s.id === serviceId;
+    });
 
     if (!multi) {
       draft.serviceIds = idx === -1 ? [serviceId] : [];
+      if (idx === -1 && svc) selectedVariantIdForService(draft, svc);
+      if (idx !== -1) delete draft.serviceVariants[serviceId];
     } else {
-      if (idx === -1) ids.push(serviceId);
-      else ids.splice(idx, 1);
+      if (idx === -1) {
+        ids.push(serviceId);
+        if (svc) selectedVariantIdForService(draft, svc);
+      } else {
+        ids.splice(idx, 1);
+        delete draft.serviceVariants[serviceId];
+      }
       draft.serviceIds = ids;
     }
     draft.slotId = null;
@@ -7981,6 +8167,30 @@
       }
       return;
     }
+    saveState();
+    if (!refreshBookingDraftUI()) renderAll();
+  }
+
+  function pickServiceVariant(serviceId, variantId) {
+    const draft = window.AppState.draft;
+    if (!draft || !serviceId || !variantId) return;
+    const p = getProviderBySlug(draft.slug);
+    if (!p) return;
+    const svc = (p.services || []).find(function (s) {
+      return s.id === serviceId;
+    });
+    if (!svc || !serviceVariants(svc).some(function (v) {
+      return v.id === variantId;
+    })) {
+      return;
+    }
+    ensureDraftServiceVariants(draft);
+    draft.serviceVariants[serviceId] = variantId;
+    if ((draft.serviceIds || []).indexOf(serviceId) === -1) {
+      const multi = !!p.multiSelect || !!draft.multiSelectMode;
+      draft.serviceIds = multi ? (draft.serviceIds || []).concat([serviceId]) : [serviceId];
+    }
+    draft.slotId = null;
     saveState();
     if (!refreshBookingDraftUI()) renderAll();
   }
@@ -8587,11 +8797,6 @@
         showSimulator();
         break;
       case "switch-role": switchRole(d.role); break;
-      case "toggle-booking-ui-variant":
-        event.preventDefault();
-        toggleBookingUiVariant();
-        break;
-
       case "go-screen": goScreen(d.screen); break;
       case "toggle-app-menu":
         event.preventDefault();
@@ -8689,6 +8894,10 @@
         break;
       case "toggle-service": toggleService(d.serviceId); break;
       case "toggle-service-check": toggleServiceCheck(d.serviceId); break;
+      case "pick-service-variant":
+        event.preventDefault();
+        pickServiceVariant(d.serviceId, d.variantId);
+        break;
       case "toggle-service-desc": toggleServiceDesc(d.serviceId); break;
       case "preview-service-photos":
         event.preventDefault();
@@ -8953,6 +9162,14 @@
       case "cancel-edit-service":
         event.preventDefault();
         cancelEditService();
+        break;
+      case "add-service-variant":
+        event.preventDefault();
+        addServiceVariant();
+        break;
+      case "remove-service-variant":
+        event.preventDefault();
+        removeServiceVariant(d.index);
         break;
       case "save-service":
         event.preventDefault();
