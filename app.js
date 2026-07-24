@@ -5934,7 +5934,7 @@
             <span class="service-row__edit-icon" aria-hidden="true"></span>
           </button>
         </div>
-        ${renderServiceVariantCarousel(s, resolved.id, { interactive: false })}
+        ${renderServiceVariantCarousel(s, null, { interactive: false })}
       </div>`;
       })
       .join("");
