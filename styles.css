@@ -5770,15 +5770,24 @@ body.service-photo-preview-open {
   background: var(--surface);
 }
 
-/* Bez guttera godzin — pełna szerokość na 7 dni (nadpisuje .gcal-week__head: 3.1rem 1fr) */
+/* Bez guttera godzin — pełna szerokość na 7 dni (musi wygrywać z mobile .gcal-week__head: 2.45rem 1fr) */
 .app-screen--my-cal .my-cal-week__head,
-.app-screen--my-cal .gcal-week__head {
+.app-screen--my-cal .gcal-week__head,
+.app-fullscreen .app-screen--my-cal .gcal-week__head,
+.device-frame[data-view="mobile"] .app-screen--my-cal .gcal-week__head {
   display: grid;
   grid-template-columns: 1fr;
 }
 
-.app-screen--my-cal .gcal-week__days {
+.app-screen--my-cal .gcal-week__days-clip {
   width: 100%;
+  min-width: 0;
+}
+
+.app-screen--my-cal .gcal-week__days {
+  display: grid;
+  width: 100%;
+  min-width: 0;
   --gcal-days: 7;
   grid-template-columns: repeat(7, minmax(0, 1fr));
 }
@@ -6784,6 +6793,10 @@ body.service-photo-preview-open {
     grid-template-columns: 2.45rem 1fr;
   }
 
+  .app-fullscreen .app-screen--my-cal .gcal-week__head {
+    grid-template-columns: 1fr;
+  }
+
   .app-fullscreen .gcal__hour-label {
     right: 0.2rem;
     font-size: 0.62rem;
@@ -6799,6 +6812,10 @@ body.service-photo-preview-open {
 .device-frame[data-view="mobile"] .gcal-week__head,
 .device-frame[data-view="mobile"] .gcal-week__timeline {
   grid-template-columns: 2.45rem 1fr;
+}
+
+.device-frame[data-view="mobile"] .app-screen--my-cal .gcal-week__head {
+  grid-template-columns: 1fr;
 }
 
 .device-frame[data-view="mobile"] .gcal__hour-label {
