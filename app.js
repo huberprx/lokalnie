@@ -3115,8 +3115,7 @@
       fromMin: fromMin,
       toMin: toMin,
     });
-    window.AppState.provCalDate = dateISO;
-    window.AppState.provCalPickerMonth = dateISO.slice(0, 7);
+    // Nie zmieniaj provCalDate — inaczej okno 1/3/5 dni skacze do klikniętej kolumny.
     saveState();
     renderAll();
     hapticTap(12);
@@ -9260,21 +9259,35 @@
       if (gcal) gcal.classList.add("gcal--drag-active");
       captureDragPointer();
       if (!isProvCalSlotSelected(drag.el)) {
-        selectProvCalSlot(
-          {
-            kind: "booking",
-            bookingId: drag.bookingId,
-            dateISO: drag.dateISO,
-            fromMin: drag.startFrom,
-            toMin: drag.startTo,
-          },
-          { force: true }
-        );
+        if (drag.kind === "free") {
+          selectProvCalSlot(
+            {
+              kind: "free",
+              dateISO: drag.dateISO,
+              fromMin: drag.startFrom,
+              toMin: drag.startTo,
+            },
+            { force: true }
+          );
+        } else {
+          selectProvCalSlot(
+            {
+              kind: "booking",
+              bookingId: drag.bookingId,
+              dateISO: drag.dateISO,
+              fromMin: drag.startFrom,
+              toMin: drag.startTo,
+            },
+            { force: true }
+          );
+        }
       } else {
         hapticTap(16);
       }
-      if (!drag.weekView) {
+      if (!drag.weekView && drag.kind === "booking") {
         highlightProvCalDropTargets(drag.bookingId, drag.dateISO, drag.duration);
+        updateProvCalDragTime(drag.startFrom);
+      } else if (!drag.weekView) {
         updateProvCalDragTime(drag.startFrom);
       }
     }
@@ -9316,12 +9329,23 @@
       }
       applyProvCalSlotLayout(drag.el, newFrom, newTo);
       // Kolor kafła = lokalizacja dostępności pod aktualną pozycją (na żywo przy przeciąganiu).
-      applyProvCalEventAvailTone(drag.el, drag.dateISO, newFrom, newTo);
+      if (drag.kind === "booking") {
+        applyProvCalEventAvailTone(drag.el, drag.dateISO, newFrom, newTo);
+      }
       if (!drag.weekView) updateProvCalDragTime(newFrom);
-      drag.el.classList.toggle(
-        "gcal__event--invalid",
-        bookingOverlapsOthers(drag.bookingId, drag.dateISO, newFrom, newTo)
-      );
+      if (drag.kind === "booking") {
+        drag.el.classList.toggle(
+          "gcal__event--invalid",
+          bookingOverlapsOthers(drag.bookingId, drag.dateISO, newFrom, newTo)
+        );
+      }
+      drag.el.setAttribute("data-date", drag.dateISO);
+      if (drag.kind === "free") {
+        drag.el.setAttribute(
+          "aria-label",
+          "Zaznaczony przedział " + minToTime(newFrom) + "–" + minToTime(newTo)
+        );
+      }
     }
 
     function autoScrollTick() {
@@ -9366,6 +9390,20 @@
         renderAll();
         return;
       }
+      if (drag.kind === "free") {
+        // Szkic: tylko zaznaczenie — bez zmiany provCalDate (okno dni nie skacze).
+        window.AppState.provCalSelection = normalizeProvCalSelection({
+          kind: "free",
+          dateISO: targetDate,
+          fromMin: newFrom,
+          toMin: newTo,
+        });
+        hapticTap(22);
+        resetDrag();
+        saveState();
+        renderAll();
+        return;
+      }
       const overlap = bookingOverlapsOthers(drag.bookingId, targetDate, newFrom, newTo);
       moveBookingTimes(drag.bookingId, newFrom, newTo, targetDate);
       const bk = (window.AppState.bookings || []).find(function (b) {
@@ -9394,6 +9432,8 @@
         if (event.button != null && event.button !== 0) return;
         // Trwający drag — nie przejmuj gestu przez „Wolne” / inny slot (Safari).
         if (drag.armed) return;
+        // Uchwyt resize szkicu — osobna gestyka, nie drag całego bloku.
+        if (event.target.closest && event.target.closest('[data-role="prov-cal-resize"]')) return;
         const el = event.target.closest && event.target.closest('[data-role="prov-cal-slot"]');
         if (!el) return;
         if (!el.closest('[data-role="prov-cal-body"]')) return;
@@ -9404,7 +9444,7 @@
         drag.active = true;
         drag.el = el;
         drag.kind = kind;
-        drag.allowMove = kind === "booking";
+        drag.allowMove = kind === "booking" || kind === "free";
         drag.bookingId = el.getAttribute("data-booking-id");
         drag.dateISO = el.getAttribute("data-date") || ensureProvCalDate();
         drag.startDate = drag.dateISO;
@@ -9956,7 +9996,8 @@
         if (swipe.settling) return;
         if (event.touches.length !== 1) return;
         if (!canSwipe(event.target)) return;
-        if (event.target.closest('[data-role="prov-cal-slot"][data-kind="booking"]')) return;
+        // Wizyta lub szkic wolnego przedziału (z uchwytami) — nie startuj swipe dnia.
+        if (event.target.closest('[data-role="prov-cal-slot"], [data-role="prov-cal-resize"]')) return;
         const gcal = event.target.closest("[data-prov-cal-day-swipe]");
         if (!gcal || gcal.classList.contains("gcal--sliding")) return;
         swipe.active = true;
