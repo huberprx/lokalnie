@@ -446,8 +446,9 @@
         // Dni wolne / bez slotów w przyszłości wyglądają jak zwykłe, ale są nieklikalne.
         const past = dateISO < today;
         const bookable = open && !past;
+        const isToday = dateISO === today;
         return `
-        <button type="button" class="date-chip${on ? " date-chip--active" : ""}${red ? " date-chip--holiday" : ""}${past ? " date-chip--closed" : ""}${!bookable && !past ? " date-chip--unavailable" : ""}"
+        <button type="button" class="date-chip${on ? " date-chip--active" : ""}${isToday ? " date-chip--today" : ""}${red ? " date-chip--holiday" : ""}${past ? " date-chip--closed" : ""}${!bookable && !past ? " date-chip--unavailable" : ""}"
           data-date="${escapeHtml(dateISO)}"${bookable ? ` data-action="${escapeHtml(action)}"` : " disabled aria-disabled=\"true\""}>
           <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span>
           <span class="date-chip__day">${dt.getDate()}</span>
@@ -2182,13 +2183,15 @@
           <p class="search-filters__empty">Wybierz kategorię z podkategoriami (np. Uroda).</p>
         </div>`;
 
+    const todayISO = demoTodayISO();
     const dateChips = searchFilterDateOptions()
       .map(function (dateISO) {
         const dt = new Date(dateISO + "T12:00:00");
         const on = selectedDates.indexOf(dateISO) !== -1;
         const red = isRedCalendarDay(dateISO);
+        const isToday = dateISO === todayISO;
         return `
-          <button type="button" class="date-chip${on ? " date-chip--active" : ""}${red ? " date-chip--holiday" : ""}"
+          <button type="button" class="date-chip${on ? " date-chip--active" : ""}${isToday ? " date-chip--today" : ""}${red ? " date-chip--holiday" : ""}"
             data-action="toggle-filter-date" data-date="${escapeHtml(dateISO)}" aria-pressed="${on ? "true" : "false"}">
             <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span>
             <span class="date-chip__day">${dt.getDate()}</span>
@@ -2321,7 +2324,7 @@
     const first = new Date(year, month - 1, 1);
     const daysInMonth = new Date(year, month, 0).getDate();
     const startPad = (first.getDay() + 6) % 7;
-    const todayISO = new Date().toISOString().slice(0, 10);
+    const todayISO = demoTodayISO();
 
     const totalCells = 7 * 6;
     let cells = "";
@@ -2336,7 +2339,7 @@
       const red = isRedCalendarDay(dateISO);
       cells += `
         <button type="button"
-          class="cal__day cal__day--selectable${hasVisit ? " cal__day--visit" : ""}${selected ? " cal__day--selected" : ""}${isToday && !selected ? " cal__day--today" : ""}${red ? " cal__day--holiday" : ""}"
+          class="cal__day cal__day--selectable${hasVisit ? " cal__day--visit" : ""}${selected ? " cal__day--selected" : ""}${isToday ? " cal__day--today" : ""}${red ? " cal__day--holiday" : ""}"
           data-action="my-cal-pick-date" data-date="${escapeHtml(dateISO)}"
           aria-pressed="${selected ? "true" : "false"}"
           aria-label="${day}${hasVisit ? ", wizyty" : ""}">
@@ -2675,6 +2678,7 @@
     const first = new Date(year, month - 1, 1);
     const daysInMonth = new Date(year, month, 0).getDate();
     const startPad = (first.getDay() + 6) % 7;
+    const todayISO = demoTodayISO();
 
     const totalCells = 7 * 6;
     let cells = "";
@@ -2685,12 +2689,13 @@
       const dateISO = `${year}-${pad(month)}-${pad(day)}`;
       const available = availSet.has(dateISO);
       const selected = dateISO === activeDate;
+      const isToday = dateISO === todayISO;
       const red = isRedCalendarDay(dateISO);
       cells += `
         <button type="button"
-          class="cal__day${selected ? " cal__day--selected" : ""}${red ? " cal__day--holiday" : ""}${available ? " cal__day--available" : " cal__day--disabled"}"
+          class="cal__day${selected ? " cal__day--selected" : ""}${isToday ? " cal__day--today" : ""}${red ? " cal__day--holiday" : ""}${available ? " cal__day--available" : " cal__day--disabled"}"
           data-action="${available ? "pick-date" : ""}" data-date="${escapeHtml(dateISO)}" ${available ? "" : "disabled"}>
-          ${day}
+          <span class="cal__day-num">${day}</span>
         </button>`;
     }
     const filled = startPad + daysInMonth;
@@ -2699,7 +2704,7 @@
     }
 
     return `
-      <div class="cal">
+      <div class="cal cal--booking">
         <div class="cal__nav">
           <button type="button" class="cal__nav-btn" data-action="cal-prev" aria-label="Poprzedni miesiąc">‹</button>
           <span class="cal__title">${escapeHtml(MONTHS[month - 1])} ${year}</span>
@@ -2710,13 +2715,20 @@
       </div>`;
   }
 
+  function renderTimeSlotPlace(provider, slot) {
+    const place = escapeHtml((slot && slot.locationLabel) || "—");
+    const tone = slot && slot.locationId ? locationToneClass(provider, slot.locationId) : "";
+    return `<span class="time-row__place${tone ? " " + tone : ""}"><span class="time-row__loc-dot" aria-hidden="true"></span>${place}</span>`;
+  }
+
   function renderTimeSlots(slots, draft, opts) {
     opts = opts || {};
     const mobile = !!opts.mobile;
+    const provider = draft && draft.slug ? getProviderBySlug(draft.slug) : null;
     return slots
       .map(function (s) {
         const range = `${escapeHtml(s.from)}→${escapeHtml(s.to)}`;
-        const place = escapeHtml(s.locationLabel || "—");
+        const placeHtml = renderTimeSlotPlace(provider, s);
         if (mobile) {
           const selected = draft && draft.slotId === s.id;
           return `
@@ -2724,7 +2736,7 @@
           aria-label="Wybierz ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${selected ? "true" : "false"}">
           <span class="time-row__info">
             <span class="time-row__range">${range}</span>
-            <span class="time-row__place">${place}</span>
+            ${placeHtml}
           </span>
         </button>`;
         }
@@ -2732,7 +2744,7 @@
         <div class="time-row">
           <div class="time-row__info">
             <span class="time-row__range">${range}</span>
-            <span class="time-row__place">${place}</span>
+            ${placeHtml}
           </div>
           <button type="button" class="btn btn--primary btn--sm time-row__btn" data-action="book-slot" data-slot="${escapeHtml(s.id)}">Rezeruj</button>
         </div>`;
@@ -2850,7 +2862,7 @@
                 <h3 class="booking__label booking__label--caps">Wybierz datę</h3>
                 <span class="booking__month" data-role="booking-mobile-month">${escapeHtml(monthLabelFromISO(ctx.activeDate || ctx.availDates[0]))}</span>
               </div>
-              <div class="date-strip" data-role="booking-date-strip">${renderDateStripHtml(ctx.availDates, ctx.activeDate)}</div>
+              <div class="date-strip date-strip--booking" data-role="booking-date-strip">${renderDateStripHtml(ctx.availDates, ctx.activeDate)}</div>
 
               <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>Wolne terminy</h3>
               <div class="time-list time-list--horizontal" data-role="booking-mobile-times"${ctx.activeDate ? "" : " hidden"}>${ctx.activeDate ? ctx.timeListMobile || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>` : ""}</div>
@@ -4198,7 +4210,7 @@
       const red = isSunday(dateISO) || isRedCalendarDay(dateISO);
       cells += `
         <button type="button"
-          class="gcal-month__day${selected ? " gcal-month__day--on" : ""}${isToday && !selected ? " gcal-month__day--today" : ""}${hasVisit ? " gcal-month__day--busy" : ""}${red ? " gcal-month__day--red" : ""}"
+          class="gcal-month__day${selected ? " gcal-month__day--on" : ""}${isToday ? " gcal-month__day--today" : ""}${hasVisit ? " gcal-month__day--busy" : ""}${red ? " gcal-month__day--red" : ""}"
           data-action="prov-cal-pick-date" data-date="${escapeHtml(dateISO)}"
           aria-pressed="${selected ? "true" : "false"}"
           aria-label="${day}${hasVisit ? ", wizyty" : ""}">
@@ -5342,7 +5354,7 @@
             aria-label="Wybierz ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${on ? "true" : "false"}">
             <span class="time-row__info">
               <span class="time-row__range">${escapeHtml(s.from)}→${escapeHtml(s.to)}</span>
-              <span class="time-row__place">${escapeHtml(s.locationLabel || "—")}</span>
+              ${renderTimeSlotPlace(p, s)}
             </span>
           </button>`;
             })
@@ -5452,7 +5464,7 @@
                 <h3 class="booking__label booking__label--caps">Wybierz datę</h3>
                 <span class="booking__month" data-role="prov-cal-add-month">${escapeHtml(monthLabelFromISO(activeDate || availDates[0]))}</span>
               </div>
-              <div class="date-strip" data-role="prov-cal-add-date-strip">${dateStrip}</div>
+              <div class="date-strip date-strip--booking" data-role="prov-cal-add-date-strip">${dateStrip}</div>
 
               <h3 class="booking__label booking__label--caps"${hasSvc && activeDate ? "" : " hidden"}>Wolne terminy</h3>
               <div class="time-list time-list--horizontal"${hasSvc && activeDate ? "" : " hidden"}>${timeList}</div>
@@ -5572,12 +5584,14 @@
     const activeDate = req._proposeDate && availDays.some((d) => d.dateISO === req._proposeDate) ? req._proposeDate : (availDays[0] && availDays[0].dateISO);
     const slots = activeDate ? computeSlots(p, activeDate, totalDur) : [];
 
+    const todayISO = demoTodayISO();
     const dateStrip = availDays
       .map((d) => {
         const dt = new Date(d.dateISO + "T00:00:00");
         const on = d.dateISO === activeDate;
         const red = isRedCalendarDay(d.dateISO);
-        return `<button type="button" class="date-chip${on ? " date-chip--active" : ""}${red ? " date-chip--holiday" : ""}" data-action="propose-date" data-request-id="${escapeHtml(req.id)}" data-date="${escapeHtml(d.dateISO)}">
+        const isToday = d.dateISO === todayISO;
+        return `<button type="button" class="date-chip${on ? " date-chip--active" : ""}${isToday ? " date-chip--today" : ""}${red ? " date-chip--holiday" : ""}" data-action="propose-date" data-request-id="${escapeHtml(req.id)}" data-date="${escapeHtml(d.dateISO)}">
           <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span><span class="date-chip__day">${dt.getDate()}</span></button>`;
       })
       .join("");
@@ -5602,7 +5616,7 @@
               <span class="booking__svc">${escapeHtml(req.serviceNames.join(", "))}</span>
             </div>
             <h3 class="booking__label">Dzień</h3>
-            <div class="date-strip">${dateStrip || `<p class="empty-note">Brak dostępności.</p>`}</div>
+            <div class="date-strip date-strip--booking">${dateStrip || `<p class="empty-note">Brak dostępności.</p>`}</div>
             ${activeDate ? `<h3 class="booking__label">Godzina · ${escapeHtml(formatDateLong(activeDate))}</h3><div class="time-list">${timeList || `<p class="empty-note">Brak wolnych godzin.</p>`}</div>` : ""}
           </div>
         </div>
