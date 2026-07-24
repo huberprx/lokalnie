@@ -9483,16 +9483,21 @@
       const days = provCalVisibleDayList(ensureProvCalDate(), ensureProvCalVisibleDays());
       if (!days.length) return;
       const edgeDate = dir < 0 ? days[0] : days[days.length - 1];
-      const nextDate = isoAddDays(edgeDate, dir);
-
-      drag.moved = true;
-      drag.dateISO = nextDate;
-      syncDragLiveToState(nextDate, fromMin, toMin);
+      // Przesuń okno o 1 dzień za skraj — jak GCal: kafelek zostaje pod palcem na nowej krawędzi.
+      const advanceTo = isoAddDays(edgeDate, dir);
 
       const body = document.querySelector('[data-role="prov-cal-body"]');
       const scrollTop = body ? body.scrollTop : 0;
       // Bez haptic (shiftProvCalDate) — przy trzymaniu na krawędzi byłby spam.
-      pickProvCalDate(nextDate, { keepSelection: true, render: false });
+      pickProvCalDate(advanceTo, { keepSelection: true, render: false });
+
+      const newDays = provCalVisibleDayList(ensureProvCalDate(), ensureProvCalVisibleDays());
+      if (!newDays.length) return;
+      const pinDate = dir < 0 ? newDays[0] : newDays[newDays.length - 1];
+
+      drag.moved = true;
+      drag.dateISO = pinDate;
+      syncDragLiveToState(pinDate, fromMin, toMin);
       renderAll();
       const bodyAfter = document.querySelector('[data-role="prov-cal-body"]');
       if (bodyAfter) bodyAfter.scrollTop = scrollTop;
