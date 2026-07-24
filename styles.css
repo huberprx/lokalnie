@@ -5660,10 +5660,11 @@ body.service-photo-preview-open {
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
-/* Dziś — soft akcentu w kółku */
+/* Dziś — tylko obwódka akcentu; tekst zwykły (niedziela: red przez --holiday) */
 .cal__day--today:not(.cal__day--selected) .cal__day-num {
-  background: var(--cal-today-bg);
-  color: var(--cal-today-fg);
+  background: transparent;
+  color: var(--text);
+  box-shadow: inset 0 0 0 1.5px var(--cal-today-fg);
 }
 
 /* Zaznaczony (przeglądanie) — szary w kółku */
@@ -5679,7 +5680,8 @@ body.service-photo-preview-open {
 }
 
 .cal__day.cal__day--holiday:not(.cal__day--selected) .cal__day-num,
-.cal__day--holiday:not(.cal__day--selected) .cal__day-num {
+.cal__day--holiday:not(.cal__day--selected) .cal__day-num,
+.cal__day--today.cal__day--holiday:not(.cal__day--selected) .cal__day-num {
   color: var(--danger);
 }
 
@@ -6943,11 +6945,11 @@ body.service-photo-preview-open {
   opacity: 1;
 }
 
-/* Dostępność: dziś = soft akcentu; wybór to tydzień (nie dzień) */
+/* Dostępność: dziś = obwódka akcentu; wybór to tydzień (nie dzień) */
 .gcal-month--avail .gcal-month__day--today .gcal-month__day-num {
-  background: var(--cal-today-bg);
-  color: var(--cal-today-fg);
-  box-shadow: none;
+  background: transparent;
+  color: var(--text);
+  box-shadow: inset 0 0 0 1.5px var(--cal-today-fg);
 }
 
 /* Dni poprzedniego / następnego miesiąca — zawsze 6 tygodni */
@@ -7025,10 +7027,11 @@ body.service-photo-preview-open {
   pointer-events: none;
 }
 
-/* Dziś — soft akcentu w kółku */
+/* Dziś — tylko obwódka akcentu; tekst zwykły (niedziela: red) */
 .gcal-month__day--today:not(.gcal-month__day--on) .gcal-month__day-num {
-  background: var(--cal-today-bg);
-  color: var(--cal-today-fg);
+  background: transparent;
+  color: var(--text);
+  box-shadow: inset 0 0 0 1.5px var(--cal-today-fg);
 }
 
 /* Zaznaczony (przeglądanie) — szary w kółku */
@@ -7038,6 +7041,10 @@ body.service-photo-preview-open {
 }
 
 .gcal-month__day--red:not(.gcal-month__day--on) {
+  color: var(--danger);
+}
+
+.gcal-month__day--today.gcal-month__day--red:not(.gcal-month__day--on) .gcal-month__day-num {
   color: var(--danger);
 }
 
@@ -7276,13 +7283,19 @@ body.service-photo-preview-open {
 }
 
 .gcal-week__dayhead--today:not(.gcal-week__dayhead--sel) .gcal-week__dow {
-  color: var(--cal-today-fg);
+  color: var(--text);
 }
 
-/* Dziś — soft akcentu; zaznaczony — szary (wygrywa nad dziś) */
+/* Dziś — obwódka akcentu; zaznaczony — szary (wygrywa nad dziś) */
 .gcal-week__dayhead--today:not(.gcal-week__dayhead--sel) .gcal-week__num {
-  background: var(--cal-today-bg);
-  color: var(--cal-today-fg);
+  background: transparent;
+  color: var(--text);
+  box-shadow: inset 0 0 0 1.5px var(--cal-today-fg);
+}
+
+.gcal-week__dayhead--today.gcal-week__dayhead--sun:not(.gcal-week__dayhead--sel) .gcal-week__dow,
+.gcal-week__dayhead--today.gcal-week__dayhead--sun:not(.gcal-week__dayhead--sel) .gcal-week__num {
+  color: #c23b3b;
 }
 
 .gcal-week__dayhead--sel .gcal-week__num {
@@ -7890,15 +7903,15 @@ body.prov-cal-resizing * {
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
-/* Dziś — soft (słabszy sygnał niż wybrane) */
+/* Dziś — tylko obwódka akcentu; tekst zwykły (niedziela: red przez --holiday) */
 .date-chip--today:not(.date-chip--active) .date-chip__dow {
-  color: var(--cal-today-fg);
+  color: var(--text);
 }
 
 .date-chip--today:not(.date-chip--active) .date-chip__day {
-  background: var(--cal-today-bg);
-  color: var(--cal-today-fg);
-  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--cal-today-fg) 45%, transparent);
+  background: transparent;
+  color: var(--text);
+  box-shadow: inset 0 0 0 1.5px var(--cal-today-fg);
 }
 
 /* Zaznaczony (filtry / przeglądanie) — szary w kółku */
@@ -7929,7 +7942,9 @@ body.prov-cal-resizing * {
 }
 
 .date-chip--holiday:not(.date-chip--active) .date-chip__dow,
-.date-chip--holiday:not(.date-chip--active) .date-chip__day {
+.date-chip--holiday:not(.date-chip--active) .date-chip__day,
+.date-chip--today.date-chip--holiday:not(.date-chip--active) .date-chip__dow,
+.date-chip--today.date-chip--holiday:not(.date-chip--active) .date-chip__day {
   color: var(--danger);
 }
 
