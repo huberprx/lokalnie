@@ -3865,9 +3865,20 @@ body.avatar-preview-open {
   color: var(--text);
 }
 
+.provider-card__switch--on {
+  background: var(--surface-2);
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
 .provider-card__switch-icon {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='7' width='20' height='10' rx='5'/%3E%3Ccircle cx='9' cy='12' r='3' fill='black' stroke='none'/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='7' width='20' height='10' rx='5'/%3E%3Ccircle cx='9' cy='12' r='3' fill='black' stroke='none'/%3E%3C/svg%3E");
+}
+
+.provider-card__switch--on .provider-card__switch-icon {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='7' width='20' height='10' rx='5'/%3E%3Ccircle cx='15' cy='12' r='3' fill='black' stroke='none'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='7' width='20' height='10' rx='5'/%3E%3Ccircle cx='15' cy='12' r='3' fill='black' stroke='none'/%3E%3C/svg%3E");
 }
 
 /* ---- Popover menu karty usługodawcy ---- */
@@ -4109,7 +4120,7 @@ body.avatar-preview-open {
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.service-row:has(.service-row__check) {
+.service-row:has(.service-row__check):not(.service-row--booking-b) {
   padding-bottom: 0;
 }
 
@@ -4201,9 +4212,289 @@ body.avatar-preview-open {
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20h9'/%3E%3Cpath d='M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
+/* Wariant B listy ofert (rezerwacja) — układ jak Usługi usługodawcy */
+.service-row--booking-b {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0.55rem 0.6rem;
+  cursor: default;
+}
+
+.service-row--booking-b .service-row__top {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.service-row--booking-b .service-row__check--radio {
+  width: 2rem;
+  height: 2rem;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.service-row--booking-b .service-row__check--radio .service-row__check-visual {
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 50%;
+  border: 1.5px solid rgba(0, 0, 0, 0.22);
+  background: transparent;
+  opacity: 1;
+  box-shadow: none;
+}
+
+.service-row--booking-b .service-row__check--radio .service-row__check-visual::after {
+  width: 0.48rem;
+  height: 0.48rem;
+  margin: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  transform: none;
+}
+
+.service-row--booking-b .service-row__check--radio:hover .service-row__check-visual {
+  opacity: 1;
+  border-color: var(--accent-client);
+}
+
+.service-row--booking-b .service-row__check--radio.service-row__check--on .service-row__check-visual {
+  opacity: 1;
+  border-color: var(--accent-client);
+  background: color-mix(in srgb, var(--accent-client) 12%, var(--surface));
+  box-shadow: none;
+}
+
+.service-row--booking-b .service-row__check--radio.service-row__check--on .service-row__check-visual::after {
+  background: var(--accent-client);
+  border: none;
+}
+
+.service-row--booking-b .service-row__thumb--btn {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--surface-2);
+}
+
+.service-row--booking-b .service-row__thumb--btn:hover {
+  border-color: color-mix(in srgb, var(--accent-client) 45%, var(--border));
+}
+
+.service-row--booking-b .service-row__thumb-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.service-row--booking-b .service-row__static-main--btn {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.service-row--booking-b .service-row__static-main--btn:disabled {
+  cursor: default;
+}
+
+.service-row--booking-b .service-row__detail {
+  margin-top: 0.55rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.service-row--booking-b .service-row__detail[hidden] {
+  display: none !important;
+}
+
 .service-list__add {
   width: 100%;
   margin-top: 0.85rem;
+}
+
+/* Panel karuzeli zdjęć usługi (wariant B) */
+.service-photo-preview {
+  position: fixed;
+  inset: 0;
+  z-index: 11050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+}
+
+.service-photo-preview[hidden] {
+  display: none !important;
+}
+
+.service-photo-preview__backdrop {
+  appearance: none;
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: rgba(15, 23, 42, 0.62);
+  cursor: pointer;
+}
+
+.service-photo-preview__dialog {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.65rem;
+  width: min(100%, 22.5rem);
+  max-height: min(88vh, 34rem);
+  padding: 1rem 1rem 0.9rem;
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.28);
+  animation: avatar-preview-in 0.2s ease;
+}
+
+.service-photo-preview__close {
+  appearance: none;
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.service-photo-preview__close:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+.service-photo-preview__close-icon {
+  display: block;
+  width: 0.9rem;
+  height: 0.9rem;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M18 6L6 18M6 6l12 12'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M18 6L6 18M6 6l12 12'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.service-photo-preview__title {
+  margin: 0 2rem 0 0;
+  font-size: 0.95rem;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.25;
+}
+
+.service-photo-preview__stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 14rem;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.service-photo-preview__img {
+  display: block;
+  width: 100%;
+  max-height: min(58vh, 26rem);
+  object-fit: contain;
+  background: #0f172a08;
+}
+
+.service-photo-preview__empty {
+  padding: 2rem 1rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.service-photo-preview__nav {
+  appearance: none;
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 2.15rem;
+  height: 2.15rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  transform: translateY(-50%);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+}
+
+.service-photo-preview__nav:hover {
+  background: var(--surface);
+}
+
+.service-photo-preview__nav--prev {
+  left: 0.45rem;
+}
+
+.service-photo-preview__nav--next {
+  right: 0.45rem;
+}
+
+.service-photo-preview__nav--prev::before,
+.service-photo-preview__nav--next::before {
+  content: "";
+  display: block;
+  width: 0.75rem;
+  height: 0.75rem;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 18l-6-6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 18l-6-6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.service-photo-preview__nav--next::before {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 18l6-6-6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 18l6-6-6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.service-photo-preview__counter {
+  margin: 0;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+body.service-photo-preview-open {
+  overflow: hidden;
 }
 
 .service-edit {

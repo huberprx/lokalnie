@@ -105,6 +105,8 @@
       availEditDrafts: {},
       appMenuOpen: false,
       clientAvatarUrl: null,
+      /** Wariant UI ekranu rezerwacji: "A" (obecny) | "B" (kopia do testów ofert). */
+      bookingUiVariant: "A",
     };
   }
 
@@ -456,6 +458,7 @@
 
   function refreshBookingServiceLists(screen, ctx) {
     const html = ctx.services;
+    const variant = (ctx && ctx.bookingUiVariant) || getBookingUiVariant();
     const mobile =
       screen.querySelector('[data-role="booking-mobile-services"]') ||
       screen.querySelector(".booking-mobile .booking__services-list");
@@ -463,9 +466,13 @@
       const scrollTop = mobile.scrollTop;
       mobile.innerHTML = html;
       mobile.scrollTop = scrollTop;
+      mobile.setAttribute("data-booking-variant", variant);
     }
     const layoutList = screen.querySelector(".booking-layout .booking__services-list");
-    if (layoutList) layoutList.innerHTML = html;
+    if (layoutList) {
+      layoutList.innerHTML = html;
+      layoutList.setAttribute("data-booking-variant", variant);
+    }
   }
 
   function clearBookingPickModeUI() {}
@@ -545,6 +552,7 @@
 
     if (window.AppState.screen.client === "booking") {
       document.querySelectorAll(".app-screen--booking").forEach(function (bookingScreen) {
+        bookingScreen.setAttribute("data-booking-variant", ctx.bookingUiVariant || getBookingUiVariant());
         if (clientUsesDesktopBookingLayout()) {
           const layout = bookingScreen.querySelector(".booking-layout");
           if (layout) {
@@ -573,6 +581,13 @@
       row.classList.toggle("service-row--expanded", expanded);
       row.querySelectorAll('[data-action="toggle-service-desc"]').forEach(function (btn) {
         btn.setAttribute("aria-expanded", expanded ? "true" : "false");
+        if (btn.classList.contains("service-row__static-main--btn")) {
+          const nameEl = row.querySelector(".service-row__name");
+          const name = nameEl ? nameEl.textContent.trim() : "usługa";
+          const expandLabel = (expanded ? "Zwiń" : "Rozwiń") + " szczegóły: " + name;
+          btn.setAttribute("aria-label", expandLabel);
+          btn.setAttribute("title", expandLabel);
+        }
       });
       const label = row.querySelector(".service-row__more-label");
       if (label) label.textContent = expanded ? "Mniej" : "Więcej";
@@ -647,10 +662,11 @@
       slots: slots,
       timeList: renderTimeSlots(slots, draft),
       timeListMobile: renderTimeSlots(slots, draft, { mobile: true }),
-      services: renderServiceRows(p, draft.serviceIds || []),
+      services: renderBookingServiceRows(p, draft.serviceIds || []),
       calendarGrid: renderCalendarGrid(p, activeDate, calMonth, availDates, totals),
       svcNames: draftServices(p).map((s) => s.name).join(", "),
       canConfirm: !!draft.slotId,
+      bookingUiVariant: getBookingUiVariant(),
     };
   }
 
@@ -686,11 +702,12 @@
 
   function renderBookingLayoutBlock(p, ctx) {
     const totals = ctx.totals;
+    const variant = (ctx && ctx.bookingUiVariant) || getBookingUiVariant();
     return `
-      <div class="booking-layout">
+      <div class="booking-layout" data-booking-variant="${escapeHtml(variant)}">
         <aside class="booking__services">
           ${renderServicesPanelHead(p, ctx.draft)}
-          <div class="booking__services-list service-list">${ctx.services}</div>
+          <div class="booking__services-list service-list" data-booking-variant="${escapeHtml(variant)}">${ctx.services}</div>
         </aside>
 
         <section class="booking__calendar">
@@ -1089,7 +1106,9 @@
 
     const infoOpen = !!(opts.bookingHeader && window.AppState.draft && window.AppState.draft.providerInfoOpen);
     const favBtn = `<button type="button" class="provider-card__action provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__action-icon provider-card__fav-icon" aria-hidden="true"></span></button>`;
-    const switchBtn = `<button type="button" class="provider-card__action provider-card__switch" data-action="switch-role" data-role="provider" aria-label="Przełącz na usługodawcę" title="Przełącz na usługodawcę"><span class="provider-card__action-icon provider-card__switch-icon" aria-hidden="true"></span></button>`;
+    const variantB = getBookingUiVariant() === "B";
+    const switchLabel = variantB ? "Wariant ofert B (włączony) — przełącz na A" : "Wariant ofert A — przełącz na B";
+    const switchBtn = `<button type="button" class="provider-card__action provider-card__switch${variantB ? " provider-card__switch--on" : ""}" data-action="toggle-booking-ui-variant" aria-label="${escapeHtml(switchLabel)}" title="${escapeHtml(switchLabel)}" aria-pressed="${variantB ? "true" : "false"}"><span class="provider-card__action-icon provider-card__switch-icon" aria-hidden="true"></span></button>`;
     const infoBtn = `<button type="button" class="provider-card__action provider-card__info${infoOpen ? " provider-card__info--open" : ""}" data-action="toggle-booking-provider-info" data-slug="${escapeHtml(p.slug)}" aria-expanded="${infoOpen ? "true" : "false"}" aria-controls="booking-provider-info" aria-label="Informacje o ${escapeHtml(p.name)}" title="Informacje"><span class="provider-card__action-icon provider-card__info-icon" aria-hidden="true"></span></button>`;
     const menuBtn = `<button type="button" class="provider-card__action provider-card__menu" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Więcej opcji dla ${escapeHtml(p.name)}" title="Więcej opcji"><span class="provider-card__action-icon provider-card__menu-icon" aria-hidden="true"></span></button>`;
 
@@ -1304,6 +1323,7 @@
             : base.availEditDrafts,
         appMenuOpen: !!stored.appMenuOpen,
         clientAvatarUrl: typeof stored.clientAvatarUrl === "string" ? stored.clientAvatarUrl : base.clientAvatarUrl,
+        bookingUiVariant: stored.bookingUiVariant === "B" ? "B" : "A",
       };
     } else {
       window.AppState = base;
@@ -2415,6 +2435,22 @@
     }
   }
 
+  function getBookingUiVariant() {
+    return window.AppState.bookingUiVariant === "B" ? "B" : "A";
+  }
+
+  function toggleBookingUiVariant() {
+    window.AppState.bookingUiVariant = getBookingUiVariant() === "B" ? "A" : "B";
+    saveState();
+    refreshBookingDraftUI();
+  }
+
+  /** Lista ofert na ekranie rezerwacji — A obecny UI, B kopia do eksperymentów. */
+  function renderBookingServiceRows(p, selectedIds) {
+    if (getBookingUiVariant() === "B") return renderServiceRowsB(p, selectedIds);
+    return renderServiceRows(p, selectedIds);
+  }
+
   function renderServiceRows(p, selectedIds) {
     const draft = window.AppState.draft;
     const expandedIds = (draft && draft.expandedServiceIds) || [];
@@ -2471,6 +2507,159 @@
         </article>`;
       })
       .join("");
+  }
+
+  /** Wariant B: układ jak lista Usług usługodawcy + checkmark, expand kliknięciem w panel. */
+  function renderServiceRowsB(p, selectedIds) {
+    const draft = window.AppState.draft;
+    const expandedIds = (draft && draft.expandedServiceIds) || [];
+
+    return (p.services || [])
+      .map(function (s) {
+        const on = selectedIds.indexOf(s.id) !== -1;
+        const expanded = expandedIds.indexOf(s.id) !== -1;
+        const detail = serviceDetailText(s);
+        const photos = servicePhotos(s);
+        const hasDesc = !!detail;
+        const thumb = photos[0] || "";
+        const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
+        const expandLabel = (expanded ? "Zwiń" : "Rozwiń") + " szczegóły: " + s.name;
+
+        const thumbHtml = thumb
+          ? `<button type="button" class="service-row__thumb service-row__thumb--btn" data-action="preview-service-photos" data-service-id="${escapeHtml(s.id)}" aria-label="Zdjęcia: ${escapeHtml(s.name)}" title="Zdjęcia">
+              <img class="service-row__thumb-img" src="${escapeHtml(thumb)}" alt="" loading="lazy" />
+            </button>`
+          : `<span class="service-row__thumb service-row__thumb--empty" aria-hidden="true"></span>`;
+
+        return `
+        <article class="service-row service-row--booking-b${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}" data-service-id="${escapeHtml(s.id)}">
+          <div class="service-row__top">
+            ${thumbHtml}
+            <button type="button" class="service-row__static-main service-row__static-main--btn"${hasDesc ? ` data-action="toggle-service-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}"` : " disabled aria-disabled=\"true\""} aria-label="${escapeHtml(hasDesc ? expandLabel : s.name)}" title="${escapeHtml(hasDesc ? expandLabel : s.name)}">
+              <span class="service-row__body">
+                <span class="service-row__name">${escapeHtml(s.name)}</span>
+                <span class="service-row__sub">${escapeHtml(s.subtitle || "")}</span>
+              </span>
+              <span class="service-row__meta">
+                <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
+                <span class="service-row__price">${escapeHtml(formatPrice(s.price))}</span>
+              </span>
+            </button>
+            <button type="button" class="service-row__check service-row__check--radio${on ? " service-row__check--on" : ""}" data-action="toggle-service-check" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
+              <span class="service-row__check-visual" aria-hidden="true"></span>
+            </button>
+          </div>
+          ${
+            hasDesc
+              ? `<div class="service-row__detail"${expanded ? "" : " hidden"}>
+                  <p class="service-row__detail-text">${escapeHtml(detail)}</p>
+                </div>`
+              : ""
+          }
+        </article>`;
+      })
+      .join("");
+  }
+
+  function ensureServicePhotoPreview() {
+    let el = document.getElementById("service-photo-preview");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "service-photo-preview";
+      el.className = "service-photo-preview";
+      el.hidden = true;
+      el.setAttribute("role", "dialog");
+      el.setAttribute("aria-modal", "true");
+      el.setAttribute("aria-label", "Zdjęcia usługi");
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+
+  function closeServicePhotoPreview() {
+    const el = document.getElementById("service-photo-preview");
+    if (!el || el.hidden) return;
+    el.hidden = true;
+    el.innerHTML = "";
+    document.body.classList.remove("service-photo-preview-open");
+  }
+
+  function renderServicePhotoPreview(serviceName, photos, index) {
+    const total = photos.length;
+    const safeIndex = total ? ((index % total) + total) % total : 0;
+    const url = total ? photos[safeIndex] : "";
+    const canNav = total > 1;
+    return `
+      <button type="button" class="service-photo-preview__backdrop" data-action="close-service-photo-preview" aria-label="Zamknij"></button>
+      <div class="service-photo-preview__dialog">
+        <button type="button" class="service-photo-preview__close" data-action="close-service-photo-preview" aria-label="Zamknij">
+          <span class="service-photo-preview__close-icon" aria-hidden="true"></span>
+        </button>
+        <p class="service-photo-preview__title">${escapeHtml(serviceName || "Zdjęcia")}</p>
+        <div class="service-photo-preview__stage" data-role="service-photo-stage" data-index="${safeIndex}">
+          ${
+            canNav
+              ? `<button type="button" class="service-photo-preview__nav service-photo-preview__nav--prev" data-action="service-photo-prev" aria-label="Poprzednie zdjęcie"></button>`
+              : ""
+          }
+          ${
+            url
+              ? `<img class="service-photo-preview__img" src="${escapeHtml(url)}" alt="${escapeHtml((serviceName || "Usługa") + " — zdjęcie " + (safeIndex + 1))}" />`
+              : `<span class="service-photo-preview__empty">Brak zdjęć</span>`
+          }
+          ${
+            canNav
+              ? `<button type="button" class="service-photo-preview__nav service-photo-preview__nav--next" data-action="service-photo-next" aria-label="Następne zdjęcie"></button>`
+              : ""
+          }
+        </div>
+        ${
+          total > 1
+            ? `<p class="service-photo-preview__counter" data-role="service-photo-counter">${safeIndex + 1} / ${total}</p>`
+            : ""
+        }
+      </div>`;
+  }
+
+  function openServicePhotoPreview(serviceId, startIndex) {
+    const draft = window.AppState.draft;
+    const p = draft && draft.slug ? getProviderBySlug(draft.slug) : null;
+    if (!p) return;
+    const service = (p.services || []).find(function (s) {
+      return s.id === serviceId;
+    });
+    if (!service) return;
+    const photos = servicePhotos(service);
+    if (!photos.length) {
+      showToast("Brak zdjęć tej usługi.");
+      return;
+    }
+    closeAvatarPreview();
+    const el = ensureServicePhotoPreview();
+    el.dataset.serviceId = serviceId;
+    el.dataset.photos = JSON.stringify(photos);
+    el.dataset.serviceName = service.name || "";
+    const index = typeof startIndex === "number" ? startIndex : 0;
+    el.setAttribute("aria-label", "Zdjęcia: " + (service.name || "usługa"));
+    el.innerHTML = renderServicePhotoPreview(service.name, photos, index);
+    el.hidden = false;
+    document.body.classList.add("service-photo-preview-open");
+  }
+
+  function shiftServicePhotoPreview(delta) {
+    const el = document.getElementById("service-photo-preview");
+    if (!el || el.hidden) return;
+    let photos = [];
+    try {
+      photos = JSON.parse(el.dataset.photos || "[]");
+    } catch (err) {
+      photos = [];
+    }
+    if (photos.length < 2) return;
+    const stage = el.querySelector('[data-role="service-photo-stage"]');
+    const current = stage ? Number(stage.getAttribute("data-index")) || 0 : 0;
+    const next = current + delta;
+    el.innerHTML = renderServicePhotoPreview(el.dataset.serviceName || "", photos, next);
   }
 
   function renderCalendarGrid(p, activeDate, calMonth, availDates, totals) {
@@ -2634,8 +2823,9 @@
     const ctx = buildBookingContext(p);
     if (!ctx) return renderSearch();
 
+    const variant = ctx.bookingUiVariant || getBookingUiVariant();
     return `
-      <div class="app-screen app-screen--client app-screen--booking">
+      <div class="app-screen app-screen--client app-screen--booking" data-booking-variant="${escapeHtml(variant)}">
         <div class="booking-mobile">
           <div class="booking booking--mobile-split">
             <div class="booking__main">
@@ -2647,7 +2837,7 @@
               ${p.bookingMode === "approval" ? `<p class="profile__mode">Rezerwacja na akceptację — usługodawca zaproponuje termin.</p>` : ""}
 
               ${renderServicesPanelHead(p, ctx.draft, { mobile: true })}
-              <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
+              <div class="booking__services-list service-list" data-role="booking-mobile-services" data-booking-variant="${escapeHtml(variant)}">${ctx.services}</div>
             </div>
 
             <div class="booking__schedule" data-role="booking-mobile-schedule">
@@ -8239,6 +8429,24 @@
   // Delegacja zdarzeń
   // ─────────────────────────────────────────────────────────
   document.addEventListener("keydown", function (event) {
+    const photoPreviewOpen = document.getElementById("service-photo-preview");
+    if (photoPreviewOpen && !photoPreviewOpen.hidden) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeServicePhotoPreview();
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        shiftServicePhotoPreview(-1);
+        return;
+      }
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        shiftServicePhotoPreview(1);
+        return;
+      }
+    }
     if (event.key === "Escape") {
       const installHelp = document.getElementById("pwa-install-help");
       if (installHelp && !installHelp.hidden) {
@@ -8368,6 +8576,10 @@
         showSimulator();
         break;
       case "switch-role": switchRole(d.role); break;
+      case "toggle-booking-ui-variant":
+        event.preventDefault();
+        toggleBookingUiVariant();
+        break;
 
       case "go-screen": goScreen(d.screen); break;
       case "toggle-app-menu":
@@ -8467,6 +8679,23 @@
       case "toggle-service": toggleService(d.serviceId); break;
       case "toggle-service-check": toggleServiceCheck(d.serviceId); break;
       case "toggle-service-desc": toggleServiceDesc(d.serviceId); break;
+      case "preview-service-photos":
+        event.preventDefault();
+        event.stopPropagation();
+        openServicePhotoPreview(d.serviceId, 0);
+        break;
+      case "close-service-photo-preview":
+        event.preventDefault();
+        closeServicePhotoPreview();
+        break;
+      case "service-photo-prev":
+        event.preventDefault();
+        shiftServicePhotoPreview(-1);
+        break;
+      case "service-photo-next":
+        event.preventDefault();
+        shiftServicePhotoPreview(1);
+        break;
       case "start-booking": startBooking(d.slug); break;
       case "send-request": sendRequest(d.slug); break;
       case "pick-date": pickDate(d.date); break;
