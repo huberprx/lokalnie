@@ -5666,6 +5666,103 @@ body.avatar-preview-open {
   min-width: 0;
 }
 
+.prov-cal-add__client-contacts {
+  display: grid;
+  grid-template-rows: 0fr;
+  margin-top: 0;
+  opacity: 0;
+  transition:
+    grid-template-rows 0.26s ease,
+    opacity 0.2s ease,
+    margin-top 0.26s ease;
+}
+
+.prov-cal-add__client-pick.is-details-open .prov-cal-add__client-contacts {
+  grid-template-rows: 1fr;
+  margin-top: 0.15rem;
+  opacity: 1;
+}
+
+.prov-cal-add__client-contacts-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.prov-cal-add__client-clear,
+.prov-cal-add__client-search,
+.prov-cal-add__client-expand {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 1.85rem;
+  width: 1.85rem;
+  height: 1.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.prov-cal-add__client-clear {
+  flex-basis: 1.55rem;
+  width: 1.55rem;
+  height: 1.55rem;
+  font-size: 1.15rem;
+  font-weight: 500;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.prov-cal-add__client-clear:hover,
+.prov-cal-add__client-search:hover,
+.prov-cal-add__client-expand:hover {
+  color: var(--text);
+  opacity: 1;
+}
+
+.prov-cal-add__client-search svg {
+  width: 1rem;
+  height: 1rem;
+  display: block;
+}
+
+.prov-cal-add__client-row > .prov-cal-add__client-clear,
+.prov-cal-add__client-row > .prov-cal-add__client-search,
+.prov-cal-add__client-row > .prov-cal-add__client-expand {
+  margin-left: -0.15rem;
+}
+
+.prov-cal-add__client-row > .prov-cal-add__input + .prov-cal-add__client-clear,
+.prov-cal-add__client-row > .prov-cal-add__input + .prov-cal-add__client-search {
+  margin-left: 0.1rem;
+}
+
+.prov-cal-add__client-expand-icon {
+  width: 0.85rem;
+  height: 0.85rem;
+  background: currentColor;
+  opacity: 0.55;
+  transition: transform 0.16s ease;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.prov-cal-add__client-expand.is-open .prov-cal-add__client-expand-icon,
+.prov-cal-add__client-pick.is-details-open .prov-cal-add__client-expand-icon {
+  transform: rotate(180deg);
+}
+
 .prov-cal-add__client-menu {
   /* Mounted on document.body — poza transform/overflow panelu. */
   position: fixed;
@@ -5691,8 +5788,8 @@ body.avatar-preview-open {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
-  background: var(--surface-2);
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
 }
 
@@ -5726,6 +5823,12 @@ body.avatar-preview-open {
 
 .prov-cal-add__input:focus {
   outline: none;
+}
+
+.prov-cal-add__input--contact {
+  font-size: 15px;
+  font-weight: 500;
+  min-height: 2.25rem;
 }
 
 .prov-cal-add__service-pick {
@@ -5790,6 +5893,100 @@ body.avatar-preview-open {
 .prov-cal-add__service-opt {
   align-items: center;
   gap: 0.55rem;
+}
+
+.prov-cal-add__inne {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.45rem 0.55rem 0.55rem;
+}
+
+.prov-cal-add__inne-head {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.prov-cal-add__inne-name {
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.prov-cal-add__dur-carousel {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.4rem;
+  margin: 0 -0.15rem;
+  padding: 0.1rem 0.15rem 0.2rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.prov-cal-add__dur-carousel::-webkit-scrollbar {
+  display: none;
+}
+
+.prov-cal-add__dur-chip {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.4rem 0.65rem 0.4rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.prov-cal-add__dur-chip .service-row__check-visual {
+  flex: 0 0 0.95rem;
+  margin: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  opacity: 0.35;
+}
+
+.prov-cal-add__dur-chip.is-selected,
+.prov-cal-add__dur-chip[aria-selected="true"] {
+  border-color: color-mix(in srgb, var(--accent-provider) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent-provider) 12%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-provider) 18%, transparent);
+}
+
+.prov-cal-add__dur-chip .service-row__check-visual.is-on,
+.prov-cal-add__dur-chip.is-selected .service-row__check-visual {
+  opacity: 1;
+  border: 0;
+  background: var(--accent-provider);
+  box-shadow: none;
+}
+
+.prov-cal-add__dur-chip .service-row__check-visual.is-on::after,
+.prov-cal-add__dur-chip.is-selected .service-row__check-visual::after {
+  border-left-color: #fff;
+  border-bottom-color: #fff;
+}
+
+.prov-cal-add__dur-chip:hover .service-row__check-visual {
+  opacity: 0.55;
+  border: 0;
+  box-shadow: none;
 }
 
 .prov-cal-add__service-sep {
@@ -8063,8 +8260,12 @@ body.prov-cal-resizing * {
   transform: translate(0, -1px) rotate(125deg);
 }
 
-.visit-card--provider .visit-card__name {
+.visit-card--provider .visit-card__schedule {
   margin-bottom: 0.35rem;
+}
+
+.visit-card--provider .visit-card__name {
+  margin: 0 0 0.25rem;
   font-size: 0.95rem;
   font-weight: 700;
 }
@@ -8073,6 +8274,7 @@ body.prov-cal-resizing * {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
+  margin: 0;
   padding-left: 1rem;
   color: var(--text);
   font-size: 0.82rem;
@@ -8080,6 +8282,15 @@ body.prov-cal-resizing * {
 
 .visit-card__services li::marker {
   color: var(--visit-accent, var(--visit-status-color));
+}
+
+.visit-card--provider .visit-card__services {
+  padding-left: 0;
+  list-style: none;
+}
+
+.visit-card--provider .visit-card__services li {
+  list-style: none;
 }
 
 /* ---- Panel usługodawcy: zakładki ---- */

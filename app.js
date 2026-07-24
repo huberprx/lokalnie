@@ -92,7 +92,7 @@
       provCalAddDraft: null,
       /** Pulpit: pokazywać karty wolnych luk między wizytami (domyślnie nie). */
       dashShowFreeSlots: false,
-      /** Zapisani klienci usługodawcy: { [providerId]: [{ id, name }] } */
+      /** Zapisani klienci usługodawcy: { [providerId]: [{ id, name, phone, email, address }] } */
       providerClients: {},
       availWeekStart: null,
       availStripScrollLeft: null,
@@ -1310,13 +1310,21 @@
     // Dopnij brakujące wizyty demo (np. po starym localStorage).
     const demoBookings = data().DEMO_BOOKINGS || [];
     if (demoBookings.length) {
-      const existing = {};
+      const existingById = Object.create(null);
       (window.AppState.bookings || []).forEach(function (b) {
-        if (b && b.id) existing[b.id] = true;
+        if (b && b.id) existingById[b.id] = b;
       });
       demoBookings.forEach(function (b) {
-        if (!b || !b.id || existing[b.id]) return;
-        window.AppState.bookings.push(Object.assign({}, b));
+        if (!b || !b.id) return;
+        const cur = existingById[b.id];
+        if (!cur) {
+          window.AppState.bookings.push(Object.assign({}, b));
+          return;
+        }
+        // Uzupełnij brakujące dane kontaktu z demo (bez nadpisywania edycji użytkownika).
+        ["clientPhone", "clientEmail", "clientAddress"].forEach(function (key) {
+          if (!String(cur[key] || "").trim() && String(b[key] || "").trim()) cur[key] = b[key];
+        });
       });
     }
 
@@ -2807,7 +2815,7 @@
           </span>
         </div>
         <div class="visit-card__name">${escapeHtml(b.clientName || "Klient")}</div>
-        <ul class="visit-card__services" aria-label="Usługi">
+        <ul class="visit-card__services" aria-label="Zamówione usługi">
           ${services.map((serviceName) => `<li>${escapeHtml(serviceName)}</li>`).join("")}
         </ul>
         ${
@@ -4197,12 +4205,13 @@
       </div>`;
   }
 
-  /** Bloki czasu w panelu „Nowy termin” — jak usługi, bez ceny z oferty. */
+  /** Bloki czasu w panelu „Nowy termin” — usługa „Inne”, bez ceny z oferty. */
+  const PROV_CAL_ADD_INNE_NAME = "Inne";
   const PROV_CAL_ADD_DURATION_OPTS = [
-    { id: "dur-15", name: "15 min", durationMin: 15, price: null, isDuration: true },
-    { id: "dur-30", name: "30 min", durationMin: 30, price: null, isDuration: true },
-    { id: "dur-60", name: "1 h", durationMin: 60, price: null, isDuration: true },
-    { id: "dur-120", name: "2 h", durationMin: 120, price: null, isDuration: true },
+    { id: "dur-15", name: PROV_CAL_ADD_INNE_NAME, durationMin: 15, price: null, isDuration: true },
+    { id: "dur-30", name: PROV_CAL_ADD_INNE_NAME, durationMin: 30, price: null, isDuration: true },
+    { id: "dur-60", name: PROV_CAL_ADD_INNE_NAME, durationMin: 60, price: null, isDuration: true },
+    { id: "dur-120", name: PROV_CAL_ADD_INNE_NAME, durationMin: 120, price: null, isDuration: true },
   ];
   const PROV_CAL_ADD_DEFAULT_DURATION_ID = "dur-30";
 
@@ -4218,7 +4227,7 @@
     if (exact) return exact;
     return {
       id: "dur-" + n,
-      name: formatDuration(n),
+      name: PROV_CAL_ADD_INNE_NAME,
       durationMin: n,
       price: null,
       isDuration: true,
@@ -4249,11 +4258,16 @@
     return {
       bookingId: null,
       clientName: "",
+      clientPhone: "",
+      clientEmail: "",
+      clientAddress: "",
       serviceIds: [PROV_CAL_ADD_DEFAULT_DURATION_ID],
       dateISO: ensureProvCalDate(),
       slotId: null,
       servicePickOpen: false,
       clientPickOpen: false,
+      /** Rozwinięte pola: telefon / e-mail / adres. */
+      clientDetailsOpen: false,
       expandedServiceIds: [],
     };
   }
@@ -4267,7 +4281,11 @@
       }
       if (typeof cur.servicePickOpen !== "boolean") cur.servicePickOpen = false;
       if (typeof cur.clientPickOpen !== "boolean") cur.clientPickOpen = false;
+      if (typeof cur.clientDetailsOpen !== "boolean") cur.clientDetailsOpen = false;
       if (cur.bookingId == null) cur.bookingId = null;
+      if (typeof cur.clientPhone !== "string") cur.clientPhone = "";
+      if (typeof cur.clientEmail !== "string") cur.clientEmail = "";
+      if (typeof cur.clientAddress !== "string") cur.clientAddress = "";
       return cur;
     }
     window.AppState.provCalAddDraft = defaultProvCalAddDraft();
@@ -4331,20 +4349,77 @@
     return names;
   }
 
-  function addProviderClientName(providerId, name) {
-    const n = String(name || "").trim();
-    if (!providerId || !n) return "";
+  function findProviderClientByName(providerId, name) {
+    const key = String(name || "")
+      .trim()
+      .toLowerCase();
+    if (!providerId || !key) return null;
+    return (
+      ensureProviderClientsList(providerId).find(function (c) {
+        return (
+          String((c && c.name) || "")
+            .trim()
+            .toLowerCase() === key
+        );
+      }) || null
+    );
+  }
+
+  /** Upsert klienta: imię + opcjonalnie telefon / e-mail / adres. */
+  function upsertProviderClient(providerId, data) {
+    const n = String((data && data.name) || "").trim();
+    if (!providerId || !n) return null;
     const list = ensureProviderClientsList(providerId);
-    const key = n.toLowerCase();
-    const exists = list.some(function (c) {
-      return String((c && c.name) || "")
-        .trim()
-        .toLowerCase() === key;
-    });
-    if (!exists) {
-      list.push({ id: "cli-" + Date.now(), name: n });
+    let client = findProviderClientByName(providerId, n);
+    if (!client) {
+      client = {
+        id: "cli-" + Date.now(),
+        name: n,
+        phone: "",
+        email: "",
+        address: "",
+      };
+      list.push(client);
+    } else {
+      client.name = n;
     }
-    return n;
+    if (data && Object.prototype.hasOwnProperty.call(data, "phone")) {
+      client.phone = String(data.phone || "").trim();
+    } else if (typeof client.phone !== "string") {
+      client.phone = "";
+    }
+    if (data && Object.prototype.hasOwnProperty.call(data, "email")) {
+      client.email = String(data.email || "").trim();
+    } else if (typeof client.email !== "string") {
+      client.email = "";
+    }
+    if (data && Object.prototype.hasOwnProperty.call(data, "address")) {
+      client.address = String(data.address || "").trim();
+    } else if (typeof client.address !== "string") {
+      client.address = "";
+    }
+    return client;
+  }
+
+  function addProviderClientName(providerId, name) {
+    const client = upsertProviderClient(providerId, { name: name });
+    return client ? client.name : "";
+  }
+
+  function applyClientContactsToDraft(draft, source) {
+    if (!draft) return;
+    const src = source || {};
+    draft.clientPhone = String(src.phone || src.clientPhone || "").trim();
+    draft.clientEmail = String(src.email || src.clientEmail || "").trim();
+    draft.clientAddress = String(src.address || src.clientAddress || "").trim();
+  }
+
+  function syncProvCalAddClientContactInputs(draft) {
+    if (!draft) return;
+    const phone = document.querySelector('[data-role="prov-cal-add-phone"]');
+    const email = document.querySelector('[data-role="prov-cal-add-email"]');
+    if (phone) phone.value = draft.clientPhone || "";
+    if (email) email.value = draft.clientEmail || "";
   }
 
   function renderProvCalAddClientMenuHtml(providerId, query) {
@@ -4457,14 +4532,122 @@
     const draft = ensureProvCalAddDraft();
     const p = myProvider();
     const n = String(name || "").trim();
-    if (options.addNew && p) addProviderClientName(p.id, n);
+    let client = p ? findProviderClientByName(p.id, n) : null;
+    if (options.addNew && p) {
+      client = upsertProviderClient(p.id, { name: n });
+    }
     draft.clientName = n;
     draft.clientPickOpen = false;
+    applyClientContactsToDraft(draft, client || {});
+    if (draft.clientPhone || draft.clientEmail || draft.clientAddress) {
+      draft.clientDetailsOpen = true;
+    }
     const input = document.querySelector('[data-role="prov-cal-add-client"]');
     if (input) input.value = n;
+    syncProvCalAddClientContactInputs(draft);
     setProvCalAddClientPickOpen(false);
     saveState();
+    if (draft.clientDetailsOpen) renderAll();
     if (options.addNew) showToast("Klient dodany ✓");
+  }
+
+  function toggleProvCalAddClientDetails() {
+    captureProvCalAddClientName();
+    const draft = ensureProvCalAddDraft();
+    draft.clientDetailsOpen = !draft.clientDetailsOpen;
+    draft.clientPickOpen = false;
+    setProvCalAddClientPickOpen(false);
+    saveState();
+    const pick = document.querySelector('[data-role="prov-cal-add-client-pick"]');
+    const contacts = document.getElementById("prov-cal-add-client-contacts");
+    const expand = pick && pick.querySelector('[data-action="toggle-prov-cal-add-client-details"]');
+    if (pick && contacts && expand) {
+      const open = !!draft.clientDetailsOpen;
+      pick.classList.toggle("is-details-open", open);
+      expand.classList.toggle("is-open", open);
+      expand.setAttribute("aria-expanded", open ? "true" : "false");
+      expand.setAttribute("aria-label", open ? "Ukryj dane kontaktowe" : "Pokaż dane kontaktowe");
+      contacts.setAttribute("aria-hidden", open ? "false" : "true");
+      contacts.querySelectorAll("input").forEach(function (inp) {
+        inp.tabIndex = open ? 0 : -1;
+      });
+      return;
+    }
+    renderAll();
+  }
+
+  function clearProvCalAddClient() {
+    captureProvCalAddClientName();
+    const draft = ensureProvCalAddDraft();
+    draft.clientName = "";
+    draft.clientPhone = "";
+    draft.clientEmail = "";
+    draft.clientAddress = "";
+    draft.clientPickOpen = false;
+    draft.clientDetailsOpen = false;
+    setProvCalAddClientPickOpen(false);
+    const input = document.querySelector('[data-role="prov-cal-add-client"]');
+    if (input) input.value = "";
+    syncProvCalAddClientContactInputs(draft);
+    saveState();
+    renderAll();
+    requestAnimationFrame(function () {
+      const again = document.querySelector('[data-role="prov-cal-add-client"]');
+      if (again) again.focus();
+    });
+  }
+
+  function focusProvCalAddClientSearch() {
+    const draft = ensureProvCalAddDraft();
+    draft.clientPickOpen = true;
+    draft.servicePickOpen = false;
+    closeAvailPickMenus();
+    saveState();
+    const input = document.querySelector('[data-role="prov-cal-add-client"]');
+    if (input) input.focus();
+    refreshProvCalAddClientMenu();
+  }
+
+  function renderProvCalAddClientTrailingActionHtml(hasClientName) {
+    if (hasClientName) {
+      return `<button type="button" class="prov-cal-add__client-clear" data-action="clear-prov-cal-add-client" aria-label="Usuń klienta">
+        <span aria-hidden="true">×</span>
+      </button>`;
+    }
+    return `<button type="button" class="prov-cal-add__client-search" data-action="focus-prov-cal-add-client-search" aria-label="Szukaj klienta">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="10.5" cy="10.5" r="6.2" />
+        <path d="m15.4 15.4 5.1 5.1" />
+      </svg>
+    </button>`;
+  }
+
+  /** Lupa ↔ × — tylko jedna ikona naraz (przed chevronem rozwijania). */
+  function patchProvCalAddClientClearBtn() {
+    const draft = window.AppState.provCalAddDraft;
+    const row = document.querySelector('[data-role="prov-cal-add-client-pick"] > .prov-cal-add__client-row');
+    if (!row || !draft) return;
+    const has = !!String(draft.clientName || "").trim();
+    const clear = row.querySelector('[data-action="clear-prov-cal-add-client"]');
+    const search = row.querySelector('[data-action="focus-prov-cal-add-client-search"]');
+    const expand = row.querySelector('[data-action="toggle-prov-cal-add-client-details"]');
+    if (has) {
+      if (search) search.remove();
+      if (!clear) {
+        const host = document.createElement("div");
+        host.innerHTML = renderProvCalAddClientTrailingActionHtml(true);
+        const btn = host.firstElementChild;
+        if (btn) row.insertBefore(btn, expand || null);
+      }
+    } else {
+      if (clear) clear.remove();
+      if (!search) {
+        const host = document.createElement("div");
+        host.innerHTML = renderProvCalAddClientTrailingActionHtml(false);
+        const btn = host.firstElementChild;
+        if (btn) row.insertBefore(btn, expand || null);
+      }
+    }
   }
 
   function provCalAddSelectedServices(p, draft) {
@@ -4503,7 +4686,11 @@
     const draft = window.AppState.provCalAddDraft;
     if (!draft) return;
     const clientInput = document.querySelector('[data-role="prov-cal-add-client"]');
+    const phoneInput = document.querySelector('[data-role="prov-cal-add-phone"]');
+    const emailInput = document.querySelector('[data-role="prov-cal-add-email"]');
     if (clientInput) draft.clientName = String(clientInput.value || "").trim();
+    if (phoneInput) draft.clientPhone = String(phoneInput.value || "").trim();
+    if (emailInput) draft.clientEmail = String(emailInput.value || "").trim();
   }
 
   function openProvCalAdd() {
@@ -4538,6 +4725,13 @@
     const draft = defaultProvCalAddDraft();
     draft.bookingId = bk.id;
     draft.clientName = String(bk.clientName || "");
+    applyClientContactsToDraft(draft, bk);
+    if (!draft.clientPhone && !draft.clientEmail && !draft.clientAddress) {
+      const p = myProvider();
+      const saved = p ? findProviderClientByName(p.id, draft.clientName) : null;
+      if (saved) applyClientContactsToDraft(draft, saved);
+    }
+    draft.clientDetailsOpen = !!(draft.clientPhone || draft.clientEmail || draft.clientAddress);
     draft.serviceIds = serviceIdsFromBooking(bk);
     draft.dateISO = bk.dateISO || ensureProvCalDate();
     draft.slotId = provCalAddSlotIdForBooking(bk);
@@ -4583,6 +4777,31 @@
     </ul>`;
   }
 
+  /** Pierwsza pozycja w menu: usługa „Inne” + karuzela czasów. */
+  function renderProvCalAddInneDurationBlock(draft) {
+    const ids = (draft && draft.serviceIds) || [];
+    const chips = PROV_CAL_ADD_DURATION_OPTS.map(function (s) {
+      const durLabel = formatDuration(s.durationMin);
+      const on = ids.indexOf(s.id) !== -1;
+      const selectLabel = (on ? "Odznacz" : "Zaznacz") + " " + durLabel;
+      return `<button type="button" class="prov-cal-add__dur-chip${on ? " is-selected" : ""}" role="option"
+        data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}"
+        aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
+        <span class="service-row__check-visual${on ? " is-on" : ""}" aria-hidden="true"></span>
+        <span class="prov-cal-add__dur-chip-label">${escapeHtml(durLabel)}</span>
+      </button>`;
+    }).join("");
+    return `
+      <div class="prov-cal-add__inne" role="group" aria-label="${escapeHtml(PROV_CAL_ADD_INNE_NAME)}">
+        <div class="prov-cal-add__inne-head">
+          <span class="prov-cal-add__inne-name">${escapeHtml(PROV_CAL_ADD_INNE_NAME)}</span>
+        </div>
+        <div class="prov-cal-add__dur-carousel" data-role="prov-cal-add-dur-carousel" role="listbox" aria-label="Czas trwania">
+          ${chips}
+        </div>
+      </div>`;
+  }
+
   function patchProvCalAddServiceUi() {
     const p = myProvider();
     const draft = window.AppState.provCalAddDraft;
@@ -4599,7 +4818,7 @@
       opt.setAttribute("aria-selected", on ? "true" : "false");
       const check = opt.querySelector(".service-row__check-visual");
       if (check) check.classList.toggle("is-on", on);
-      const nameEl = opt.querySelector(".avail-loc-pick__opt-label");
+      const nameEl = opt.querySelector(".avail-loc-pick__opt-label, .prov-cal-add__dur-chip-label");
       const labelText = nameEl ? nameEl.textContent : "";
       if (labelText) opt.setAttribute("aria-label", (on ? "Odznacz" : "Zaznacz") + " " + labelText);
     });
@@ -4765,8 +4984,18 @@
     const p = myProvider();
     if (!p) return;
     const clientName = String(draft.clientName || "").trim();
+    const clientPhone = String(draft.clientPhone || "").trim();
+    const clientEmail = String(draft.clientEmail || "").trim();
+    const clientAddress = String(draft.clientAddress || "").trim();
     // Imię klienta opcjonalne — sam blok usługi / czasu można zapisać bez kontaktu.
-    if (clientName) addProviderClientName(p.id, clientName);
+    if (clientName) {
+      upsertProviderClient(p.id, {
+        name: clientName,
+        phone: clientPhone,
+        email: clientEmail,
+        address: clientAddress,
+      });
+    }
     const selected = provCalAddSelectedServices(p, draft);
     if (!selected.length) {
       showToast("Wybierz usługę.");
@@ -4806,6 +5035,9 @@
         return;
       }
       booking.clientName = clientName;
+      booking.clientPhone = clientPhone;
+      booking.clientEmail = clientEmail;
+      booking.clientAddress = clientAddress;
       booking.serviceIds = serviceIds;
       booking.serviceNames = serviceNames;
       booking.dateISO = draft.dateISO;
@@ -4820,6 +5052,9 @@
         providerId: p.id,
         providerName: p.name,
         clientName: clientName,
+        clientPhone: clientPhone,
+        clientEmail: clientEmail,
+        clientAddress: clientAddress,
         serviceIds: serviceIds,
         serviceNames: serviceNames,
         dateISO: draft.dateISO,
@@ -4877,16 +5112,7 @@
     const slots = hasSvc ? computeSlots(p, activeDate, duration, slotOpts) : [];
     const catalogServices = (p && p.services) || [];
     const serviceMenu =
-      PROV_CAL_ADD_DURATION_OPTS.map(function (s) {
-        const on = (draft.serviceIds || []).indexOf(s.id) !== -1;
-        const selectLabel = (on ? "Odznacz" : "Zaznacz") + " " + s.name;
-        return `<button type="button" class="avail-loc-pick__opt prov-cal-add__service-opt${on ? " is-selected" : ""}" role="option"
-          data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}"
-          aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
-          <span class="avail-loc-pick__opt-label">${escapeHtml(s.name)}</span>
-          <span class="service-row__check-visual${on ? " is-on" : ""}" aria-hidden="true"></span>
-        </button>`;
-      }).join("") +
+      renderProvCalAddInneDurationBlock(draft) +
       (catalogServices.length
         ? `<div class="prov-cal-add__service-sep" role="separator" aria-hidden="true"></div>` +
           catalogServices
@@ -4947,6 +5173,8 @@
           .join(", ");
     const servicePickOpen = !!draft.servicePickOpen;
     const clientPickOpen = !!draft.clientPickOpen;
+    const clientDetailsOpen = !!draft.clientDetailsOpen;
+    const hasClientName = !!String(draft.clientName || "").trim();
 
     return `
       <div class="prov-cal-add" data-role="prov-cal-add">
@@ -4958,7 +5186,7 @@
             <button type="button" class="prov-cal-add__save" data-action="confirm-prov-cal-add"${canSave ? "" : " disabled"}>Zapisz</button>
           </header>
           <div class="prov-cal-add__body">
-            <div class="prov-cal-add__field prov-cal-add__client-pick${clientPickOpen ? " is-open" : ""}" data-role="prov-cal-add-client-pick" aria-label="Klient">
+            <div class="prov-cal-add__field prov-cal-add__client-pick${clientPickOpen ? " is-open" : ""}${clientDetailsOpen ? " is-details-open" : ""}" data-role="prov-cal-add-client-pick" aria-label="Klient">
               <span class="prov-cal-add__client-row">
                 <span class="prov-cal-add__client-avatar" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -4967,10 +5195,41 @@
                   </svg>
                 </span>
                 <input type="text" class="prov-cal-add__input" data-role="prov-cal-add-client"
-                  value="${escapeHtml(draft.clientName || "")}" placeholder="Imię i nazwisko"
+                  value="${escapeHtml(draft.clientName || "")}" placeholder="Nazwa klienta"
                   autocomplete="off" spellcheck="false" aria-autocomplete="list"
                   aria-expanded="${clientPickOpen ? "true" : "false"}" aria-controls="prov-cal-add-client-menu" />
+                ${renderProvCalAddClientTrailingActionHtml(hasClientName)}
+                <button type="button" class="prov-cal-add__client-expand${clientDetailsOpen ? " is-open" : ""}"
+                  data-action="toggle-prov-cal-add-client-details"
+                  aria-expanded="${clientDetailsOpen ? "true" : "false"}"
+                  aria-controls="prov-cal-add-client-contacts"
+                  aria-label="${clientDetailsOpen ? "Ukryj dane kontaktowe" : "Pokaż dane kontaktowe"}">
+                  <span class="prov-cal-add__client-expand-icon" aria-hidden="true"></span>
+                </button>
               </span>
+              <div class="prov-cal-add__client-contacts" id="prov-cal-add-client-contacts"${clientDetailsOpen ? "" : ' aria-hidden="true"'}>
+                <div class="prov-cal-add__client-contacts-inner">
+                  <span class="prov-cal-add__client-row">
+                    <span class="prov-cal-add__client-avatar" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.1-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.6a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.5-1.2a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.6.7A2 2 0 0 1 22 16.9z" />
+                      </svg>
+                    </span>
+                    <input type="tel" class="prov-cal-add__input prov-cal-add__input--contact" data-role="prov-cal-add-phone"
+                      value="${escapeHtml(draft.clientPhone || "")}" placeholder="Telefon" autocomplete="tel" inputmode="tel" tabindex="${clientDetailsOpen ? "0" : "-1"}" />
+                  </span>
+                  <span class="prov-cal-add__client-row">
+                    <span class="prov-cal-add__client-avatar" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="5" width="18" height="14" rx="2" />
+                        <path d="m3 7 9 6 9-6" />
+                      </svg>
+                    </span>
+                    <input type="email" class="prov-cal-add__input prov-cal-add__input--contact" data-role="prov-cal-add-email"
+                      value="${escapeHtml(draft.clientEmail || "")}" placeholder="E-mail" autocomplete="email" inputmode="email" tabindex="${clientDetailsOpen ? "0" : "-1"}" />
+                  </span>
+                </div>
+              </div>
             </div>
 
             <div class="prov-cal-add__field" aria-label="Usługa">
@@ -8380,6 +8639,18 @@
         event.preventDefault();
         closeProvCalAdd();
         break;
+      case "toggle-prov-cal-add-client-details":
+        event.preventDefault();
+        toggleProvCalAddClientDetails();
+        break;
+      case "clear-prov-cal-add-client":
+        event.preventDefault();
+        clearProvCalAddClient();
+        break;
+      case "focus-prov-cal-add-client-search":
+        event.preventDefault();
+        focusProvCalAddClientSearch();
+        break;
       case "toggle-prov-cal-add-service": {
         event.preventDefault();
         const pick = btn.closest('[data-role="prov-cal-add-service-pick"]');
@@ -8540,6 +8811,26 @@
       draft.servicePickOpen = false;
       closeAvailPickMenus();
       refreshProvCalAddClientMenu();
+      patchProvCalAddClientClearBtn();
+      saveState();
+      return;
+    }
+
+    const addPhoneInp = event.target.closest('[data-role="prov-cal-add-phone"]');
+    if (addPhoneInp) {
+      const draft = ensureProvCalAddDraft();
+      draft.clientPhone = String(addPhoneInp.value || "");
+      draft.clientPickOpen = false;
+      setProvCalAddClientPickOpen(false);
+      saveState();
+      return;
+    }
+    const addEmailInp = event.target.closest('[data-role="prov-cal-add-email"]');
+    if (addEmailInp) {
+      const draft = ensureProvCalAddDraft();
+      draft.clientEmail = String(addEmailInp.value || "");
+      draft.clientPickOpen = false;
+      setProvCalAddClientPickOpen(false);
       saveState();
       return;
     }
