@@ -6546,6 +6546,55 @@ body.service-photo-preview-open {
   cursor: pointer;
 }
 
+.client-sheet__done {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  padding: 0.35rem 0.15rem;
+  border: 0;
+  background: transparent;
+  color: var(--accent, var(--accent-provider));
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.service-sheet {
+  --accent: var(--accent-provider);
+}
+
+.service-sheet__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.15rem 0.55rem 1.1rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.service-sheet__list {
+  display: flex;
+  flex-direction: column;
+}
+
+.service-sheet .prov-cal-add__inne {
+  padding: 0.35rem 0.35rem 0.65rem;
+}
+
+.service-sheet .prov-cal-add__service-opt {
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  min-height: 3rem;
+}
+
+body.service-sheet-open {
+  overflow: hidden;
+}
+
 .client-sheet__search {
   display: flex;
   align-items: center;
@@ -6645,8 +6694,130 @@ body.service-photo-preview-open {
 }
 
 .client-sheet__row--add {
+  margin-bottom: 0;
+  border-bottom: 0;
+  padding: 0;
+  gap: 0.15rem;
+  background: transparent;
+  cursor: default;
+}
+
+.client-sheet__row--add:hover,
+.client-sheet__row--add:active {
+  background: transparent;
+}
+
+.client-sheet__add {
   margin-bottom: 0.35rem;
   border-bottom: 1px solid var(--border);
+}
+
+.client-sheet__add-main {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0.65rem 0.15rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.client-sheet__add-main:hover,
+.client-sheet__add-main:active {
+  background: color-mix(in srgb, var(--accent-provider) 6%, transparent);
+}
+
+.client-sheet__add-expand {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 2.2rem;
+  width: 2.2rem;
+  height: 2.2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0.35rem 0.1rem 0.35rem 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.client-sheet__add-expand:hover,
+.client-sheet__add-expand:active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.client-sheet__add-expand-icon {
+  width: 0.9rem;
+  height: 0.9rem;
+  background: currentColor;
+  opacity: 0.7;
+  transition: transform 0.16s ease;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.client-sheet__add-expand.is-open .client-sheet__add-expand-icon,
+.client-sheet__add.is-expanded .client-sheet__add-expand-icon {
+  transform: rotate(180deg);
+}
+
+.client-sheet__add-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0 0.15rem 0.75rem 3.45rem;
+}
+
+.client-sheet__add-details[hidden] {
+  display: none !important;
+}
+
+.client-sheet__add-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0;
+}
+
+.client-sheet__add-field-label {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.client-sheet__add-input {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+}
+
+.client-sheet__add-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent-provider) 45%, var(--border));
 }
 
 .client-sheet__avatar {
@@ -6696,7 +6867,8 @@ body.service-photo-preview-open {
   text-overflow: ellipsis;
 }
 
-.client-sheet__row--add .client-sheet__name {
+.client-sheet__row--add .client-sheet__name,
+.client-sheet__add-main .client-sheet__name {
   color: var(--accent-provider);
 }
 

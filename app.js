@@ -4743,6 +4743,10 @@
       clientPickOpen: false,
       /** Rozwinięte pola: telefon / e-mail / adres. */
       clientDetailsOpen: false,
+      /** W sheetcie kontaktów: rozwinięte pola nowego kontaktu. */
+      clientSheetNewExpanded: false,
+      clientSheetNewPhone: "",
+      clientSheetNewEmail: "",
       expandedServiceIds: [],
     };
   }
@@ -4757,6 +4761,9 @@
       if (typeof cur.servicePickOpen !== "boolean") cur.servicePickOpen = false;
       if (typeof cur.clientPickOpen !== "boolean") cur.clientPickOpen = false;
       if (typeof cur.clientDetailsOpen !== "boolean") cur.clientDetailsOpen = false;
+      if (typeof cur.clientSheetNewExpanded !== "boolean") cur.clientSheetNewExpanded = false;
+      if (typeof cur.clientSheetNewPhone !== "string") cur.clientSheetNewPhone = "";
+      if (typeof cur.clientSheetNewEmail !== "string") cur.clientSheetNewEmail = "";
       if (cur.bookingId == null) cur.bookingId = null;
       if (typeof cur.clientPhone !== "string") cur.clientPhone = "";
       if (typeof cur.clientEmail !== "string") cur.clientEmail = "";
@@ -4947,7 +4954,17 @@
     if (email) email.value = draft.clientEmail || "";
   }
 
+  function captureClientSheetNewDetails() {
+    const draft = window.AppState.provCalAddDraft;
+    if (!draft) return;
+    const phone = document.querySelector('[data-role="client-sheet-new-phone"]');
+    const email = document.querySelector('[data-role="client-sheet-new-email"]');
+    if (phone) draft.clientSheetNewPhone = String(phone.value || "");
+    if (email) draft.clientSheetNewEmail = String(email.value || "");
+  }
+
   function renderProvCalAddClientListParts(providerId, query) {
+    const draft = window.AppState.provCalAddDraft;
     const raw = String(query || "").trim();
     const q = raw.toLocaleLowerCase("pl");
     const clients = collectProviderClients(providerId);
@@ -4973,15 +4990,43 @@
 
     let listHtml = "";
     if (raw && !exact) {
+      const expanded = !!(draft && draft.clientSheetNewExpanded);
+      const newPhone = draft ? String(draft.clientSheetNewPhone || "") : "";
+      const newEmail = draft ? String(draft.clientSheetNewEmail || "") : "";
       listHtml += `
-        <button type="button" class="client-sheet__row client-sheet__row--add" role="option"
-          data-action="prov-cal-add-new-client" data-name="${escapeHtml(raw)}">
-          <span class="client-sheet__avatar client-sheet__avatar--add" aria-hidden="true">+</span>
-          <span class="client-sheet__meta">
-            <span class="client-sheet__name">Dodaj „${escapeHtml(raw)}”</span>
-            <span class="client-sheet__sub">Nowy kontakt</span>
-          </span>
-        </button>`;
+        <div class="client-sheet__add${expanded ? " is-expanded" : ""}" data-role="client-sheet-add">
+          <div class="client-sheet__row client-sheet__row--add">
+            <button type="button" class="client-sheet__add-main" role="option"
+              data-action="prov-cal-add-new-client" data-name="${escapeHtml(raw)}">
+              <span class="client-sheet__avatar client-sheet__avatar--add" aria-hidden="true">+</span>
+              <span class="client-sheet__meta">
+                <span class="client-sheet__name">Dodaj „${escapeHtml(raw)}”</span>
+                <span class="client-sheet__sub">Nowy kontakt</span>
+              </span>
+            </button>
+            <button type="button" class="client-sheet__add-expand${expanded ? " is-open" : ""}"
+              data-action="toggle-client-sheet-new-details"
+              aria-expanded="${expanded ? "true" : "false"}"
+              aria-controls="client-sheet-add-details"
+              aria-label="${expanded ? "Ukryj dane kontaktu" : "Dodaj telefon i e-mail"}">
+              <span class="client-sheet__add-expand-icon" aria-hidden="true"></span>
+            </button>
+          </div>
+          <div class="client-sheet__add-details" id="client-sheet-add-details" data-role="client-sheet-add-details"${expanded ? "" : " hidden"}>
+            <label class="client-sheet__add-field">
+              <span class="client-sheet__add-field-label">Telefon</span>
+              <input type="tel" class="client-sheet__add-input" data-role="client-sheet-new-phone"
+                value="${escapeHtml(newPhone)}" placeholder="Nr telefonu" autocomplete="tel" inputmode="tel" />
+            </label>
+            <label class="client-sheet__add-field">
+              <span class="client-sheet__add-field-label">E-mail</span>
+              <input type="email" class="client-sheet__add-input" data-role="client-sheet-new-email"
+                value="${escapeHtml(newEmail)}" placeholder="Adres e-mail" autocomplete="email" inputmode="email" />
+            </label>
+          </div>
+        </div>`;
+    } else if (draft) {
+      draft.clientSheetNewExpanded = false;
     }
     activeLetters.forEach(function (letter) {
       listHtml += `<div class="client-sheet__section" data-letter="${escapeHtml(letter)}">
@@ -5127,6 +5172,7 @@
     const list = menu.querySelector('[data-role="client-sheet-list"]');
     const index = menu.querySelector('[data-role="client-sheet-index"]');
     const search = menu.querySelector('[data-role="prov-cal-add-client-sheet-search"]');
+    captureClientSheetNewDetails();
     const parts = renderProvCalAddClientListParts(p.id, draft.clientName || "");
     // Aktualizuj listę bez niszczenia inputu wyszukiwania (zachowaj fokus i kursor).
     if (list && index && search && menu.classList.contains("is-open")) {
@@ -5163,12 +5209,20 @@
       showToast("Wybierz klienta.");
       return;
     }
+    captureClientSheetNewDetails();
     let client = p ? findProviderClientByName(p.id, n) : null;
     if (options.addNew && p) {
-      client = upsertProviderClient(p.id, { name: n });
+      const phone =
+        options.phone != null ? String(options.phone || "").trim() : String(draft.clientSheetNewPhone || "").trim();
+      const email =
+        options.email != null ? String(options.email || "").trim() : String(draft.clientSheetNewEmail || "").trim();
+      client = upsertProviderClient(p.id, { name: n, phone: phone, email: email });
     }
     draft.clientName = n;
     draft.clientPickOpen = false;
+    draft.clientSheetNewExpanded = false;
+    draft.clientSheetNewPhone = "";
+    draft.clientSheetNewEmail = "";
     applyClientContactsToDraft(draft, client || {});
     if (draft.clientPhone || draft.clientEmail || draft.clientAddress) {
       draft.clientDetailsOpen = true;
@@ -5184,6 +5238,43 @@
 
   function isClientSheetPickLocked() {
     return Date.now() < (window._clientSheetPickLockUntil || 0);
+  }
+
+  function toggleClientSheetNewDetails() {
+    const draft = ensureProvCalAddDraft();
+    captureClientSheetNewDetails();
+    draft.clientSheetNewExpanded = !draft.clientSheetNewExpanded;
+    saveState();
+    const block = document.querySelector('[data-role="client-sheet-add"]');
+    if (block) {
+      const open = !!draft.clientSheetNewExpanded;
+      block.classList.toggle("is-expanded", open);
+      const details = block.querySelector('[data-role="client-sheet-add-details"]');
+      const btn = block.querySelector('[data-action="toggle-client-sheet-new-details"]');
+      if (details) {
+        if (open) details.removeAttribute("hidden");
+        else details.setAttribute("hidden", "");
+      }
+      if (btn) {
+        btn.classList.toggle("is-open", open);
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+        btn.setAttribute("aria-label", open ? "Ukryj dane kontaktu" : "Dodaj telefon i e-mail");
+      }
+      if (open) {
+        requestAnimationFrame(function () {
+          const phone = block.querySelector('[data-role="client-sheet-new-phone"]');
+          if (phone) {
+            try {
+              phone.focus({ preventScroll: true });
+            } catch (err) {
+              phone.focus();
+            }
+          }
+        });
+      }
+      return;
+    }
+    refreshProvCalAddClientMenu({ focusSearch: false });
   }
 
   function toggleProvCalAddClientDetails() {
@@ -5237,6 +5328,7 @@
     draft.clientPickOpen = true;
     draft.servicePickOpen = false;
     closeAvailPickMenus();
+    setProvCalAddServicePickOpen(false);
     saveState();
     refreshProvCalAddClientMenu({ focusSearch: true });
   }
@@ -5390,8 +5482,11 @@
     window.AppState.provCalAddOpen = false;
     window.AppState.provCalAddDraft = null;
     setProvCalAddClientPickOpen(false);
-    const orphanMenu = document.getElementById("prov-cal-add-client-menu");
-    if (orphanMenu) orphanMenu.remove();
+    setProvCalAddServicePickOpen(false);
+    const orphanClient = document.getElementById("prov-cal-add-client-menu");
+    if (orphanClient) orphanClient.remove();
+    const orphanService = document.getElementById("prov-cal-add-service-sheet");
+    if (orphanService) orphanService.remove();
     saveState();
     renderAll();
   }
@@ -5435,6 +5530,126 @@
       </div>`;
   }
 
+  function renderProvCalAddServiceSheetListHtml(p, draft) {
+    const catalogServices = (p && p.services) || [];
+    return (
+      renderProvCalAddInneDurationBlock(draft) +
+      (catalogServices.length
+        ? `<div class="prov-cal-add__service-sep" role="separator" aria-hidden="true"></div>
+          <div class="service-sheet__list" data-role="prov-cal-add-service-menu" role="listbox" aria-multiselectable="true">` +
+          catalogServices
+            .map(function (s) {
+              const on = (draft.serviceIds || []).indexOf(s.id) !== -1;
+              const meta = [formatDuration(s.durationMin), formatPrice(s.price)].filter(Boolean).join(" · ");
+              const selectLabel = (on ? "Odznacz" : "Zaznacz") + " " + s.name;
+              return `<button type="button" class="avail-loc-pick__opt prov-cal-add__service-opt${on ? " is-selected" : ""}" role="option"
+                data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}"
+                aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
+                <span class="prov-cal-add__service-opt-main">
+                  <span class="avail-loc-pick__opt-label">${escapeHtml(s.name)}</span>
+                  ${meta ? `<span class="prov-cal-add__service-opt-meta">${escapeHtml(meta)}</span>` : ""}
+                </span>
+                <span class="service-row__check-visual${on ? " is-on" : ""}" aria-hidden="true"></span>
+              </button>`;
+            })
+            .join("") +
+          `</div>`
+        : "")
+    );
+  }
+
+  function renderProvCalAddServiceSheetHtml(p, draft) {
+    return `
+      <button type="button" class="client-sheet__backdrop" data-action="close-prov-cal-add-service-pick" aria-label="Zamknij usługi"></button>
+      <div class="client-sheet__panel service-sheet__panel" role="dialog" aria-modal="true" aria-label="Usługi">
+        <div class="client-sheet__grab" aria-hidden="true"></div>
+        <header class="client-sheet__head">
+          <h3 class="client-sheet__title">Usługi</h3>
+          <button type="button" class="client-sheet__done" data-action="close-prov-cal-add-service-pick">Gotowe</button>
+        </header>
+        <div class="client-sheet__body service-sheet__body">
+          ${renderProvCalAddServiceSheetListHtml(p, draft)}
+        </div>
+      </div>`;
+  }
+
+  function ensureProvCalAddServiceSheetEl() {
+    let sheet = document.getElementById("prov-cal-add-service-sheet");
+    if (!sheet) {
+      sheet = document.createElement("div");
+      sheet.id = "prov-cal-add-service-sheet";
+      sheet.className = "client-sheet service-sheet";
+      sheet.setAttribute("data-role", "prov-cal-add-service-sheet");
+      sheet.hidden = true;
+    }
+    if (sheet.parentNode !== document.body) document.body.appendChild(sheet);
+    return sheet;
+  }
+
+  function clearServiceSheetArmTimer() {
+    if (window._serviceSheetArmTimer) {
+      clearTimeout(window._serviceSheetArmTimer);
+      window._serviceSheetArmTimer = null;
+    }
+  }
+
+  function setProvCalAddServicePickOpen(open) {
+    const draft = window.AppState.provCalAddDraft;
+    if (draft) draft.servicePickOpen = !!open;
+    const pick = document.querySelector('[data-role="prov-cal-add-service-pick"]');
+    const btn = pick && pick.querySelector('[data-action="toggle-prov-cal-add-service"]');
+    const sheet = ensureProvCalAddServiceSheetEl();
+    if (pick) pick.classList.toggle("is-open", !!open);
+    if (btn) {
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      btn.setAttribute("aria-haspopup", "dialog");
+    }
+    clearServiceSheetArmTimer();
+    if (!open) {
+      sheet.hidden = true;
+      sheet.classList.remove("is-open", "client-sheet--arming");
+      sheet.innerHTML = "";
+      document.body.classList.remove("service-sheet-open");
+      return;
+    }
+    const p = myProvider();
+    if (!p || !draft) return;
+    sheet.innerHTML = renderProvCalAddServiceSheetHtml(p, draft);
+    sheet.hidden = false;
+    sheet.classList.add("is-open", "client-sheet--arming");
+    document.body.classList.add("service-sheet-open");
+    window._serviceSheetArmTimer = setTimeout(function () {
+      sheet.classList.remove("client-sheet--arming");
+      window._serviceSheetArmTimer = null;
+    }, 420);
+  }
+
+  function refreshProvCalAddServiceSheet() {
+    const draft = window.AppState.provCalAddDraft;
+    const p = myProvider();
+    if (!draft || !p || !draft.servicePickOpen) return;
+    const sheet = ensureProvCalAddServiceSheetEl();
+    if (!sheet.classList.contains("is-open")) {
+      setProvCalAddServicePickOpen(true);
+      return;
+    }
+    const body = sheet.querySelector(".service-sheet__body");
+    const scrollTop = body ? body.scrollTop : 0;
+    sheet.innerHTML = renderProvCalAddServiceSheetHtml(p, draft);
+    sheet.classList.add("is-open");
+    const body2 = sheet.querySelector(".service-sheet__body");
+    if (body2) body2.scrollTop = scrollTop;
+  }
+
+  function closeProvCalAddServicePick() {
+    const draft = window.AppState.provCalAddDraft;
+    const dirty = !!(draft && draft.serviceScheduleDirty);
+    if (draft) draft.servicePickOpen = false;
+    setProvCalAddServicePickOpen(false);
+    saveState();
+    if (dirty) flushProvCalAddServiceSchedule();
+  }
+
   function patchProvCalAddServiceUi() {
     const p = myProvider();
     const draft = window.AppState.provCalAddDraft;
@@ -5443,8 +5658,10 @@
     const totals = provCalAddServiceTotals(selected);
     const hasSvc = selected.length > 0;
     const ids = draft.serviceIds || [];
+    const sheet = document.getElementById("prov-cal-add-service-sheet");
+    const scope = sheet && !sheet.hidden ? sheet : document;
 
-    document.querySelectorAll('[data-role="prov-cal-add-service-menu"] [data-action="prov-cal-add-service"]').forEach(function (opt) {
+    scope.querySelectorAll('[data-action="prov-cal-add-service"]').forEach(function (opt) {
       const id = opt.getAttribute("data-service-id");
       const on = ids.indexOf(id) !== -1;
       opt.classList.toggle("is-selected", on);
@@ -5495,6 +5712,7 @@
     if (!draft || !draft.serviceScheduleDirty) return;
     draft.serviceScheduleDirty = false;
     draft.servicePickOpen = false;
+    setProvCalAddServicePickOpen(false);
     saveState();
     renderAll();
   }
@@ -5743,28 +5961,6 @@
     }
     const hasSvc = selected.length > 0;
     const slots = hasSvc ? computeSlots(p, activeDate, duration, slotOpts) : [];
-    const catalogServices = (p && p.services) || [];
-    const serviceMenu =
-      renderProvCalAddInneDurationBlock(draft) +
-      (catalogServices.length
-        ? `<div class="prov-cal-add__service-sep" role="separator" aria-hidden="true"></div>` +
-          catalogServices
-            .map(function (s) {
-              const on = (draft.serviceIds || []).indexOf(s.id) !== -1;
-              const meta = [formatDuration(s.durationMin), formatPrice(s.price)].filter(Boolean).join(" · ");
-              const selectLabel = (on ? "Odznacz" : "Zaznacz") + " " + s.name;
-              return `<button type="button" class="avail-loc-pick__opt prov-cal-add__service-opt${on ? " is-selected" : ""}" role="option"
-                data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}"
-                aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
-                <span class="prov-cal-add__service-opt-main">
-                  <span class="avail-loc-pick__opt-label">${escapeHtml(s.name)}</span>
-                  ${meta ? `<span class="prov-cal-add__service-opt-meta">${escapeHtml(meta)}</span>` : ""}
-                </span>
-                <span class="service-row__check-visual${on ? " is-on" : ""}" aria-hidden="true"></span>
-              </button>`;
-            })
-            .join("")
-        : "");
     const dateStrip = hasSvc
       ? renderDateStripHtml(availDates, activeDate, { action: "prov-cal-add-date" })
       : `<p class="empty-note">Najpierw wybierz usługę.</p>`;
@@ -5877,7 +6073,7 @@
             <div class="prov-cal-add__field" aria-label="Usługa">
               <div class="avail-loc-pick avail-loc-pick--compact prov-cal-add__service-pick${servicePickOpen ? " is-open" : ""}" data-role="prov-cal-add-service-pick">
                 <button type="button" class="avail-loc-pick__btn${hasSvc ? " prov-cal-add__service-btn--filled" : ""}" data-action="toggle-prov-cal-add-service"
-                  aria-haspopup="listbox" aria-expanded="${servicePickOpen ? "true" : "false"}" aria-label="${escapeHtml(serviceAriaLabel)}">
+                  aria-haspopup="dialog" aria-expanded="${servicePickOpen ? "true" : "false"}" aria-label="${escapeHtml(serviceAriaLabel)}">
                   <span class="prov-cal-add__client-avatar" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82Z" />
@@ -5889,7 +6085,6 @@
                   </span>
                   <span class="avail-loc-pick__chevron" aria-hidden="true"></span>
                 </button>
-                <div class="avail-loc-pick__menu" data-role="prov-cal-add-service-menu" role="listbox" aria-multiselectable="true"${servicePickOpen ? "" : " hidden"}>${serviceMenu}</div>
               </div>
             </div>
 
@@ -7727,28 +7922,22 @@
   }
 
   function closeAvailPickMenus(except) {
-    let flushAddSchedule = false;
     document
       .querySelectorAll(
-        '[data-role="avail-loc-pick"].is-open, [data-role="avail-repeat-pick"].is-open, [data-role="prov-cal-add-service-pick"].is-open'
+        '[data-role="avail-loc-pick"].is-open, [data-role="avail-repeat-pick"].is-open'
       )
       .forEach(function (pick) {
         if (except && pick === except) return;
         pick.classList.remove("is-open");
         const btn = pick.querySelector(
-          '[data-action="toggle-avail-loc"], [data-action="toggle-avail-repeat"], [data-action="toggle-prov-cal-add-service"]'
+          '[data-action="toggle-avail-loc"], [data-action="toggle-avail-repeat"]'
         );
         const menu = pick.querySelector(
-          '[data-role="avail-loc-menu"], [data-role="avail-repeat-menu"], [data-role="prov-cal-add-service-menu"]'
+          '[data-role="avail-loc-menu"], [data-role="avail-repeat-menu"]'
         );
         if (btn) btn.setAttribute("aria-expanded", "false");
         if (menu) menu.hidden = true;
-        if (pick.getAttribute("data-role") === "prov-cal-add-service-pick" && window.AppState.provCalAddDraft) {
-          window.AppState.provCalAddDraft.servicePickOpen = false;
-          if (window.AppState.provCalAddDraft.serviceScheduleDirty) flushAddSchedule = true;
-        }
       });
-    if (flushAddSchedule) flushProvCalAddServiceSchedule();
   }
 
   function closeAvailLocMenus(except) {
@@ -9204,8 +9393,7 @@
   document.addEventListener("click", function (event) {
     if (
       !event.target.closest('[data-role="avail-loc-pick"]') &&
-      !event.target.closest('[data-role="avail-repeat-pick"]') &&
-      !event.target.closest('[data-role="prov-cal-add-service-pick"]')
+      !event.target.closest('[data-role="avail-repeat-pick"]')
     ) {
       closeAvailPickMenus();
     }
@@ -9221,6 +9409,21 @@
         const addDraft = window.AppState.provCalAddDraft;
         if (addDraft && addDraft.clientPickOpen) {
           closeProvCalAddClientPick();
+        }
+      }
+    }
+    if (
+      !event.target.closest('[data-role="prov-cal-add-service-pick"]') &&
+      !event.target.closest('[data-role="prov-cal-add-service-sheet"]') &&
+      !event.target.closest(".service-sheet__panel")
+    ) {
+      const sheet = document.getElementById("prov-cal-add-service-sheet");
+      if (sheet && sheet.classList.contains("client-sheet--arming")) {
+        /* arming */
+      } else {
+        const addDraft = window.AppState.provCalAddDraft;
+        if (addDraft && addDraft.servicePickOpen) {
+          closeProvCalAddServicePick();
         }
       }
     }
@@ -9595,18 +9798,28 @@
         break;
       case "toggle-prov-cal-add-service": {
         event.preventDefault();
-        const pick = btn.closest('[data-role="prov-cal-add-service-pick"]');
-        const willOpen = !(pick && pick.classList.contains("is-open"));
         const addDraft = window.AppState.provCalAddDraft;
+        const willOpen = !(addDraft && addDraft.servicePickOpen);
         if (addDraft) {
           addDraft.servicePickOpen = willOpen;
           if (willOpen) addDraft.clientPickOpen = false;
         }
-        if (willOpen) setProvCalAddClientPickOpen(false);
-        toggleAvailPickMenu(pick, btn, "prov-cal-add-service-menu");
-        if (!willOpen) flushProvCalAddServiceSchedule();
+        if (willOpen) {
+          setProvCalAddClientPickOpen(false);
+          setProvCalAddServicePickOpen(true);
+        } else {
+          closeProvCalAddServicePick();
+        }
         break;
       }
+      case "close-prov-cal-add-service-pick":
+        event.preventDefault();
+        {
+          const sheet = document.getElementById("prov-cal-add-service-sheet");
+          if (sheet && sheet.classList.contains("client-sheet--arming")) break;
+        }
+        closeProvCalAddServicePick();
+        break;
       case "prov-cal-add-service":
         event.preventDefault();
         toggleProvCalAddService(d.serviceId);
@@ -9618,6 +9831,11 @@
       case "prov-cal-add-new-client":
         event.preventDefault();
         pickProvCalAddClient(d.name || btn.getAttribute("data-name") || "", { addNew: true });
+        break;
+      case "toggle-client-sheet-new-details":
+        event.preventDefault();
+        event.stopPropagation();
+        toggleClientSheetNewDetails();
         break;
       case "prov-cal-add-toggle-desc":
         event.preventDefault();
@@ -9766,12 +9984,28 @@
     const sheetSearch = event.target.closest('[data-role="prov-cal-add-client-sheet-search"]');
     if (sheetSearch) {
       const draft = ensureProvCalAddDraft();
+      captureClientSheetNewDetails();
       draft.clientName = String(sheetSearch.value || "");
       draft.clientPickOpen = true;
       const formInput = document.querySelector('[data-role="prov-cal-add-client"]');
       if (formInput) formInput.value = draft.clientName;
       refreshProvCalAddClientMenu({ focusSearch: false });
       patchProvCalAddClientClearBtn();
+      saveState();
+      return;
+    }
+
+    const newPhoneInp = event.target.closest('[data-role="client-sheet-new-phone"]');
+    if (newPhoneInp) {
+      const draft = ensureProvCalAddDraft();
+      draft.clientSheetNewPhone = String(newPhoneInp.value || "");
+      saveState();
+      return;
+    }
+    const newEmailInp = event.target.closest('[data-role="client-sheet-new-email"]');
+    if (newEmailInp) {
+      const draft = ensureProvCalAddDraft();
+      draft.clientSheetNewEmail = String(newEmailInp.value || "");
       saveState();
       return;
     }
@@ -9806,6 +10040,7 @@
     draft.clientPickOpen = true;
     draft.servicePickOpen = false;
     closeAvailPickMenus();
+    setProvCalAddServicePickOpen(false);
     refreshProvCalAddClientMenu({ focusSearch: true });
   });
 
@@ -9823,6 +10058,7 @@
     draft.clientPickOpen = true;
     draft.servicePickOpen = false;
     closeAvailPickMenus();
+    setProvCalAddServicePickOpen(false);
     refreshProvCalAddClientMenu({ focusSearch: true });
   }, true);
 
@@ -11562,6 +11798,10 @@
       }
       if (window.AppState.myCalMonthOpen) {
         setMyCalMonthOpen(false);
+        return;
+      }
+      if (window.AppState.provCalAddDraft && window.AppState.provCalAddDraft.servicePickOpen) {
+        closeProvCalAddServicePick();
         return;
       }
       if (window.AppState.provCalAddDraft && window.AppState.provCalAddDraft.clientPickOpen) {
