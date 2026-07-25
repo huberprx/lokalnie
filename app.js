@@ -1296,7 +1296,8 @@
         searchQuery: typeof stored.searchQuery === "string" ? stored.searchQuery : base.searchQuery,
         searchCategory: typeof stored.searchCategory === "string" ? stored.searchCategory : base.searchCategory,
         searchSubcategory: typeof stored.searchSubcategory === "string" ? stored.searchSubcategory : base.searchSubcategory,
-        searchFiltersOpen: !!stored.searchFiltersOpen,
+        // Zaawansowane filtry zawsze startują schowane (nie przywracaj z localStorage).
+        searchFiltersOpen: false,
         searchFilterDates: Array.isArray(stored.searchFilterDates) ? stored.searchFilterDates.filter(Boolean) : base.searchFilterDates,
         searchFilterPeriods: Array.isArray(stored.searchFilterPeriods)
           ? stored.searchFilterPeriods.filter(function (p) {
@@ -1504,7 +1505,7 @@
     const withHome = !!opts.withHome || backOnSearch;
     const items = [
       { tab: "search", label: "Szukaj", icon: "search" },
-      { tab: "favorites", label: "Ulubione", icon: "heart" },
+      { tab: "favorites", label: "Ulubione", icon: "bookmark" },
       { tab: "myCalendar", label: "Kalendarz", icon: "calendar" },
       { tab: "account", label: "Menu", icon: "profile", menu: true },
     ];
@@ -2936,9 +2937,64 @@
       .join("");
   }
 
+  function resolveVisitNavAddress(b, provider) {
+    if (!provider) return "";
+    if (b && b.locationId && Array.isArray(provider.locations)) {
+      const loc = provider.locations.find(function (l) {
+        return l && l.id === b.locationId;
+      });
+      if (loc && loc.address) return String(loc.address);
+    }
+    if (b && b.locationLabel && Array.isArray(provider.locations)) {
+      const loc = provider.locations.find(function (l) {
+        return l && l.label === b.locationLabel && l.address;
+      });
+      if (loc && loc.address) return String(loc.address);
+    }
+    return provider.address ? String(provider.address) : "";
+  }
+
   function renderClientVisitCard(b) {
     const canReschedule = b.status === "rejected" || b.status === "cancelled";
     const canAccept = b.status === "proposed";
+    const provider = getProviderById(b.providerId);
+    const slug = provider ? provider.slug : "";
+    const address = resolveVisitNavAddress(b, provider);
+    const phone = provider && provider.phone ? String(provider.phone).replace(/\s/g, "") : "";
+    const placeLine = b.locationLabel || address || "";
+    const rebookChip = slug
+      ? `<button type="button" class="visit-card__chip" data-action="rebook-visit" data-booking-id="${escapeHtml(b.id)}">
+            <span class="visit-card__chip-icon visit-card__chip-icon--rebook" aria-hidden="true"></span>
+            Umów ponownie
+          </button>`
+      : "";
+    const quickActions =
+      address || phone || rebookChip
+        ? `<div class="visit-card__quick" role="group" aria-label="Szybkie akcje">
+            ${
+              address
+                ? `<a class="visit-card__chip" href="${escapeHtml(mapsSearchUrl(address))}" target="_blank" rel="noopener noreferrer">
+                    <span class="visit-card__chip-icon visit-card__chip-icon--nav" aria-hidden="true"></span>
+                    Nawiguj
+                  </a>`
+                : ""
+            }
+            ${
+              phone
+                ? `<a class="visit-card__chip" href="tel:${escapeHtml(phone)}">
+                    <span class="visit-card__chip-icon visit-card__chip-icon--call" aria-hidden="true"></span>
+                    Zadzwoń
+                  </a>`
+                : slug
+                  ? `<button type="button" class="visit-card__chip" data-action="call-provider" data-slug="${escapeHtml(slug)}">
+                      <span class="visit-card__chip-icon visit-card__chip-icon--call" aria-hidden="true"></span>
+                      Zadzwoń
+                    </button>`
+                  : ""
+            }
+            ${rebookChip}
+          </div>`
+        : "";
     return `
       <div class="visit-card" data-booking-id="${escapeHtml(b.id)}">
         <div class="visit-card__top">
@@ -2946,7 +3002,8 @@
           <span class="status-badge" data-status="${escapeHtml(b.status)}">${escapeHtml(STATUS_LABEL[b.status] || b.status)}</span>
         </div>
         <div class="visit-card__svc">${escapeHtml(b.serviceNames.join(", "))}</div>
-        <div class="visit-card__when">${escapeHtml(formatDateLong(b.dateISO))} · ${escapeHtml(b.from)}→${escapeHtml(b.to)}${b.locationLabel ? " · " + escapeHtml(b.locationLabel) : ""}</div>
+        <div class="visit-card__when">${escapeHtml(formatDateLong(b.dateISO))} · ${escapeHtml(b.from)}→${escapeHtml(b.to)}${placeLine ? " · " + escapeHtml(placeLine) : ""}</div>
+        ${quickActions}
         ${
           canAccept
             ? `<div class="visit-card__actions">
@@ -2958,7 +3015,7 @@
         ${
           canReschedule
             ? `<div class="visit-card__actions">
-                 <button type="button" class="btn btn--ghost btn--sm" data-action="open-profile" data-slug="${escapeHtml(getProviderById(b.providerId) ? getProviderById(b.providerId).slug : "")}">Wybierz inny termin</button>
+                 <button type="button" class="btn btn--ghost btn--sm" data-action="open-profile" data-slug="${escapeHtml(slug)}">Wybierz inny termin</button>
                </div>`
             : ""
         }
@@ -4711,34 +4768,84 @@
     return window.AppState.providerClients[providerId];
   }
 
-  /** Unikalne imiona klientów, którzy już byli u usługodawcy (+ ręcznie dodani). */
-  function collectProviderClientNames(providerId) {
+  /** Unikalni klienci usługodawcy (zapisani + z wizyt/próśb). */
+  function collectProviderClients(providerId) {
     const seen = Object.create(null);
-    const names = [];
-    function add(name) {
-      const n = String(name || "").trim();
+    const list = [];
+    function add(entry) {
+      const n = String((entry && entry.name) || "").trim();
       if (!n) return;
       const key = n.toLowerCase();
-      if (seen[key]) return;
-      seen[key] = true;
-      names.push(n);
+      if (seen[key]) {
+        const prev = seen[key];
+        if (!prev.phone && entry.phone) prev.phone = String(entry.phone || "").trim();
+        if (!prev.email && entry.email) prev.email = String(entry.email || "").trim();
+        if (!prev.address && entry.address) prev.address = String(entry.address || "").trim();
+        return;
+      }
+      const client = {
+        id: (entry && entry.id) || "cli-virt-" + key.replace(/\s+/g, "-"),
+        name: n,
+        phone: String((entry && entry.phone) || "").trim(),
+        email: String((entry && entry.email) || "").trim(),
+        address: String((entry && entry.address) || "").trim(),
+      };
+      seen[key] = client;
+      list.push(client);
     }
-    ensureProviderClientsList(providerId).forEach(function (c) {
-      add(c && c.name);
-    });
+    ensureProviderClientsList(providerId).forEach(add);
     (window.AppState.bookings || []).forEach(function (b) {
       if (!b || b.providerId !== providerId) return;
-      add(b.clientName);
+      add({
+        name: b.clientName,
+        phone: b.clientPhone,
+        email: b.clientEmail,
+        address: b.clientAddress,
+      });
     });
     (window.AppState.requests || []).forEach(function (r) {
       if (!r || r.providerId !== providerId) return;
-      add(r.clientName);
+      add({
+        name: r.clientName,
+        phone: r.clientPhone,
+        email: r.clientEmail,
+        address: r.clientAddress,
+      });
     });
-    names.sort(function (a, b) {
-      return a.localeCompare(b, "pl", { sensitivity: "base" });
+    list.sort(function (a, b) {
+      return a.name.localeCompare(b.name, "pl", { sensitivity: "base" });
     });
-    return names;
+    return list;
   }
+
+  /** Unikalne imiona klientów, którzy już byli u usługodawcy (+ ręcznie dodani). */
+  function collectProviderClientNames(providerId) {
+    return collectProviderClients(providerId).map(function (c) {
+      return c.name;
+    });
+  }
+
+  function clientContactInitials(name) {
+    const parts = String(name || "")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (!parts.length) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+  }
+
+  function clientContactLetter(name) {
+    const ch = String(name || "")
+      .trim()
+      .charAt(0)
+      .toLocaleUpperCase("pl-PL");
+    if (!ch) return "#";
+    if (/[A-ZĄĆĘŁŃÓŚŹŻ]/i.test(ch)) return ch;
+    return "#";
+  }
+
+  const CLIENT_SHEET_LETTERS = "AĄBCĆDEĘFGHIJKLŁMNŃOÓPQRSŚTUVWXYZŹŻ#".split("");
 
   function findProviderClientByName(providerId, name) {
     const key = String(name || "")
@@ -4816,34 +4923,88 @@
   function renderProvCalAddClientMenuHtml(providerId, query) {
     const raw = String(query || "").trim();
     const q = raw.toLowerCase();
-    const names = collectProviderClientNames(providerId);
+    const clients = collectProviderClients(providerId);
     const filtered = q
-      ? names.filter(function (n) {
-          return n.toLowerCase().indexOf(q) !== -1;
+      ? clients.filter(function (c) {
+          const hay = (c.name + " " + (c.phone || "") + " " + (c.email || "")).toLowerCase();
+          return hay.indexOf(q) !== -1;
         })
-      : names;
-    const exact = !!q && names.some(function (n) {
-      return n.toLowerCase() === q;
+      : clients;
+    const exact = !!q && clients.some(function (c) {
+      return c.name.toLowerCase() === q;
     });
-    let html = filtered
-      .slice(0, 8)
-      .map(function (n) {
-        return `<button type="button" class="avail-loc-pick__opt" role="option"
-          data-action="prov-cal-add-pick-client" data-name="${escapeHtml(n)}">
-          <span class="avail-loc-pick__opt-label">${escapeHtml(n)}</span>
-        </button>`;
-      })
-      .join("");
+
+    const byLetter = Object.create(null);
+    filtered.forEach(function (c) {
+      const letter = clientContactLetter(c.name);
+      if (!byLetter[letter]) byLetter[letter] = [];
+      byLetter[letter].push(c);
+    });
+    const activeLetters = CLIENT_SHEET_LETTERS.filter(function (L) {
+      return byLetter[L] && byLetter[L].length;
+    });
+
+    let listHtml = "";
     if (raw && !exact) {
-      html += `<button type="button" class="avail-loc-pick__opt prov-cal-add__client-add" role="option"
-        data-action="prov-cal-add-new-client" data-name="${escapeHtml(raw)}">
-        <span class="avail-loc-pick__opt-label">Dodaj „${escapeHtml(raw)}”</span>
-      </button>`;
+      listHtml += `
+        <button type="button" class="client-sheet__row client-sheet__row--add" role="option"
+          data-action="prov-cal-add-new-client" data-name="${escapeHtml(raw)}">
+          <span class="client-sheet__avatar client-sheet__avatar--add" aria-hidden="true">+</span>
+          <span class="client-sheet__meta">
+            <span class="client-sheet__name">Dodaj „${escapeHtml(raw)}”</span>
+            <span class="client-sheet__sub">Nowy kontakt</span>
+          </span>
+        </button>`;
     }
-    if (!html) {
-      html = `<p class="empty-note prov-cal-add__client-empty">Wpisz imię klienta — możesz dodać nową osobę.</p>`;
+    activeLetters.forEach(function (letter) {
+      listHtml += `<div class="client-sheet__section" data-letter="${escapeHtml(letter)}">
+        <div class="client-sheet__letter" aria-hidden="true">${escapeHtml(letter)}</div>`;
+      byLetter[letter].forEach(function (c) {
+        const sub = c.phone || c.email || "";
+        listHtml += `
+          <button type="button" class="client-sheet__row" role="option"
+            data-action="prov-cal-add-pick-client" data-name="${escapeHtml(c.name)}">
+            <span class="client-sheet__avatar" aria-hidden="true">${escapeHtml(clientContactInitials(c.name))}</span>
+            <span class="client-sheet__meta">
+              <span class="client-sheet__name">${escapeHtml(c.name)}</span>
+              ${sub ? `<span class="client-sheet__sub">${escapeHtml(sub)}</span>` : ""}
+            </span>
+          </button>`;
+      });
+      listHtml += `</div>`;
+    });
+    if (!listHtml) {
+      listHtml = `<p class="empty-note client-sheet__empty">Brak kontaktów. Wpisz imię, żeby dodać nowego klienta.</p>`;
     }
-    return html;
+
+    const indexHtml = CLIENT_SHEET_LETTERS.map(function (letter) {
+      const on = !!byLetter[letter];
+      return `<button type="button" class="client-sheet__index-btn${on ? " is-on" : ""}"
+        data-action="client-sheet-jump" data-letter="${escapeHtml(letter)}"
+        ${on ? "" : " disabled tabindex=\"-1\""}
+        aria-label="Przejdź do ${escapeHtml(letter)}">${escapeHtml(letter === "#" ? "#" : letter)}</button>`;
+    }).join("");
+
+    return `
+      <button type="button" class="client-sheet__backdrop" data-action="close-prov-cal-add-client-pick" aria-label="Zamknij kontakty"></button>
+      <div class="client-sheet__panel" role="dialog" aria-modal="true" aria-label="Kontakty">
+        <div class="client-sheet__grab" aria-hidden="true"></div>
+        <header class="client-sheet__head">
+          <h3 class="client-sheet__title">Kontakty</h3>
+          <button type="button" class="client-sheet__close" data-action="close-prov-cal-add-client-pick" aria-label="Zamknij">
+            <span aria-hidden="true">×</span>
+          </button>
+        </header>
+        <div class="client-sheet__search">
+          <span class="client-sheet__search-icon" aria-hidden="true"></span>
+          <input type="search" class="client-sheet__search-input" data-role="prov-cal-add-client-sheet-search"
+            value="${escapeHtml(raw)}" placeholder="Szukaj" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="client-sheet__body">
+          <div class="client-sheet__list" data-role="client-sheet-list" role="listbox">${listHtml}</div>
+          <nav class="client-sheet__index" aria-label="Alfabet">${indexHtml}</nav>
+        </div>
+      </div>`;
   }
 
   function ensureProvCalAddClientMenuEl() {
@@ -4851,45 +5012,19 @@
     if (!menu) {
       menu = document.createElement("div");
       menu.id = "prov-cal-add-client-menu";
-      menu.className = "avail-loc-pick__menu prov-cal-add__client-menu";
+      menu.className = "client-sheet";
       menu.setAttribute("data-role", "prov-cal-add-client-menu");
-      menu.setAttribute("role", "listbox");
       menu.hidden = true;
     }
-    // Poza panelem (transform/overflow), inaczej chmurka jest niewidoczna.
     if (menu.parentNode !== document.body) document.body.appendChild(menu);
     return menu;
   }
 
-  function positionProvCalAddClientMenu() {
-    const pick = document.querySelector('[data-role="prov-cal-add-client-pick"]');
-    const menu = ensureProvCalAddClientMenuEl();
-    const row = pick && pick.querySelector(".prov-cal-add__client-row");
-    if (!pick || !row) return;
-    const rect = row.getBoundingClientRect();
-    const gap = 6;
-    let top = rect.bottom + gap;
-    let left = rect.left;
-    const width = Math.max(rect.width, 180);
-    menu.hidden = false;
-    menu.style.position = "fixed";
-    menu.style.zIndex = "10060";
-    menu.style.top = "0px";
-    menu.style.left = "0px";
-    menu.style.width = width + "px";
-    menu.style.right = "auto";
-    menu.style.bottom = "auto";
-    menu.style.visibility = "hidden";
-    const menuRect = menu.getBoundingClientRect();
-    if (top + menuRect.height > window.innerHeight - 8) {
-      top = Math.max(8, rect.top - menuRect.height - gap);
-    }
-    if (left + width > window.innerWidth - 8) {
-      left = Math.max(8, window.innerWidth - width - 8);
-    }
-    menu.style.top = top + "px";
-    menu.style.left = left + "px";
-    menu.style.visibility = "visible";
+  function jumpClientSheetLetter(letter) {
+    const list = document.querySelector('[data-role="client-sheet-list"]');
+    if (!list || !letter) return;
+    const section = list.querySelector('.client-sheet__section[data-letter="' + letter + '"]');
+    if (section) section.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 
   function setProvCalAddClientPickOpen(open) {
@@ -4902,11 +5037,24 @@
     if (input) input.setAttribute("aria-expanded", open ? "true" : "false");
     if (!open) {
       menu.hidden = true;
-      menu.style.visibility = "";
+      menu.classList.remove("is-open");
       menu.innerHTML = "";
+      document.body.classList.remove("client-sheet-open");
       return;
     }
-    positionProvCalAddClientMenu();
+    menu.hidden = false;
+    menu.classList.add("is-open");
+    document.body.classList.add("client-sheet-open");
+    requestAnimationFrame(function () {
+      const search = menu.querySelector('[data-role="prov-cal-add-client-sheet-search"]');
+      if (search && !String((draft && draft.clientName) || "").trim()) {
+        try {
+          search.focus({ preventScroll: true });
+        } catch (err) {
+          search.focus();
+        }
+      }
+    });
   }
 
   function refreshProvCalAddClientMenu() {
@@ -4914,8 +5062,24 @@
     const p = myProvider();
     if (!draft || !p) return;
     const menu = ensureProvCalAddClientMenuEl();
+    const open = !!draft.clientPickOpen;
+    if (!open) {
+      setProvCalAddClientPickOpen(false);
+      return;
+    }
+    const list = menu.querySelector('[data-role="client-sheet-list"]');
+    const scrollTop = list ? list.scrollTop : 0;
     menu.innerHTML = renderProvCalAddClientMenuHtml(p.id, draft.clientName || "");
-    setProvCalAddClientPickOpen(!!draft.clientPickOpen);
+    setProvCalAddClientPickOpen(true);
+    const list2 = menu.querySelector('[data-role="client-sheet-list"]');
+    if (list2) list2.scrollTop = scrollTop;
+  }
+
+  function closeProvCalAddClientPick() {
+    const draft = window.AppState.provCalAddDraft;
+    if (draft) draft.clientPickOpen = false;
+    setProvCalAddClientPickOpen(false);
+    saveState();
   }
 
   function pickProvCalAddClient(name, opts) {
@@ -8117,9 +8281,12 @@
       "click",
       function (event) {
         if (!filterDrag.moved) return;
+        const suppress = !!event.target.closest("[data-filter-scroll], .service-variant-carousel__track");
+        filterDrag.moved = false;
+        // Tylko klik na przeciąganym torze — nie blokuj przycisku Filtry / innych akcji.
+        if (!suppress) return;
         event.preventDefault();
         event.stopPropagation();
-        filterDrag.moved = false;
       },
       true
     );
@@ -8248,12 +8415,14 @@
     });
   }
 
-  function openProvider(slug) {
+  function openProvider(slug, opts) {
+    opts = opts || {};
     if (window.AppState.closingProvider) return;
     const p = getProviderBySlug(slug);
     if (!p) return;
 
     if (
+      !opts.force &&
       clientUsesDesktopBookingLayout() &&
       window.AppState.searchOpenSlug === slug &&
       (window.AppState.screen.client === "search" || window.AppState.screen.client === "favorites")
@@ -8263,6 +8432,24 @@
     }
 
     initDraftForProvider(p);
+    const preferredIds = Array.isArray(opts.serviceIds) ? opts.serviceIds.filter(Boolean) : [];
+    if (preferredIds.length) {
+      const validIds = preferredIds.filter(function (id) {
+        return (p.services || []).some(function (s) {
+          return s && s.id === id;
+        });
+      });
+      if (validIds.length) {
+        window.AppState.draft.serviceIds = validIds;
+        ensureDraftServiceVariants(window.AppState.draft);
+        validIds.forEach(function (id) {
+          const svc = (p.services || []).find(function (s) {
+            return s && s.id === id;
+          });
+          if (svc) selectedVariantIdForService(window.AppState.draft, svc);
+        });
+      }
+    }
     window.AppState.params.client = { slug: slug };
 
     if (clientUsesDesktopBookingLayout()) {
@@ -8278,6 +8465,22 @@
     saveState();
     renderAll();
     window.AppState.bookingPanelEnterSlug = null;
+  }
+
+  function rebookVisit(bookingId) {
+    const b = (window.AppState.bookings || []).find(function (x) {
+      return x && x.id === bookingId;
+    });
+    if (!b) {
+      showToast("Nie znaleziono wizyty.");
+      return;
+    }
+    const p = getProviderById(b.providerId);
+    if (!p) {
+      showToast("Usługodawca niedostępny.");
+      return;
+    }
+    openProvider(p.slug, { serviceIds: b.serviceIds || [], force: true });
   }
 
   function openProfile(slug) {
@@ -8921,12 +9124,12 @@
     }
     if (
       !event.target.closest('[data-role="prov-cal-add-client-pick"]') &&
-      !event.target.closest('[data-role="prov-cal-add-client-menu"]')
+      !event.target.closest('[data-role="prov-cal-add-client-menu"]') &&
+      !event.target.closest(".client-sheet__panel")
     ) {
       const addDraft = window.AppState.provCalAddDraft;
       if (addDraft && addDraft.clientPickOpen) {
-        addDraft.clientPickOpen = false;
-        setProvCalAddClientPickOpen(false);
+        closeProvCalAddClientPick();
       }
     }
     if (
@@ -9018,6 +9221,7 @@
         break;
       case "open-provider": openProvider(d.slug); break;
       case "open-profile": openProvider(d.slug); break;
+      case "rebook-visit": rebookVisit(d.bookingId); break;
       case "preview-avatar":
         event.preventDefault();
         event.stopPropagation();
@@ -9285,6 +9489,14 @@
         event.preventDefault();
         focusProvCalAddClientSearch();
         break;
+      case "close-prov-cal-add-client-pick":
+        event.preventDefault();
+        closeProvCalAddClientPick();
+        break;
+      case "client-sheet-jump":
+        event.preventDefault();
+        jumpClientSheetLetter(d.letter);
+        break;
       case "toggle-prov-cal-add-service": {
         event.preventDefault();
         const pick = btn.closest('[data-role="prov-cal-add-service-pick"]');
@@ -9454,6 +9666,32 @@
       closeAvailPickMenus();
       refreshProvCalAddClientMenu();
       patchProvCalAddClientClearBtn();
+      saveState();
+      return;
+    }
+
+    const sheetSearch = event.target.closest('[data-role="prov-cal-add-client-sheet-search"]');
+    if (sheetSearch) {
+      const draft = ensureProvCalAddDraft();
+      draft.clientName = String(sheetSearch.value || "");
+      draft.clientPickOpen = true;
+      const formInput = document.querySelector('[data-role="prov-cal-add-client"]');
+      if (formInput) formInput.value = draft.clientName;
+      refreshProvCalAddClientMenu();
+      patchProvCalAddClientClearBtn();
+      // Zachowaj fokus w wyszukiwarce panelu.
+      requestAnimationFrame(function () {
+        const again = document.querySelector('[data-role="prov-cal-add-client-sheet-search"]');
+        if (again) {
+          const pos = again.value.length;
+          again.focus();
+          try {
+            again.setSelectionRange(pos, pos);
+          } catch (err) {
+            /* ignore */
+          }
+        }
+      });
       saveState();
       return;
     }
@@ -11225,6 +11463,10 @@
       }
       if (window.AppState.myCalMonthOpen) {
         setMyCalMonthOpen(false);
+        return;
+      }
+      if (window.AppState.provCalAddDraft && window.AppState.provCalAddDraft.clientPickOpen) {
+        closeProvCalAddClientPick();
         return;
       }
       closeProviderCardMenu();
