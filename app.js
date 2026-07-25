@@ -78,6 +78,8 @@
       myCalMonth: null,
       myCalDate: null,
       myCalMonthOpen: false,
+      /** Filtry statusów wizyt w Mój kalendarz: confirmed|cancelled|rejected (puste = wszystkie). */
+      myCalStatusFilters: [],
       provCalDate: null,
       provCalHourH: 60,
       provCalView: "week",
@@ -1320,6 +1322,11 @@
         myCalMonth: typeof stored.myCalMonth === "string" ? stored.myCalMonth : base.myCalMonth,
         myCalDate: typeof stored.myCalDate === "string" ? stored.myCalDate : base.myCalDate,
         myCalMonthOpen: typeof stored.myCalMonthOpen === "boolean" ? stored.myCalMonthOpen : base.myCalMonthOpen,
+        myCalStatusFilters: Array.isArray(stored.myCalStatusFilters)
+          ? stored.myCalStatusFilters.filter(function (s) {
+              return s === "confirmed" || s === "cancelled" || s === "rejected";
+            })
+          : base.myCalStatusFilters,
         provCalDate: typeof stored.provCalDate === "string" ? stored.provCalDate : base.provCalDate,
         provCalHourH:
           typeof stored.provCalHourH === "number" && stored.provCalHourH > 0
@@ -2598,6 +2605,42 @@
     renderAll();
   }
 
+  function toggleMyCalStatusFilter(status) {
+    const allowed = { confirmed: 1, cancelled: 1, rejected: 1 };
+    if (!allowed[status]) return;
+    const cur = Array.isArray(window.AppState.myCalStatusFilters)
+      ? window.AppState.myCalStatusFilters.slice()
+      : [];
+    const i = cur.indexOf(status);
+    if (i === -1) cur.push(status);
+    else cur.splice(i, 1);
+    window.AppState.myCalStatusFilters = cur;
+    saveState();
+    renderAll();
+  }
+
+  function renderMyCalStatusFilters() {
+    const active = Array.isArray(window.AppState.myCalStatusFilters)
+      ? window.AppState.myCalStatusFilters
+      : [];
+    const chips = [
+      { id: "confirmed", label: "Potwierdzone" },
+      { id: "cancelled", label: "Odwołane" },
+      { id: "rejected", label: "Odrzucone" },
+    ];
+    return `
+      <div class="my-cal-status-filters" role="group" aria-label="Filtr statusów wizyt">
+        ${chips
+          .map(function (chip) {
+            const on = active.indexOf(chip.id) !== -1;
+            return `<button type="button" class="my-cal-status-chip${on ? " is-on" : ""}"
+              data-action="my-cal-status-filter" data-status="${chip.id}"
+              aria-pressed="${on ? "true" : "false"}">${escapeHtml(chip.label)}</button>`;
+          })
+          .join("")}
+      </div>`;
+  }
+
   function renderMyCalendar() {
     const list = clientVisits();
     const visitSet = new Set(
@@ -2610,8 +2653,13 @@
     const monthOpen = !!window.AppState.myCalMonthOpen;
     const desktop = usesDesktopLayout();
     const monthLabel = monthLabelFromISO(pickerMonth + "-01") || "Miesiąc";
+    const statusFilters = Array.isArray(window.AppState.myCalStatusFilters)
+      ? window.AppState.myCalStatusFilters
+      : [];
     const filtered = list.filter(function (b) {
-      return b.dateISO === selectedDate;
+      if (b.dateISO !== selectedDate) return false;
+      if (!statusFilters.length) return true;
+      return statusFilters.indexOf(b.status) !== -1;
     });
     const listTitle = `Wizyty · ${formatDateLong(selectedDate)}`;
     const monthSide = desktop
@@ -2657,11 +2705,16 @@
               ${renderMyCalWeekStrip(selectedDate, visitSet)}
               <section class="my-cal-visits" aria-label="${escapeHtml(listTitle)}">
                 <h3 class="booking__label booking__label--caps">${escapeHtml(listTitle)}</h3>
+                ${renderMyCalStatusFilters()}
                 <div class="visit-list">
                   ${
                     filtered.length
                       ? filtered.map(renderClientVisitCard).join("")
-                      : `<p class="empty-note">Brak wizyt w tym dniu.</p>`
+                      : `<p class="empty-note">${
+                          statusFilters.length
+                            ? "Brak wizyt o wybranym statusie w tym dniu."
+                            : "Brak wizyt w tym dniu."
+                        }</p>`
                   }
                 </div>
               </section>
@@ -9714,6 +9767,10 @@
       case "my-cal-month-toggle": toggleMyCalMonthPanel(); break;
       case "my-cal-today": goMyCalToday(); break;
       case "my-cal-pick-date": pickMyCalDate(d.date); break;
+      case "my-cal-status-filter":
+        event.preventDefault();
+        toggleMyCalStatusFilter(d.status);
+        break;
       case "avail-week-prev":
         event.preventDefault();
         scrollAvailStripByWeeks(-1);
