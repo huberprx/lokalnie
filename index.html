@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=392" />
+  <link rel="stylesheet" href="styles.css?v=407" />
 </head>
 <body>
 
@@ -174,20 +174,12 @@
           <button type="button" class="site-nav__link" data-action="open-my-calendar">Mój kalendarz</button>
         </nav>
 
-        <!-- Przełącznik ról — widoczny gdy klient MA opłaconą rolę usługodawcy -->
-        <div class="app-role-switch" id="app-role-switch" hidden>
-          <button type="button" class="app-role-btn app-role-btn--client" data-action="switch-role" data-role="client" aria-pressed="true">
-            Klient
-          </button>
-          <button type="button" class="app-role-btn app-role-btn--provider" data-action="switch-role" data-role="provider" aria-pressed="false">
-            Usługodawca
-          </button>
-        </div>
-
         <div class="app-header__right">
           <span class="app-header__user" id="app-header-user"></span>
-          <button type="button" class="site-nav__action" data-action="logout">
-            Wyloguj
+          <button type="button" class="app-header__menu-btn" data-action="toggle-app-menu"
+            aria-label="Menu" aria-expanded="false" aria-controls="app-menu-panel">
+            <span class="app-header__menu-label">Menu</span>
+            <span class="app-header__menu-icon" aria-hidden="true"></span>
           </button>
         </div>
       </div>
@@ -199,7 +191,7 @@
   <div class="toast" id="app-toast" role="status" aria-live="polite" hidden></div>
 
   <script src="data.js?v=8"></script>
-  <script src="app.js?v=392"></script>
+  <script src="app.js?v=407"></script>
   <script src="simulator.js?v=12"></script>
   <script src="chat.js"></script>
   <script src="calendar.js"></script>

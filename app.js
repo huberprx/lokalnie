@@ -1227,8 +1227,6 @@
   }
 
   function renderSearchMobileBar() {
-    const favCount = (window.AppState.favorites || []).length;
-    const hasFavs = favCount > 0;
     return `
       <div class="search-bar search-bar--mobile">
         <div class="search-bar__row search-bar__row--query">
@@ -1237,11 +1235,6 @@
             <input type="search" class="search-bar__input" placeholder="Znajdź coś dla siebie"
               value="${escapeHtml(window.AppState.searchQuery || "")}" data-role="search-input" />
           </label>
-          <button type="button" class="search-bar__fav${hasFavs ? " search-bar__fav--on" : ""}"
-            data-action="go-screen" data-screen="favorites"
-            aria-label="Ulubione${hasFavs ? ", " + favCount : ""}" title="Ulubione">
-            <span class="search-bar__fav-icon" aria-hidden="true"></span>
-          </button>
         </div>
         <div class="search-bar__row search-bar__row--meta">
           <label class="search-bar__segment search-bar__segment--location search-bar__segment--block">${searchLocationFieldHtml()}</label>
@@ -1619,6 +1612,7 @@
           </div>
 
           <nav class="app-menu__links" aria-label="Informacje">
+            <button type="button" class="app-menu__link" data-action="go-screen" data-screen="favorites">Ulubione</button>
             ${
               isPwaInstalled()
                 ? ""
@@ -1652,6 +1646,7 @@
   function syncAppMenuNavButtons(open) {
     document.querySelectorAll('[data-action="toggle-app-menu"]').forEach(function (btn) {
       btn.classList.toggle("bottom-nav__item--active", !!open);
+      btn.classList.toggle("app-header__menu-btn--open", !!open);
       btn.setAttribute("aria-expanded", open ? "true" : "false");
     });
     syncBottomNavIndicators(null);
@@ -2449,8 +2444,9 @@
       </div>`;
   }
 
-  function renderMyCalMonthPanel(selectedISO, visitSet) {
-    if (!window.AppState.myCalMonthOpen) return "";
+  function renderMyCalMonthPanel(selectedISO, visitSet, opts) {
+    opts = opts || {};
+    if (!opts.force && !window.AppState.myCalMonthOpen) return "";
     const pickerMonth = ensureMyCalMonth();
     const parts = pickerMonth.split("-");
     const year = Number(parts[0]) || 2026;
@@ -2485,9 +2481,12 @@
       cells += `<span class="gcal-month__day gcal-month__day--pad" aria-hidden="true"></span>`;
     }
 
-    const reveal = !!window._myCalMonthAnimateReveal;
+    const side = !!opts.side;
+    const reveal = !side && !!window._myCalMonthAnimateReveal;
     return `
-      <div class="gcal-month${reveal ? "" : " gcal-month--instant"}" data-role="my-cal-month-panel">
+      <div class="gcal-month${reveal ? "" : " gcal-month--instant"}${side ? " gcal-month--side" : ""}" data-role="${
+        side ? "my-cal-month-side" : "my-cal-month-panel"
+      }">
         <div class="gcal-month__cal" data-role="my-cal-month-swipe">
           <div class="gcal-month__weekdays">${CAL_WEEKDAYS.map(function (w) {
             return `<span>${w}</span>`;
@@ -2566,6 +2565,7 @@
   }
 
   function toggleMyCalMonthPanel() {
+    if (usesDesktopLayout()) return;
     setMyCalMonthOpen(!window.AppState.myCalMonthOpen);
   }
 
@@ -2605,14 +2605,18 @@
     const selectedDate = ensureMyCalDate();
     const pickerMonth = ensureMyCalMonth();
     const monthOpen = !!window.AppState.myCalMonthOpen;
+    const desktop = usesDesktopLayout();
     const monthLabel = monthLabelFromISO(pickerMonth + "-01") || "Miesiąc";
     const filtered = list.filter(function (b) {
       return b.dateISO === selectedDate;
     });
     const listTitle = `Wizyty · ${formatDateLong(selectedDate)}`;
+    const monthSide = desktop
+      ? renderMyCalMonthPanel(selectedDate, visitSet, { force: true, side: true })
+      : "";
 
     return `
-      <div class="app-screen app-screen--client app-screen--my-cal">
+      <div class="app-screen app-screen--client app-screen--my-cal${desktop ? " app-screen--my-cal-desktop" : ""}">
         <div class="my-cal-top">
           <header class="screen-head screen-head--prov-cal">
             <div class="prov-cal-head">
@@ -2624,9 +2628,11 @@
               </div>
               <div class="prov-cal-head__actions">
                 <div class="prov-cal__tools" role="toolbar" aria-label="Narzędzia kalendarza">
-                  <button type="button" class="prov-cal__tool prov-cal__tool--month-label${monthOpen ? " is-on" : ""}"
+                  <button type="button" class="prov-cal__tool prov-cal__tool--month-label${
+                    monthOpen || desktop ? " is-on" : ""
+                  }"
                     data-action="my-cal-month-toggle"
-                    aria-label="${escapeHtml(monthLabel)}" aria-pressed="${monthOpen ? "true" : "false"}">
+                    aria-label="${escapeHtml(monthLabel)}" aria-pressed="${monthOpen || desktop ? "true" : "false"}">
                     <span class="prov-cal__month-name">${escapeHtml(monthLabel)}</span>
                     <span class="prov-cal__month-chevron" aria-hidden="true"></span>
                   </button>
@@ -2640,17 +2646,24 @@
           </div>
         </div>
         <div class="my-cal-body app-scroll">
-          ${renderMyCalWeekStrip(selectedDate, visitSet)}
-          <section class="my-cal-visits" aria-label="${escapeHtml(listTitle)}">
-            <h3 class="booking__label booking__label--caps">${escapeHtml(listTitle)}</h3>
-            <div class="visit-list">
-              ${
-                filtered.length
-                  ? filtered.map(renderClientVisitCard).join("")
-                  : `<p class="empty-note">Brak wizyt w tym dniu.</p>`
-              }
+          <div class="my-cal-layout">
+            <aside class="my-cal-layout__side" aria-label="Kalendarz miesiąca">
+              ${monthSide}
+            </aside>
+            <div class="my-cal-layout__main">
+              ${renderMyCalWeekStrip(selectedDate, visitSet)}
+              <section class="my-cal-visits" aria-label="${escapeHtml(listTitle)}">
+                <h3 class="booking__label booking__label--caps">${escapeHtml(listTitle)}</h3>
+                <div class="visit-list">
+                  ${
+                    filtered.length
+                      ? filtered.map(renderClientVisitCard).join("")
+                      : `<p class="empty-note">Brak wizyt w tym dniu.</p>`
+                  }
+                </div>
+              </section>
             </div>
-          </section>
+          </div>
         </div>
         ${bottomNav("myCalendar")}
       </div>`;
@@ -3212,7 +3225,7 @@
             <h2 class="screen-head__title">Pulpit</h2>
             <p class="screen-head__sub">${escapeHtml(myProvider() ? myProvider().name : "")}</p>
           </header>
-          <div class="stat-row">
+          <div class="stat-row" role="region" aria-label="Statystyki">
             <div class="stat-card"><span class="stat-card__num">${upcoming.length}</span><span class="stat-card__lbl">Nadchodzące wizyty</span></div>
             <div class="stat-card"><span class="stat-card__num">${pendingCount}</span><span class="stat-card__lbl">Oczekujące prośby</span></div>
           </div>
@@ -3224,7 +3237,7 @@
                 ${showFree ? "checked" : ""} aria-label="Pokazuj wolne terminy" />
             </label>
           </div>
-          <div class="visit-list">
+          <div class="visit-list visit-list--carousel" role="region" aria-label="Lista nadchodzących wizyt">
             ${
               upcoming.length
                 ? renderProviderVisitTimeline(upcoming, { showFree: showFree })
@@ -5284,22 +5297,19 @@
     draft.clientPickOpen = false;
     setProvCalAddClientPickOpen(false);
     saveState();
-    const pick = document.querySelector('[data-role="prov-cal-add-client-pick"]');
-    const contacts = document.getElementById("prov-cal-add-client-contacts");
-    const expand = pick && pick.querySelector('[data-action="toggle-prov-cal-add-client-details"]');
-    if (pick && contacts && expand) {
-      const open = !!draft.clientDetailsOpen;
-      pick.classList.toggle("is-details-open", open);
-      expand.classList.toggle("is-open", open);
-      expand.setAttribute("aria-expanded", open ? "true" : "false");
-      expand.setAttribute("aria-label", open ? "Ukryj dane kontaktowe" : "Pokaż dane kontaktowe");
-      contacts.setAttribute("aria-hidden", open ? "false" : "true");
-      contacts.querySelectorAll("input").forEach(function (inp) {
-        inp.tabIndex = open ? 0 : -1;
-      });
-      return;
-    }
     renderAll();
+    if (draft.clientDetailsOpen) {
+      requestAnimationFrame(function () {
+        const phone = document.querySelector('[data-role="prov-cal-add-phone"]');
+        if (phone) {
+          try {
+            phone.focus({ preventScroll: true });
+          } catch (err) {
+            phone.focus();
+          }
+        }
+      });
+    }
   }
 
   function clearProvCalAddClient() {
