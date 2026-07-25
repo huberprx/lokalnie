@@ -2714,6 +2714,33 @@ body.pwa-install-help-open {
   gap: 0.5rem;
 }
 
+.search-bar__logo {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 2.75rem;
+  width: 2.75rem;
+  min-height: 2.75rem;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.search-bar__logo-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .search-bar--mobile .search-bar__segment--block {
   border: none;
   border-radius: 10px;
@@ -3345,6 +3372,7 @@ body.pwa-install-help-open {
   row-gap: 0.12rem;
   padding-top: 0.55rem;
   padding-bottom: 0.12rem;
+  background: #eef0f4;
 }
 
 .provider-card__head {
@@ -5307,6 +5335,7 @@ body.service-photo-preview-open {
     margin-bottom: 0;
     row-gap: 0.08rem;
     padding: 0.4rem var(--app-pad-x) 0.08rem;
+    background: #eef0f4;
   }
 
   .app-screen--booking .provider-card--booking-header .provider-card__avatar {
@@ -5345,6 +5374,7 @@ body.service-photo-preview-open {
   margin-bottom: 0;
   row-gap: 0.08rem;
   padding: 0.4rem var(--app-pad-x) 0.08rem;
+  background: #eef0f4;
 }
 
 .device-frame[data-view="mobile"] .app-screen--booking .provider-card--booking-header .provider-card__avatar {
@@ -5862,6 +5892,23 @@ body.service-photo-preview-open {
   background: var(--surface);
 }
 
+/* Mobile: pasek dni na całą szerokość (jak standard kalendarzy) */
+@media (max-width: 899px) {
+  .app-screen--my-cal .gcal-week__sticky.my-cal-week {
+    margin-left: calc(-1 * var(--app-pad-x));
+    margin-right: calc(-1 * var(--app-pad-x));
+    width: calc(100% + 2 * var(--app-pad-x));
+    box-sizing: border-box;
+  }
+}
+
+.device-frame[data-view="mobile"] .app-screen--my-cal .gcal-week__sticky.my-cal-week {
+  margin-left: calc(-1 * var(--app-pad-x));
+  margin-right: calc(-1 * var(--app-pad-x));
+  width: calc(100% + 2 * var(--app-pad-x));
+  box-sizing: border-box;
+}
+
 /* Bez guttera godzin — pełna szerokość na 7 dni (musi wygrywać z mobile .gcal-week__head: 2.45rem 1fr) */
 .app-screen--my-cal .my-cal-week__head,
 .app-screen--my-cal .gcal-week__head,
@@ -5889,10 +5936,16 @@ body.service-photo-preview-open {
   flex-direction: column;
   gap: 0.55rem;
   padding-top: 0.35rem;
+  background: var(--surface);
 }
 
 .my-cal-visits .booking__label {
   margin: 0;
+}
+
+.app-screen--my-cal .my-cal-body,
+.app-screen--my-cal .my-cal-layout__main {
+  background: var(--surface);
 }
 
 .my-cal-layout__side {
@@ -9717,23 +9770,29 @@ body.prov-cal-resizing * {
   align-items: center;
   gap: 0.35rem;
   margin: 0;
-  padding: 0.35rem 0.7rem;
-  border: 1px solid color-mix(in srgb, var(--accent-client) 35%, var(--border));
+  padding: 0.35rem 0.55rem;
+  border: none;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent-client) 8%, var(--surface));
-  color: var(--accent-client);
+  background: transparent;
+  color: var(--text-muted);
   font: inherit;
   font-size: 0.75rem;
   font-weight: 650;
   line-height: 1.2;
   text-decoration: none;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition: color 0.12s ease, background 0.12s ease;
 }
 
-.visit-card__chip:hover {
-  background: color-mix(in srgb, var(--accent-client) 14%, var(--surface));
-  border-color: var(--accent-client);
+.visit-card__chip:hover,
+.visit-card__chip:focus-visible {
+  background: transparent;
+  color: var(--accent-client);
+  outline: none;
+}
+
+.visit-card__chip:active {
+  color: var(--accent-client);
 }
 
 .visit-card__chip-icon {
@@ -9784,6 +9843,113 @@ body.prov-cal-resizing * {
   border: none;
   border-radius: 0;
   box-shadow: none;
+}
+
+.visit-card--client .visit-card__main {
+  display: grid;
+  grid-template-columns: 3.35rem minmax(0, 1fr);
+  column-gap: 0.75rem;
+  align-items: start;
+}
+
+.visit-card--client .visit-card__date {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.05rem;
+  padding-top: 0.05rem;
+  text-align: center;
+  line-height: 1.05;
+}
+
+.visit-card--client .visit-card__dow {
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.visit-card--client .visit-card__daynum {
+  font-size: 1.55rem;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.visit-card--client .visit-card__month {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: lowercase;
+}
+
+.visit-card--client .visit-card__body {
+  position: relative;
+  min-width: 0;
+  padding-left: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.visit-card--client .visit-card__body::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.15rem;
+  bottom: 0.15rem;
+  width: 1px;
+  background: var(--border);
+}
+
+.visit-card--client .visit-card__time-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.visit-card--client .visit-card__hours {
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.visit-card--client .visit-card__name {
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.visit-card--client .visit-card__svc {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text);
+  margin: 0;
+}
+
+.visit-card--client .visit-card__place {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.visit-card--client .visit-card__quick {
+  margin-top: 0.45rem;
+  padding-left: calc(3.35rem + 0.75rem);
+}
+
+.visit-card--client .visit-card__actions {
+  margin-top: 0.45rem;
+  padding-left: calc(3.35rem + 0.75rem);
+}
+
+.visit-card--client .status-badge {
+  flex-shrink: 0;
 }
 
 .visit-card--client::after {

@@ -1230,6 +1230,9 @@
     return `
       <div class="search-bar search-bar--mobile">
         <div class="search-bar__row search-bar__row--query">
+          <button type="button" class="search-bar__logo" data-action="go-home" aria-label="Lokalnie — strona główna">
+            <img class="search-bar__logo-img" src="assets/icons/logo-1024.png" alt="" width="40" height="40" />
+          </button>
           <label class="search-bar__segment search-bar__segment--query search-bar__segment--block">
             <span class="search-bar__icon" aria-hidden="true">⌕</span>
             <input type="search" class="search-bar__input" placeholder="Znajdź coś dla siebie"
@@ -3014,35 +3017,43 @@
             ${rebookChip}
           </div>`
         : "";
-    const whenParts = [];
-    if (b.dateISO) {
-      whenParts.push(
-        `<span class="visit-card__meta-item">${escapeHtml(formatDateLong(b.dateISO))}</span>`
-      );
-    }
-    if (b.from && b.to) {
-      whenParts.push(
-        `<span class="visit-card__meta-item visit-card__meta-item--time">${escapeHtml(b.from)}→${escapeHtml(b.to)}</span>`
-      );
-    }
-    if (placeLine) {
-      whenParts.push(
-        `<span class="visit-card__meta-item">${escapeHtml(placeLine)}</span>`
-      );
-    }
-    const whenHtml = whenParts.length
-      ? `<div class="visit-card__when" aria-label="Termin i miejsce">${whenParts.join(
-          '<span class="visit-card__meta-sep" aria-hidden="true"></span>'
-        )}</div>`
-      : "";
+    const day = b.dateISO ? new Date(b.dateISO + "T12:00:00") : null;
+    const dayOk = day && !isNaN(day.getTime());
+    const dow =
+      dayOk && typeof PROV_CAL_DOW_SHORT !== "undefined" ? PROV_CAL_DOW_SHORT[day.getDay()] : "";
+    const dayNum = dayOk ? String(day.getDate()) : "";
+    const monthName = dayOk ? MONTHS[day.getMonth()] : "";
+    const timeRange = b.from && b.to ? `${b.from}–${b.to}` : b.from || "";
+    const servicesLabel = (b.serviceNames || []).join(", ");
+    const dateBlock =
+      dayOk
+        ? `<div class="visit-card__date" aria-label="${escapeHtml(formatDateLong(b.dateISO))}">
+            <span class="visit-card__dow">${escapeHtml(dow)}</span>
+            <span class="visit-card__daynum">${escapeHtml(dayNum)}</span>
+            <span class="visit-card__month">${escapeHtml(monthName)}</span>
+          </div>`
+        : "";
+
     return `
       <div class="visit-card visit-card--client" data-booking-id="${escapeHtml(b.id)}" data-status="${escapeHtml(b.status)}">
-        <div class="visit-card__top">
-          <span class="visit-card__name">${escapeHtml(b.providerName)}</span>
-          <span class="status-badge" data-status="${escapeHtml(b.status)}">${escapeHtml(STATUS_LABEL[b.status] || b.status)}</span>
+        <div class="visit-card__main">
+          ${dateBlock}
+          <div class="visit-card__body">
+            <div class="visit-card__time-row">
+              ${
+                timeRange
+                  ? `<time class="visit-card__hours" datetime="${escapeHtml(
+                      (b.dateISO || "") + (b.from ? "T" + b.from : "")
+                    )}">${escapeHtml(timeRange)}</time>`
+                  : ""
+              }
+              <span class="status-badge" data-status="${escapeHtml(b.status)}">${escapeHtml(STATUS_LABEL[b.status] || b.status)}</span>
+            </div>
+            <div class="visit-card__name">${escapeHtml(b.providerName)}</div>
+            ${servicesLabel ? `<div class="visit-card__svc">${escapeHtml(servicesLabel)}</div>` : ""}
+            ${placeLine ? `<div class="visit-card__place">${escapeHtml(placeLine)}</div>` : ""}
+          </div>
         </div>
-        <div class="visit-card__svc">${escapeHtml(b.serviceNames.join(", "))}</div>
-        ${whenHtml}
         ${quickActions}
         ${
           canAccept
