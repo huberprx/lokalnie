@@ -1227,6 +1227,8 @@
   }
 
   function renderSearchMobileBar() {
+    const favCount = (window.AppState.favorites || []).length;
+    const hasFavs = favCount > 0;
     return `
       <div class="search-bar search-bar--mobile">
         <div class="search-bar__row search-bar__row--query">
@@ -1235,6 +1237,11 @@
             <input type="search" class="search-bar__input" placeholder="Znajdź coś dla siebie"
               value="${escapeHtml(window.AppState.searchQuery || "")}" data-role="search-input" />
           </label>
+          <button type="button" class="search-bar__fav${hasFavs ? " search-bar__fav--on" : ""}"
+            data-action="go-screen" data-screen="favorites"
+            aria-label="Ulubione${hasFavs ? ", " + favCount : ""}" title="Ulubione">
+            <span class="search-bar__fav-icon" aria-hidden="true"></span>
+          </button>
         </div>
         <div class="search-bar__row search-bar__row--meta">
           <label class="search-bar__segment search-bar__segment--location search-bar__segment--block">${searchLocationFieldHtml()}</label>
@@ -2995,14 +3002,35 @@
             ${rebookChip}
           </div>`
         : "";
+    const whenParts = [];
+    if (b.dateISO) {
+      whenParts.push(
+        `<span class="visit-card__meta-item">${escapeHtml(formatDateLong(b.dateISO))}</span>`
+      );
+    }
+    if (b.from && b.to) {
+      whenParts.push(
+        `<span class="visit-card__meta-item visit-card__meta-item--time">${escapeHtml(b.from)}→${escapeHtml(b.to)}</span>`
+      );
+    }
+    if (placeLine) {
+      whenParts.push(
+        `<span class="visit-card__meta-item">${escapeHtml(placeLine)}</span>`
+      );
+    }
+    const whenHtml = whenParts.length
+      ? `<div class="visit-card__when" aria-label="Termin i miejsce">${whenParts.join(
+          '<span class="visit-card__meta-sep" aria-hidden="true"></span>'
+        )}</div>`
+      : "";
     return `
-      <div class="visit-card" data-booking-id="${escapeHtml(b.id)}">
+      <div class="visit-card visit-card--client" data-booking-id="${escapeHtml(b.id)}" data-status="${escapeHtml(b.status)}">
         <div class="visit-card__top">
           <span class="visit-card__name">${escapeHtml(b.providerName)}</span>
           <span class="status-badge" data-status="${escapeHtml(b.status)}">${escapeHtml(STATUS_LABEL[b.status] || b.status)}</span>
         </div>
         <div class="visit-card__svc">${escapeHtml(b.serviceNames.join(", "))}</div>
-        <div class="visit-card__when">${escapeHtml(formatDateLong(b.dateISO))} · ${escapeHtml(b.from)}→${escapeHtml(b.to)}${placeLine ? " · " + escapeHtml(placeLine) : ""}</div>
+        ${whenHtml}
         ${quickActions}
         ${
           canAccept
