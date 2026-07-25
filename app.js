@@ -9039,13 +9039,14 @@
     const locs = ensureProviderLocations(p).slice(0, SETTINGS_LOC_MAX);
     const canAdd = locs.length < SETTINGS_LOC_MAX;
     const cards = locs
-      .map(function (loc) {
+      .map(function (loc, i) {
         const tone = locationToneIndex(p, loc.id);
         const toneBtns = SETTINGS_LOC_TONES.map(function (t) {
           return `<button type="button" class="settings-loc__tone loc-tone-${t}${t === tone ? " is-on" : ""}"
             data-action="settings-loc-tone" data-id="${escapeHtml(loc.id)}" data-tone="${t}"
             aria-label="Kolor ${t + 1}" aria-pressed="${t === tone ? "true" : "false"}"></button>`;
         }).join("");
+        const isLast = i === locs.length - 1;
         return `
           <div class="settings-loc loc-tone-${tone}" data-loc-id="${escapeHtml(loc.id)}">
             <div class="settings-loc__head">
@@ -9059,8 +9060,18 @@
               </div>
               <input type="text" class="settings-loc__name" data-role="settings-loc-name" data-id="${escapeHtml(loc.id)}"
                 value="${escapeHtml(loc.label || "")}" placeholder="Nazwa miejsca" maxlength="40" autocomplete="off" />
-              <button type="button" class="settings-loc__remove" data-action="settings-loc-remove" data-id="${escapeHtml(loc.id)}"
-                aria-label="Usuń miejsce">×</button>
+              <button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--remove" data-action="settings-loc-remove" data-id="${escapeHtml(loc.id)}"
+                aria-label="Usuń miejsce" title="Usuń">
+                <span aria-hidden="true">×</span>
+              </button>
+              ${
+                isLast && canAdd
+                  ? `<button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--add" data-action="settings-loc-add"
+                      aria-label="Dodaj miejsce" title="Dodaj">
+                      <span aria-hidden="true">+</span>
+                    </button>`
+                  : `<span class="avail-edit__icon-spacer" aria-hidden="true"></span>`
+              }
             </div>
             <label class="settings-loc__field">
               <span class="settings-loc__field-label">Adres</span>
@@ -9070,15 +9081,24 @@
           </div>`;
       })
       .join("");
+    const emptyAdd =
+      !locs.length && canAdd
+        ? `<div class="settings-loc settings-loc--empty">
+            <div class="settings-loc__head">
+              <span class="settings-loc__empty-label">Brak miejsc</span>
+              <span class="avail-edit__icon-spacer" aria-hidden="true"></span>
+              <button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--add" data-action="settings-loc-add"
+                aria-label="Dodaj miejsce" title="Dodaj">
+                <span aria-hidden="true">+</span>
+              </button>
+            </div>
+          </div>`
+        : "";
     return `
       <div class="settings__row settings__row--locations" data-field="locations">
-        <p class="settings__help">Do ${SETTINGS_LOC_MAX} miejsc usług. Kolor widać w ofercie i w kalendarzu.</p>
-        <div class="settings-locs">${cards || `<p class="empty-note">Brak miejsc — dodaj pierwsze.</p>`}</div>
-        ${
-          canAdd
-            ? `<button type="button" class="settings-loc__add" data-action="settings-loc-add">Dodaj miejsce</button>`
-            : `<p class="settings__cap">Osiągnięto limit ${SETTINGS_LOC_MAX} miejsc.</p>`
-        }
+        <p class="settings__help">Do ${SETTINGS_LOC_MAX} miejsc wykonywania usług. Kolor widać w ofercie i w kalendarzu.</p>
+        <div class="settings-locs">${cards || emptyAdd || `<p class="empty-note">Brak miejsc.</p>`}</div>
+        ${!canAdd ? `<p class="settings__cap">Osiągnięto limit ${SETTINGS_LOC_MAX} miejsc.</p>` : ""}
       </div>`;
   }
 
@@ -9286,11 +9306,12 @@
       return `<option value="${escapeHtml(s.key)}">${escapeHtml(s.label)}</option>`;
     }).join("");
     const rows = links
-      .map(function (l) {
+      .map(function (l, i) {
         const meta = socialKindMeta(l.kind);
         const opts = SETTINGS_SOCIAL_KINDS.map(function (s) {
           return `<option value="${escapeHtml(s.key)}"${s.key === l.kind ? " selected" : ""}>${escapeHtml(s.label)}</option>`;
         }).join("");
+        const isLast = i === links.length - 1;
         return `
           <div class="settings-social" data-social-id="${escapeHtml(l.id)}">
             <label class="settings-social__kind" title="${escapeHtml(meta.label)}">
@@ -9300,8 +9321,18 @@
             </label>
             <input type="text" class="settings-social__input" data-role="settings-social-value" data-id="${escapeHtml(l.id)}"
               value="${escapeHtml(l.value || "")}" placeholder="${escapeHtml(meta.placeholder)}" autocomplete="off" />
-            <button type="button" class="settings-social__remove" data-action="settings-social-remove" data-id="${escapeHtml(l.id)}"
-              aria-label="Usuń link">×</button>
+            <button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--remove" data-action="settings-social-remove" data-id="${escapeHtml(l.id)}"
+              aria-label="Usuń link" title="Usuń">
+              <span aria-hidden="true">×</span>
+            </button>
+            ${
+              isLast && canAdd
+                ? `<button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--add" data-action="settings-social-add"
+                    aria-label="Dodaj link" title="Dodaj">
+                    <span aria-hidden="true">+</span>
+                  </button>`
+                : `<span class="avail-edit__icon-spacer" aria-hidden="true"></span>`
+            }
           </div>`;
       })
       .join("");
@@ -9309,11 +9340,7 @@
       <div class="settings__row settings__row--contact settings__row--socials" data-field="social">
         <p class="settings__help">Logo po lewej, link po prawej — widoczne w profilu klienta.</p>
         <div class="settings-socials">${rows}</div>
-        ${
-          canAdd
-            ? `<button type="button" class="settings-social__add" data-action="settings-social-add">Dodaj link</button>`
-            : `<p class="settings__cap">Osiągnięto limit ${SETTINGS_SOCIAL_MAX} linków.</p>`
-        }
+        ${canAdd ? "" : `<p class="settings__cap">Osiągnięto limit ${SETTINGS_SOCIAL_MAX} linków.</p>`}
       </div>`;
   }
 
@@ -9444,7 +9471,7 @@
             ${renderSettingsGroup("Dane firmy", renderSettingsProfile(p))}
             ${renderSettingsGroup("Kontakt", renderSettingsContact(p))}
             ${renderSettingsGroup("Social media", renderSettingsSocial(p))}
-            ${renderSettingsGroup("Lokalizacje", renderSettingsLocations(p))}
+            ${renderSettingsGroup("Lokalizacje (miejsce wykonywania usług)", renderSettingsLocations(p))}
             ${renderSettingsGroup("Rezerwacje online", visibilityRow + renderSettingsBookingRules(p))}
           </div>
         </div>

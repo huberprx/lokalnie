@@ -12522,10 +12522,10 @@ body.prov-cal-resizing * {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
-  padding: 0.7rem 0.75rem;
-  border: 1px solid color-mix(in srgb, var(--loc, var(--border)) 35%, var(--border));
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--loc, var(--accent-provider)) 6%, var(--surface));
+  padding: 0.35rem 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 
 .settings-loc__head {
@@ -12616,25 +12616,24 @@ body.prov-cal-resizing * {
   background: var(--surface);
 }
 
-.settings-loc__remove {
-  appearance: none;
-  flex: 0 0 1.75rem;
-  width: 1.75rem;
-  height: 1.75rem;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 1.25rem;
-  line-height: 1;
-  cursor: pointer;
+.settings-loc__head .avail-edit__icon-btn,
+.settings-loc__head .avail-edit__icon-spacer {
+  flex: 0 0 2rem;
+  width: 2rem;
+  height: 2rem;
 }
 
-.settings-loc__remove:hover {
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
+.settings-loc--empty {
+  border: none;
+  background: transparent;
+}
+
+.settings-loc__empty-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 .settings-loc__field {
@@ -12690,25 +12689,6 @@ body.prov-cal-resizing * {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--loc) 25%, transparent);
 }
 
-.settings-loc__add {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 100%;
-  margin: 0.15rem 0 0;
-  padding: 0.6rem 0.75rem;
-  border: 1px dashed color-mix(in srgb, var(--accent-provider) 40%, var(--border));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--accent-provider) 6%, var(--surface));
-  color: var(--accent-provider);
-  font: inherit;
-  font-size: 0.85rem;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.settings-loc__add:hover {
-  background: color-mix(in srgb, var(--accent-provider) 12%, var(--surface));
-}
 
 .settings__row--contact {
   gap: 0.55rem;
@@ -12883,45 +12863,11 @@ body.prov-cal-resizing * {
   border-color: color-mix(in srgb, var(--accent-provider) 45%, var(--border));
 }
 
-.settings-social__remove {
-  appearance: none;
-  flex: 0 0 1.75rem;
-  width: 1.75rem;
-  height: 1.75rem;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 1.25rem;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.settings-social__remove:hover {
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
-}
-
-.settings-social__add {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 100%;
-  margin: 0.1rem 0 0;
-  padding: 0.55rem 0.75rem;
-  border: 1px dashed color-mix(in srgb, var(--accent-provider) 40%, var(--border));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--accent-provider) 6%, var(--surface));
-  color: var(--accent-provider);
-  font: inherit;
-  font-size: 0.85rem;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.settings-social__add:hover {
-  background: color-mix(in srgb, var(--accent-provider) 12%, var(--surface));
+.settings-social .avail-edit__icon-btn,
+.settings-social .avail-edit__icon-spacer {
+  flex: 0 0 2rem;
+  width: 2rem;
+  height: 2rem;
 }
 
 .settings-contact__textarea {
