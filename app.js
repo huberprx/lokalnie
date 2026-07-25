@@ -1512,7 +1512,6 @@
     const withHome = !!opts.withHome || backOnSearch;
     const items = [
       { tab: "search", label: "Szukaj", icon: "search" },
-      { tab: "favorites", label: "Ulubione", icon: "bookmark" },
       { tab: "myCalendar", label: "Kalendarz", icon: "calendar" },
       { tab: "account", label: "Menu", icon: "profile", menu: true },
     ];
@@ -4948,18 +4947,18 @@
     if (email) email.value = draft.clientEmail || "";
   }
 
-  function renderProvCalAddClientMenuHtml(providerId, query) {
+  function renderProvCalAddClientListParts(providerId, query) {
     const raw = String(query || "").trim();
-    const q = raw.toLowerCase();
+    const q = raw.toLocaleLowerCase("pl");
     const clients = collectProviderClients(providerId);
     const filtered = q
       ? clients.filter(function (c) {
-          const hay = (c.name + " " + (c.phone || "") + " " + (c.email || "")).toLowerCase();
+          const hay = (c.name + " " + (c.phone || "") + " " + (c.email || "")).toLocaleLowerCase("pl");
           return hay.indexOf(q) !== -1;
         })
       : clients;
     const exact = !!q && clients.some(function (c) {
-      return c.name.toLowerCase() === q;
+      return c.name.toLocaleLowerCase("pl") === q;
     });
 
     const byLetter = Object.create(null);
@@ -5013,6 +5012,11 @@
         aria-label="Przejdź do ${escapeHtml(letter)}">${escapeHtml(letter === "#" ? "#" : letter)}</button>`;
     }).join("");
 
+    return { raw: raw, listHtml: listHtml, indexHtml: indexHtml };
+  }
+
+  function renderProvCalAddClientMenuHtml(providerId, query) {
+    const parts = renderProvCalAddClientListParts(providerId, query);
     return `
       <button type="button" class="client-sheet__backdrop" data-action="close-prov-cal-add-client-pick" aria-label="Zamknij kontakty"></button>
       <div class="client-sheet__panel" role="dialog" aria-modal="true" aria-label="Kontakty">
@@ -5026,11 +5030,11 @@
         <div class="client-sheet__search">
           <span class="client-sheet__search-icon" aria-hidden="true"></span>
           <input type="search" class="client-sheet__search-input" data-role="prov-cal-add-client-sheet-search"
-            value="${escapeHtml(raw)}" placeholder="Szukaj" autocomplete="off" spellcheck="false" />
+            value="${escapeHtml(parts.raw)}" placeholder="Szukaj" autocomplete="off" spellcheck="false" />
         </div>
         <div class="client-sheet__body">
-          <div class="client-sheet__list" data-role="client-sheet-list" role="listbox">${listHtml}</div>
-          <nav class="client-sheet__index" aria-label="Alfabet">${indexHtml}</nav>
+          <div class="client-sheet__list" data-role="client-sheet-list" role="listbox">${parts.listHtml}</div>
+          <nav class="client-sheet__index" data-role="client-sheet-index" aria-label="Alfabet">${parts.indexHtml}</nav>
         </div>
       </div>`;
   }
@@ -5055,7 +5059,29 @@
     if (section) section.scrollIntoView({ block: "start", behavior: "smooth" });
   }
 
-  function setProvCalAddClientPickOpen(open) {
+  function clearClientSheetArmTimer() {
+    if (window._clientSheetArmTimer) {
+      clearTimeout(window._clientSheetArmTimer);
+      window._clientSheetArmTimer = null;
+    }
+    if (window._clientSheetFocusTimer) {
+      clearTimeout(window._clientSheetFocusTimer);
+      window._clientSheetFocusTimer = null;
+    }
+  }
+
+  function focusClientSheetSearch(menu) {
+    const search = (menu || document).querySelector('[data-role="prov-cal-add-client-sheet-search"]');
+    if (!search) return;
+    try {
+      search.focus({ preventScroll: true });
+    } catch (err) {
+      search.focus();
+    }
+  }
+
+  function setProvCalAddClientPickOpen(open, opts) {
+    opts = opts || {};
     const draft = window.AppState.provCalAddDraft;
     if (draft) draft.clientPickOpen = !!open;
     const pick = document.querySelector('[data-role="prov-cal-add-client-pick"]');
@@ -5063,29 +5089,32 @@
     const input = document.querySelector('[data-role="prov-cal-add-client"]');
     if (pick) pick.classList.toggle("is-open", !!open);
     if (input) input.setAttribute("aria-expanded", open ? "true" : "false");
+    clearClientSheetArmTimer();
     if (!open) {
       menu.hidden = true;
-      menu.classList.remove("is-open");
+      menu.classList.remove("is-open", "client-sheet--arming");
       menu.innerHTML = "";
       document.body.classList.remove("client-sheet-open");
       return;
     }
     menu.hidden = false;
-    menu.classList.add("is-open");
+    menu.classList.add("is-open", "client-sheet--arming");
     document.body.classList.add("client-sheet-open");
-    requestAnimationFrame(function () {
-      const search = menu.querySelector('[data-role="prov-cal-add-client-sheet-search"]');
-      if (search && !String((draft && draft.clientName) || "").trim()) {
-        try {
-          search.focus({ preventScroll: true });
-        } catch (err) {
-          search.focus();
-        }
-      }
-    });
+    // Blokuj backdrop na czas domknięcia gestu otwarcia (żeby ten sam klik go nie zamknął).
+    window._clientSheetArmTimer = setTimeout(function () {
+      menu.classList.remove("client-sheet--arming");
+      window._clientSheetArmTimer = null;
+    }, 420);
+    if (opts.focusSearch !== false) {
+      window._clientSheetFocusTimer = setTimeout(function () {
+        window._clientSheetFocusTimer = null;
+        focusClientSheetSearch(menu);
+      }, 60);
+    }
   }
 
-  function refreshProvCalAddClientMenu() {
+  function refreshProvCalAddClientMenu(opts) {
+    opts = opts || {};
     const draft = window.AppState.provCalAddDraft;
     const p = myProvider();
     if (!draft || !p) return;
@@ -5096,11 +5125,26 @@
       return;
     }
     const list = menu.querySelector('[data-role="client-sheet-list"]');
-    const scrollTop = list ? list.scrollTop : 0;
+    const index = menu.querySelector('[data-role="client-sheet-index"]');
+    const search = menu.querySelector('[data-role="prov-cal-add-client-sheet-search"]');
+    const parts = renderProvCalAddClientListParts(p.id, draft.clientName || "");
+    // Aktualizuj listę bez niszczenia inputu wyszukiwania (zachowaj fokus i kursor).
+    if (list && index && search && menu.classList.contains("is-open")) {
+      const scrollTop = list.scrollTop;
+      list.innerHTML = parts.listHtml;
+      index.innerHTML = parts.indexHtml;
+      if (document.activeElement !== search && String(search.value || "") !== String(draft.clientName || "")) {
+        search.value = draft.clientName || "";
+      }
+      list.scrollTop = scrollTop;
+      const pick = document.querySelector('[data-role="prov-cal-add-client-pick"]');
+      const input = document.querySelector('[data-role="prov-cal-add-client"]');
+      if (pick) pick.classList.add("is-open");
+      if (input) input.setAttribute("aria-expanded", "true");
+      return;
+    }
     menu.innerHTML = renderProvCalAddClientMenuHtml(p.id, draft.clientName || "");
-    setProvCalAddClientPickOpen(true);
-    const list2 = menu.querySelector('[data-role="client-sheet-list"]');
-    if (list2) list2.scrollTop = scrollTop;
+    setProvCalAddClientPickOpen(true, { focusSearch: opts.focusSearch !== false });
   }
 
   function closeProvCalAddClientPick() {
@@ -5115,6 +5159,10 @@
     const draft = ensureProvCalAddDraft();
     const p = myProvider();
     const n = String(name || "").trim();
+    if (!n) {
+      showToast("Wybierz klienta.");
+      return;
+    }
     let client = p ? findProviderClientByName(p.id, n) : null;
     if (options.addNew && p) {
       client = upsertProviderClient(p.id, { name: n });
@@ -5125,13 +5173,17 @@
     if (draft.clientPhone || draft.clientEmail || draft.clientAddress) {
       draft.clientDetailsOpen = true;
     }
-    const input = document.querySelector('[data-role="prov-cal-add-client"]');
-    if (input) input.value = n;
-    syncProvCalAddClientContactInputs(draft);
+    // Nie otwieraj sheetu ponownie przez focusin/click po wyborze.
+    window._clientSheetPickLockUntil = Date.now() + 500;
+    clearClientSheetArmTimer();
     setProvCalAddClientPickOpen(false);
     saveState();
-    if (draft.clientDetailsOpen) renderAll();
+    renderAll();
     if (options.addNew) showToast("Klient dodany ✓");
+  }
+
+  function isClientSheetPickLocked() {
+    return Date.now() < (window._clientSheetPickLockUntil || 0);
   }
 
   function toggleProvCalAddClientDetails() {
@@ -5186,9 +5238,7 @@
     draft.servicePickOpen = false;
     closeAvailPickMenus();
     saveState();
-    const input = document.querySelector('[data-role="prov-cal-add-client"]');
-    if (input) input.focus();
-    refreshProvCalAddClientMenu();
+    refreshProvCalAddClientMenu({ focusSearch: true });
   }
 
   function renderProvCalAddClientTrailingActionHtml(hasClientName) {
@@ -5758,6 +5808,7 @@
     const clientPickOpen = !!draft.clientPickOpen;
     const clientDetailsOpen = !!draft.clientDetailsOpen;
     const hasClientName = !!String(draft.clientName || "").trim();
+    const clientPhonePreview = String(draft.clientPhone || "").trim();
 
     return `
       <div class="prov-cal-add" data-role="prov-cal-add">
@@ -5769,7 +5820,7 @@
             <button type="button" class="prov-cal-add__save" data-action="confirm-prov-cal-add"${canSave ? "" : " disabled"}>Zapisz</button>
           </header>
           <div class="prov-cal-add__body">
-            <div class="prov-cal-add__field prov-cal-add__client-pick${clientPickOpen ? " is-open" : ""}${clientDetailsOpen ? " is-details-open" : ""}" data-role="prov-cal-add-client-pick" aria-label="Klient">
+            <div class="prov-cal-add__field prov-cal-add__client-pick${clientPickOpen ? " is-open" : ""}${clientDetailsOpen ? " is-details-open" : ""}${clientPhonePreview ? " has-phone" : ""}" data-role="prov-cal-add-client-pick" aria-label="Klient">
               <span class="prov-cal-add__client-row">
                 <span class="prov-cal-add__client-avatar" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -5777,10 +5828,18 @@
                     <path d="M5.2 19.2c.9-3.2 3.4-4.8 6.8-4.8s5.9 1.6 6.8 4.8" />
                   </svg>
                 </span>
-                <input type="text" class="prov-cal-add__input" data-role="prov-cal-add-client"
-                  value="${escapeHtml(draft.clientName || "")}" placeholder="Nazwa klienta"
-                  autocomplete="off" spellcheck="false" aria-autocomplete="list"
-                  aria-expanded="${clientPickOpen ? "true" : "false"}" aria-controls="prov-cal-add-client-menu" />
+                <span class="prov-cal-add__client-main">
+                  <input type="text" class="prov-cal-add__input" data-role="prov-cal-add-client"
+                    value="${escapeHtml(draft.clientName || "")}" placeholder="Nazwa klienta"
+                    autocomplete="off" spellcheck="false" readonly inputmode="none"
+                    aria-autocomplete="list" aria-haspopup="dialog"
+                    aria-expanded="${clientPickOpen ? "true" : "false"}" aria-controls="prov-cal-add-client-menu" />
+                  ${
+                    clientPhonePreview
+                      ? `<span class="prov-cal-add__client-phone" data-role="prov-cal-add-client-phone">${escapeHtml(clientPhonePreview)}</span>`
+                      : ""
+                  }
+                </span>
                 ${renderProvCalAddClientTrailingActionHtml(hasClientName)}
                 <button type="button" class="prov-cal-add__client-expand${clientDetailsOpen ? " is-open" : ""}"
                   data-action="toggle-prov-cal-add-client-details"
@@ -9155,9 +9214,14 @@
       !event.target.closest('[data-role="prov-cal-add-client-menu"]') &&
       !event.target.closest(".client-sheet__panel")
     ) {
-      const addDraft = window.AppState.provCalAddDraft;
-      if (addDraft && addDraft.clientPickOpen) {
-        closeProvCalAddClientPick();
+      const menu = document.getElementById("prov-cal-add-client-menu");
+      if (menu && menu.classList.contains("client-sheet--arming")) {
+        /* ten sam gest co otwarcie — nie zamykaj */
+      } else {
+        const addDraft = window.AppState.provCalAddDraft;
+        if (addDraft && addDraft.clientPickOpen) {
+          closeProvCalAddClientPick();
+        }
       }
     }
     if (
@@ -9519,6 +9583,10 @@
         break;
       case "close-prov-cal-add-client-pick":
         event.preventDefault();
+        {
+          const menu = document.getElementById("prov-cal-add-client-menu");
+          if (menu && menu.classList.contains("client-sheet--arming")) break;
+        }
         closeProvCalAddClientPick();
         break;
       case "client-sheet-jump":
@@ -9545,11 +9613,11 @@
         break;
       case "prov-cal-add-pick-client":
         event.preventDefault();
-        pickProvCalAddClient(d.name);
+        pickProvCalAddClient(d.name || btn.getAttribute("data-name") || "");
         break;
       case "prov-cal-add-new-client":
         event.preventDefault();
-        pickProvCalAddClient(d.name, { addNew: true });
+        pickProvCalAddClient(d.name || btn.getAttribute("data-name") || "", { addNew: true });
         break;
       case "prov-cal-add-toggle-desc":
         event.preventDefault();
@@ -9687,12 +9755,9 @@
 
     const addClientInp = event.target.closest('[data-role="prov-cal-add-client"]');
     if (addClientInp) {
+      // Pole jest readonly — wyszukiwanie tylko w sheetcie; tu tylko synchronizacja wartości.
       const draft = ensureProvCalAddDraft();
       draft.clientName = String(addClientInp.value || "");
-      draft.clientPickOpen = true;
-      draft.servicePickOpen = false;
-      closeAvailPickMenus();
-      refreshProvCalAddClientMenu();
       patchProvCalAddClientClearBtn();
       saveState();
       return;
@@ -9705,21 +9770,8 @@
       draft.clientPickOpen = true;
       const formInput = document.querySelector('[data-role="prov-cal-add-client"]');
       if (formInput) formInput.value = draft.clientName;
-      refreshProvCalAddClientMenu();
+      refreshProvCalAddClientMenu({ focusSearch: false });
       patchProvCalAddClientClearBtn();
-      // Zachowaj fokus w wyszukiwarce panelu.
-      requestAnimationFrame(function () {
-        const again = document.querySelector('[data-role="prov-cal-add-client-sheet-search"]');
-        if (again) {
-          const pos = again.value.length;
-          again.focus();
-          try {
-            again.setSelectionRange(pos, pos);
-          } catch (err) {
-            /* ignore */
-          }
-        }
-      });
       saveState();
       return;
     }
@@ -9747,13 +9799,32 @@
   document.addEventListener("focusin", function (event) {
     const addClientInp = event.target.closest('[data-role="prov-cal-add-client"]');
     if (!addClientInp) return;
+    if (isClientSheetPickLocked()) return;
     const draft = ensureProvCalAddDraft();
-    draft.clientName = String(addClientInp.value || "");
+    if (draft.clientPickOpen) return;
+    draft.clientName = String(draft.clientName || addClientInp.value || "");
     draft.clientPickOpen = true;
     draft.servicePickOpen = false;
     closeAvailPickMenus();
-    refreshProvCalAddClientMenu();
+    refreshProvCalAddClientMenu({ focusSearch: true });
   });
+
+  document.addEventListener("click", function (event) {
+    const addClientInp = event.target.closest('[data-role="prov-cal-add-client"]');
+    if (!addClientInp) return;
+    if (isClientSheetPickLocked()) return;
+    // Klik w pole (readonly) zawsze otwiera sheet — także gdy już ma fokus.
+    const draft = ensureProvCalAddDraft();
+    if (draft.clientPickOpen) {
+      focusClientSheetSearch();
+      return;
+    }
+    draft.clientName = String(draft.clientName || addClientInp.value || "");
+    draft.clientPickOpen = true;
+    draft.servicePickOpen = false;
+    closeAvailPickMenus();
+    refreshProvCalAddClientMenu({ focusSearch: true });
+  }, true);
 
   document.addEventListener("change", function (event) {
     const radiusSel = event.target.closest('[data-role="search-radius"]');

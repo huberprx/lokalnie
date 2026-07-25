@@ -6148,7 +6148,11 @@ body.service-photo-preview-open {
 
 .prov-cal-add {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  left: 0;
+  /* Nad dolnym menu — sheet nie nachodzi na nav. */
+  bottom: var(--bottom-nav-clearance);
   z-index: 45;
   display: flex;
   flex-direction: column;
@@ -6290,6 +6294,49 @@ body.service-photo-preview-open {
   min-width: 0;
 }
 
+.prov-cal-add__client-pick.has-phone > .prov-cal-add__client-row {
+  align-items: flex-start;
+}
+
+.prov-cal-add__client-pick.has-phone > .prov-cal-add__client-row > .prov-cal-add__client-avatar,
+.prov-cal-add__client-pick.has-phone > .prov-cal-add__client-row > .prov-cal-add__client-clear,
+.prov-cal-add__client-pick.has-phone > .prov-cal-add__client-row > .prov-cal-add__client-search,
+.prov-cal-add__client-pick.has-phone > .prov-cal-add__client-row > .prov-cal-add__client-expand {
+  margin-top: 0.45rem;
+}
+
+.prov-cal-add__client-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.05rem;
+}
+
+.prov-cal-add__client-main .prov-cal-add__input {
+  flex: 0 0 auto;
+  width: 100%;
+}
+
+.prov-cal-add__client-pick.has-phone .prov-cal-add__client-main .prov-cal-add__input {
+  min-height: 0;
+  padding: 0.2rem 0 0;
+  line-height: 1.25;
+}
+
+.prov-cal-add__client-phone {
+  display: block;
+  margin: 0;
+  padding: 0 0 0.15rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
 .prov-cal-add__client-contacts {
   display: grid;
   grid-template-rows: 0fr;
@@ -6365,8 +6412,8 @@ body.service-photo-preview-open {
   margin-left: -0.15rem;
 }
 
-.prov-cal-add__client-row > .prov-cal-add__input + .prov-cal-add__client-clear,
-.prov-cal-add__client-row > .prov-cal-add__input + .prov-cal-add__client-search {
+.prov-cal-add__client-row > .prov-cal-add__client-main + .prov-cal-add__client-clear,
+.prov-cal-add__client-row > .prov-cal-add__client-main + .prov-cal-add__client-search {
   margin-left: 0.1rem;
 }
 
@@ -6404,6 +6451,11 @@ body.service-photo-preview-open {
 
 .client-sheet.is-open {
   pointer-events: auto;
+}
+
+/* Po otwarciu: backdrop nie łapie tego samego gestu (klik/touch), który otworzył sheet. */
+.client-sheet.client-sheet--arming .client-sheet__backdrop {
+  pointer-events: none;
 }
 
 .client-sheet__backdrop {
@@ -6740,6 +6792,11 @@ body.client-sheet-open {
 .prov-cal-add__input::placeholder {
   color: var(--text-muted);
   font-weight: 500;
+}
+
+.prov-cal-add__input[readonly] {
+  cursor: pointer;
+  caret-color: transparent;
 }
 
 .prov-cal-add__input:focus {
