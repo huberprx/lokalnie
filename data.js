@@ -79,6 +79,8 @@
 
   const CURRENT_USER = {
     name: "Hubert Z",
+    phone: "+48 500 100 200",
+    email: "hubert@example.com",
     loggedIn: true,
     providerRole: { active: true, trialDaysLeft: 12 },
   };
@@ -94,10 +96,18 @@
       subcategory: "barber",
       avatarInitials: "GB",
       address: "ul. Marszałkowska 12, Warszawa",
+      about: "Męskie strzyżenia, broda i pielęgnacja w centrum Warszawy.",
+      website: "https://grzesiubarber.pl",
       distanceKm: 1.2,
       bookingMode: "auto",
       visibleInSearch: true,
       multiSelect: true,
+      bookingRules: {
+        futureDays: 30,
+        minLeadHours: 2,
+        cancelHours: 24,
+        policy: "Anulowanie lub przełożenie wizyty możliwe najpóźniej 24 h przed terminem. Późniejsze zmiany prosimy uzgodnić telefonicznie.",
+      },
       locations: [
         { id: "loc-gb-1", label: "Studio główne", address: "ul. Marszałkowska 12, Warszawa", toneIndex: 0 },
         { id: "loc-gb-2", label: "Filia Praga", address: "ul. Ząbkowska 8, Warszawa", toneIndex: 1 },

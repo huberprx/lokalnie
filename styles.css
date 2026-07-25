@@ -4201,6 +4201,38 @@ body.avatar-preview-open {
   margin-top: 0.15rem;
 }
 
+.profile__about {
+  margin: 0 0 0.75rem;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.profile__policy {
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 70%, var(--surface));
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.profile__policy-label {
+  display: block;
+  margin-bottom: 0.2rem;
+  font-size: 0.7rem;
+  font-weight: 650;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.profile__policy--compact {
+  margin-top: 0.35rem;
+}
+
 .profile__contact {
   display: flex;
   flex-direction: column;
@@ -12340,13 +12372,65 @@ body.prov-cal-resizing * {
   min-width: 0;
 }
 
+.settings-loc__color {
+  position: relative;
+  flex: 0 0 auto;
+  z-index: 2;
+}
+
 .settings-loc__swatch {
-  flex: 0 0 0.85rem;
-  width: 0.85rem;
-  height: 0.85rem;
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  flex: 0 0 1.1rem;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin: 0;
+  padding: 0;
+  border: 2px solid color-mix(in srgb, var(--loc, var(--accent-provider)) 25%, var(--surface));
   border-radius: 999px;
   background: var(--loc, var(--accent-provider));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--loc, var(--accent-provider)) 35%, transparent);
+  cursor: pointer;
+}
+
+.settings-loc__swatch:hover,
+.settings-loc__color.is-open .settings-loc__swatch,
+.settings-loc__color:focus-within .settings-loc__swatch {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--loc, var(--accent-provider)) 22%, transparent);
+}
+
+.settings-loc__palette {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 8;
+  padding-top: 0.4rem;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s ease;
+}
+
+.settings-loc__color:hover .settings-loc__palette,
+.settings-loc__color:focus-within .settings-loc__palette,
+.settings-loc__color.is-open .settings-loc__palette {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.settings-loc__palette-inner {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.35rem;
+  padding: 0.4rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.06);
 }
 
 .settings-loc__name {
@@ -12390,8 +12474,7 @@ body.prov-cal-resizing * {
   background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
-.settings-loc__field,
-.settings-loc__tones {
+.settings-loc__field {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
@@ -12421,16 +12504,11 @@ body.prov-cal-resizing * {
   border-color: color-mix(in srgb, var(--accent-provider) 45%, var(--border));
 }
 
-.settings-loc__tone-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-
 .settings-loc__tone {
   appearance: none;
-  width: 1.55rem;
-  height: 1.55rem;
+  flex: 0 0 1.45rem;
+  width: 1.45rem;
+  height: 1.45rem;
   margin: 0;
   padding: 0;
   border: 2px solid transparent;
@@ -12438,6 +12516,10 @@ body.prov-cal-resizing * {
   background: var(--loc);
   cursor: pointer;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--loc) 30%, transparent);
+}
+
+.settings-loc__tone:hover {
+  transform: scale(1.08);
 }
 
 .settings-loc__tone.is-on {
@@ -12523,4 +12605,98 @@ body.prov-cal-resizing * {
   flex-direction: column;
   gap: 0.45rem;
   margin-top: 0.15rem;
+}
+
+.settings-contact__textarea {
+  resize: vertical;
+  min-height: 4.2rem;
+  line-height: 1.35;
+}
+
+.settings-share {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
+}
+
+.settings-share__btn {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--accent-provider) 40%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-provider) 8%, var(--surface));
+  color: var(--accent-provider);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.settings-share__btn:hover {
+  background: color-mix(in srgb, var(--accent-provider) 14%, var(--surface));
+}
+
+.settings--client {
+  padding-bottom: 1rem;
+}
+
+.settings__row--account-card {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.settings__row--account-card .account-card__avatar {
+  width: 3rem;
+  height: 3rem;
+  font-size: 1rem;
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+
+.settings-account__photo-btn {
+  position: relative;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.settings-account__photo-btn .app-menu__file {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.settings__row--actions {
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+
+.settings__row--actions .account-actions__btn {
+  width: 100%;
+}
+
+.settings__row[data-field="account-notifications"] {
+  gap: 0.55rem;
+}
+
+.settings__row[data-field="account-notifications"] .settings-contact__toggle {
+  margin: 0;
 }

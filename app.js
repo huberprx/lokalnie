@@ -108,6 +108,8 @@
       availEditDrafts: {},
       appMenuOpen: false,
       clientAvatarUrl: null,
+      /** Profil klienta (Booksy-like): imię, telefon, e-mail, powiadomienia. */
+      clientProfile: null,
     };
   }
 
@@ -280,6 +282,91 @@
 
   function demoTodayISO() {
     return (data().DEMO_TODAY_ISO || "2026-07-16");
+  }
+
+  function addDaysISO(iso, days) {
+    const parts = String(iso || demoTodayISO())
+      .split("-")
+      .map(Number);
+    const t = Date.UTC(parts[0], parts[1] - 1, parts[2]) + Number(days || 0) * 86400000;
+    const d = new Date(t);
+    return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate());
+  }
+
+  function ensureClientProfile() {
+    const u = data().CURRENT_USER || {};
+    let cp = window.AppState.clientProfile;
+    if (!cp || typeof cp !== "object") {
+      const srcNotes = (u.notifications && typeof u.notifications === "object" && u.notifications) || {};
+      cp = {
+        name: String(u.name || ""),
+        phone: String(u.phone || ""),
+        email: String(u.email || ""),
+        notifications: {
+          visitReminders: srcNotes.visitReminders !== false,
+          statusChanges: srcNotes.statusChanges !== false,
+          marketing: !!srcNotes.marketing,
+        },
+      };
+      window.AppState.clientProfile = cp;
+    }
+    if (typeof cp.name !== "string") cp.name = String(u.name || "");
+    if (typeof cp.phone !== "string") cp.phone = String(cp.phone || u.phone || "");
+    if (typeof cp.email !== "string") cp.email = String(cp.email || u.email || "");
+    if (!cp.notifications || typeof cp.notifications !== "object") {
+      cp.notifications = { visitReminders: true, statusChanges: true, marketing: false };
+    }
+    u.name = cp.name;
+    u.phone = cp.phone;
+    u.email = cp.email;
+    return cp;
+  }
+
+  const BOOKING_FUTURE_OPTS = [
+    { v: 7, label: "7 dni" },
+    { v: 14, label: "14 dni" },
+    { v: 30, label: "30 dni" },
+    { v: 60, label: "60 dni" },
+    { v: 90, label: "90 dni" },
+  ];
+  const BOOKING_LEAD_OPTS = [
+    { v: 0, label: "Bez limitu" },
+    { v: 1, label: "1 godzina" },
+    { v: 2, label: "2 godziny" },
+    { v: 4, label: "4 godziny" },
+    { v: 12, label: "12 godzin" },
+    { v: 24, label: "24 godziny" },
+  ];
+  const BOOKING_CANCEL_OPTS = [
+    { v: 0, label: "Bez limitu" },
+    { v: 2, label: "2 godziny przed" },
+    { v: 12, label: "12 godzin przed" },
+    { v: 24, label: "24 godziny przed" },
+    { v: 48, label: "48 godzin przed" },
+  ];
+
+  function ensureProviderBookingRules(provider) {
+    if (!provider) return { futureDays: 60, minLeadHours: 2, cancelHours: 24, policy: "" };
+    if (!provider.bookingRules || typeof provider.bookingRules !== "object") provider.bookingRules = {};
+    const r = provider.bookingRules;
+    if (!isFinite(Number(r.futureDays))) r.futureDays = 60;
+    else r.futureDays = Math.max(1, Math.floor(Number(r.futureDays)));
+    if (!isFinite(Number(r.minLeadHours))) r.minLeadHours = 2;
+    else r.minLeadHours = Math.max(0, Math.floor(Number(r.minLeadHours)));
+    if (!isFinite(Number(r.cancelHours))) r.cancelHours = 24;
+    else r.cancelHours = Math.max(0, Math.floor(Number(r.cancelHours)));
+    if (typeof r.policy !== "string") r.policy = r.policy ? String(r.policy) : "";
+    if (typeof provider.about !== "string") provider.about = provider.about ? String(provider.about) : "";
+    if (typeof provider.website !== "string") provider.website = provider.website ? String(provider.website) : "";
+    return r;
+  }
+
+  function providerCancelPolicyText(provider) {
+    if (!provider) return "";
+    const r = ensureProviderBookingRules(provider);
+    if (r.policy && String(r.policy).trim()) return String(r.policy).trim();
+    if (!r.cancelHours) return "";
+    return "Anulowanie lub przełożenie wizyty możliwe najpóźniej " + r.cancelHours + " h przed terminem.";
   }
 
   function timeToMinutes(hhmm) {
@@ -1537,8 +1624,15 @@
   function computeSlots(provider, dateISO, totalDurationMin, opts) {
     opts = opts || {};
     const exceptBookingId = opts.exceptBookingId || null;
+    const ignoreLead = !!opts.ignoreLead;
     const day = (provider.availability || []).find((d) => d.dateISO === dateISO);
     if (!day) return [];
+
+    const rules = ensureProviderBookingRules(provider);
+    const today = demoTodayISO();
+    const minLeadMin = ignoreLead ? 0 : rules.minLeadHours * 60;
+    // Prototyp: „teraz” = DEMO_TODAY 09:00 — reguła min. wyprzedzenia odcina poranne sloty tego dnia.
+    const nowMin = dateISO === today ? 9 * 60 + minLeadMin : dateISO < today ? Number.POSITIVE_INFINITY : 0;
 
     const busy = [];
     (provider.busy || []).forEach((b) => {
@@ -1562,6 +1656,7 @@
       const bStart = timeToMin(block.from);
       const bEnd = timeToMin(block.to);
       for (let s = bStart; s + totalDurationMin <= bEnd; s += 15) {
+        if (s < nowMin) continue;
         const e = s + totalDurationMin;
         const overlaps = busy.some((iv) => s < iv[1] && e > iv[0]);
         if (!overlaps) {
@@ -1653,16 +1748,17 @@
   }
 
   function renderClientMenuAvatar() {
-    const user = data().CURRENT_USER || {};
+    const cp = ensureClientProfile();
     const url = window.AppState.clientAvatarUrl;
     if (url) {
       return `<img class="app-menu__avatar-img" src="${escapeHtml(url)}" alt="" />`;
     }
-    return `<span class="app-menu__avatar-initials">${escapeHtml(accountInitials(user.name))}</span>`;
+    return `<span class="app-menu__avatar-initials">${escapeHtml(accountInitials(cp.name))}</span>`;
   }
 
   function renderAppMenu() {
     const user = data().CURRENT_USER || {};
+    const cp = ensureClientProfile();
     const activeRole = window.AppState.activeRole || "client";
     const clientActive = activeRole === "client";
     const providerActive = activeRole === "provider";
@@ -1716,7 +1812,7 @@
               <span class="app-menu__avatar app-menu__avatar--client">${renderClientMenuAvatar()}</span>
               <span class="app-menu__profile-text">
                 <span class="app-menu__profile-label">Klient</span>
-                <span class="app-menu__profile-name">${escapeHtml(user.name || "Użytkownik")}</span>
+                <span class="app-menu__profile-name">${escapeHtml(cp.name || "Użytkownik")}</span>
               </span>
               ${clientActive ? check : ""}
             </button>
@@ -1728,6 +1824,7 @@
           </div>
 
           <nav class="app-menu__links" aria-label="Informacje">
+            <button type="button" class="app-menu__link" data-action="go-screen" data-screen="account">Konto i ustawienia</button>
             <button type="button" class="app-menu__link" data-action="go-screen" data-screen="favorites">Ulubione</button>
             ${
               isPwaInstalled()
@@ -2288,32 +2385,123 @@
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   }
 
+  function captureClientAccountFields() {
+    const cp = ensureClientProfile();
+    const nameEl = document.querySelector('[data-role="account-name"]');
+    const phoneEl = document.querySelector('[data-role="account-phone"]');
+    const emailEl = document.querySelector('[data-role="account-email"]');
+    if (nameEl) {
+      const n = String(nameEl.value || "").trim();
+      cp.name = n || cp.name || "Użytkownik";
+    }
+    if (phoneEl) cp.phone = String(phoneEl.value || "").trim();
+    if (emailEl) cp.email = String(emailEl.value || "").trim();
+    const rem = document.querySelector('[data-role="account-notif-reminders"]');
+    const status = document.querySelector('[data-role="account-notif-status"]');
+    const marketing = document.querySelector('[data-role="account-notif-marketing"]');
+    if (rem) cp.notifications.visitReminders = !!rem.checked;
+    if (status) cp.notifications.statusChanges = !!status.checked;
+    if (marketing) cp.notifications.marketing = !!marketing.checked;
+    ensureClientProfile();
+  }
+
   function renderAccount() {
     const user = data().CURRENT_USER || {};
+    const cp = ensureClientProfile();
+    const notes = cp.notifications;
     const hasProvider = user.providerRole && user.providerRole.active;
 
     return `
-      <div class="app-screen app-screen--client">
+      <div class="app-screen app-screen--client app-screen--account">
         <div class="app-scroll">
-          <header class="screen-head">
-            <h2 class="screen-head__title">Profil</h2>
-            <p class="screen-head__sub">Twoje konto w Lokalnie.</p>
+          <header class="screen-head screen-head--with-back">
+            <button type="button" class="screen-head__back" data-action="go-screen" data-screen="search" aria-label="Wróć">
+              <span class="screen-head__back-icon" aria-hidden="true"></span>
+            </button>
+            <div class="screen-head__text">
+              <h2 class="screen-head__title">Konto i ustawienia</h2>
+              <p class="screen-head__sub">Dane klienta i powiadomienia.</p>
+            </div>
           </header>
-          <div class="account-card">
-            <span class="account-card__avatar">${
-              window.AppState.clientAvatarUrl
-                ? `<img class="account-card__avatar-img" src="${escapeHtml(window.AppState.clientAvatarUrl)}" alt="" />`
-                : escapeHtml(accountInitials(user.name))
-            }</span>
-            <p class="account-card__name">${escapeHtml(user.name || "Użytkownik")}</p>
-          </div>
-          <div class="account-actions">
+          <div class="settings settings--client">
+            <div class="settings__row settings__row--account-card">
+              <span class="account-card__avatar">${
+                window.AppState.clientAvatarUrl
+                  ? `<img class="account-card__avatar-img" src="${escapeHtml(window.AppState.clientAvatarUrl)}" alt="" />`
+                  : escapeHtml(accountInitials(cp.name))
+              }</span>
+              <div class="settings__toggle-text">
+                <span class="settings__key">Zdjęcie profilu</span>
+                <span class="settings__hint">${escapeHtml(cp.name || "Użytkownik")}</span>
+              </div>
+              <label class="settings-account__photo-btn">
+                Zmień
+                <input type="file" class="app-menu__file" accept="image/*" data-action="change-client-avatar" tabindex="-1" />
+              </label>
+            </div>
+            <div class="settings__row settings__row--contact" data-field="account-details">
+              <span class="settings__key">Dane konta</span>
+              <p class="settings__help">Widoczne dla usługodawcy przy rezerwacji wizyty.</p>
+              <label class="settings-contact__field">
+                <span class="settings-contact__label">Imię i nazwisko</span>
+                <input type="text" class="settings-contact__input" data-role="account-name"
+                  value="${escapeHtml(cp.name || "")}" placeholder="Twoje imię" maxlength="60" autocomplete="name" />
+              </label>
+              <label class="settings-contact__field">
+                <span class="settings-contact__label">Telefon</span>
+                <input type="tel" class="settings-contact__input" data-role="account-phone"
+                  value="${escapeHtml(cp.phone || "")}" placeholder="+48 500 000 000" autocomplete="tel" inputmode="tel" />
+              </label>
+              <label class="settings-contact__field">
+                <span class="settings-contact__label">E-mail</span>
+                <input type="email" class="settings-contact__input" data-role="account-email"
+                  value="${escapeHtml(cp.email || "")}" placeholder="ty@email.pl" autocomplete="email" inputmode="email" />
+              </label>
+            </div>
+            <div class="settings__row" data-field="account-notifications">
+              <span class="settings__key">Powiadomienia</span>
+              <p class="settings__help">Przypomnienia i zmiany statusu wizyt.</p>
+              <div class="settings-contact__toggle">
+                <div class="settings__toggle-text">
+                  <span class="settings__hint">Przypomnienia o wizytach</span>
+                  <span class="settings-contact__toggle-hint">Dzień przed i przed terminem</span>
+                </div>
+                <label class="settings__toggle">
+                  <input type="checkbox" class="avail-edit__switch" data-role="account-notif-reminders"
+                    ${notes.visitReminders ? "checked" : ""} aria-label="Przypomnienia o wizytach" />
+                </label>
+              </div>
+              <div class="settings-contact__toggle">
+                <div class="settings__toggle-text">
+                  <span class="settings__hint">Zmiany statusu</span>
+                  <span class="settings-contact__toggle-hint">Potwierdzenia, odwołania, propozycje</span>
+                </div>
+                <label class="settings__toggle">
+                  <input type="checkbox" class="avail-edit__switch" data-role="account-notif-status"
+                    ${notes.statusChanges ? "checked" : ""} aria-label="Zmiany statusu wizyt" />
+                </label>
+              </div>
+              <div class="settings-contact__toggle">
+                <div class="settings__toggle-text">
+                  <span class="settings__hint">Oferty i nowości</span>
+                  <span class="settings-contact__toggle-hint">Opcjonalne wiadomości marketingowe</span>
+                </div>
+                <label class="settings__toggle">
+                  <input type="checkbox" class="avail-edit__switch" data-role="account-notif-marketing"
+                    ${notes.marketing ? "checked" : ""} aria-label="Oferty i nowości" />
+                </label>
+              </div>
+            </div>
             ${
               hasProvider
-                ? `<button type="button" class="btn btn--ghost account-actions__btn" data-action="switch-role" data-role="provider">Przełącz na usługodawcę</button>`
+                ? `<div class="settings__row settings__row--actions">
+                    <button type="button" class="btn btn--ghost account-actions__btn" data-action="switch-role" data-role="provider">Przełącz na usługodawcę</button>
+                  </div>`
                 : ""
             }
-            <button type="button" class="btn btn--ghost account-actions__btn account-actions__btn--logout" data-action="logout">Wyloguj</button>
+            <div class="settings__row settings__row--actions">
+              <button type="button" class="btn btn--ghost account-actions__btn account-actions__btn--logout" data-action="logout">Wyloguj</button>
+            </div>
           </div>
         </div>
         ${bottomNav("account")}
@@ -2833,8 +3021,14 @@
 
   function resolveAvailDates(p, durationMin) {
     const dur = durationMin || 15;
+    const rules = ensureProviderBookingRules(p);
+    const today = demoTodayISO();
+    const maxISO = addDaysISO(today, rules.futureDays);
     return (p.availability || [])
-      .filter((d) => computeSlots(p, d.dateISO, dur).length)
+      .filter(function (d) {
+        if (d.dateISO < today || d.dateISO > maxISO) return false;
+        return computeSlots(p, d.dateISO, dur).length;
+      })
       .map((d) => d.dateISO)
       .sort();
   }
@@ -3234,11 +3428,18 @@
 
   function renderProfileContact(p) {
     ensureProviderContact(p);
+    ensureProviderBookingRules(p);
     const phone = String(p.phone || "").trim();
     const phoneHref = phone.replace(/\s/g, "");
     const email = providerPublicEmail(p);
     const socials = providerSocialLinks(p);
-    if (!phone && !email && !socials.length) return "";
+    const website = String(p.website || "").trim();
+    const websiteHref = website
+      ? /^https?:\/\//i.test(website)
+        ? website
+        : "https://" + website
+      : "";
+    if (!phone && !email && !socials.length && !websiteHref) return "";
     const links = [];
     if (phoneHref) {
       links.push(
@@ -3253,6 +3454,14 @@
         `<a class="profile__contact-link" href="mailto:${escapeHtml(email)}">
           <span class="profile__contact-label">E-mail</span>
           <span class="profile__contact-val">${escapeHtml(email)}</span>
+        </a>`
+      );
+    }
+    if (websiteHref) {
+      links.push(
+        `<a class="profile__contact-link" href="${escapeHtml(websiteHref)}" target="_blank" rel="noopener noreferrer">
+          <span class="profile__contact-label">WWW</span>
+          <span class="profile__contact-val">Otwórz</span>
         </a>`
       );
     }
@@ -3297,7 +3506,13 @@
                 <p class="profile__addr">${escapeHtml(p.address || "Usługa online")}${p.address ? " · " + p.distanceKm.toFixed(1) + " km" : ""}</p>
               </div>
             </div>
+            ${p.about ? `<p class="profile__about">${escapeHtml(p.about)}</p>` : ""}
             ${renderProfileContact(p)}
+            ${
+              providerCancelPolicyText(p)
+                ? `<p class="profile__policy"><span class="profile__policy-label">Zasady anulowania</span>${escapeHtml(providerCancelPolicyText(p))}</p>`
+                : ""
+            }
             ${p.bookingMode === "approval" ? `<p class="profile__mode">Rezerwacja na akceptację — usługodawca zaproponuje termin.</p>` : ""}
 
             <h3 class="profile__section">Usługi ${p.multiSelect ? '<span class="profile__hint">(możesz wybrać kilka)</span>' : ""}</h3>
@@ -3338,6 +3553,11 @@
               </div>
 
               ${p.bookingMode === "approval" ? `<p class="profile__mode">Rezerwacja na akceptację — usługodawca zaproponuje termin.</p>` : ""}
+              ${
+                providerCancelPolicyText(p)
+                  ? `<p class="profile__policy profile__policy--compact">${escapeHtml(providerCancelPolicyText(p))}</p>`
+                  : ""
+              }
 
               ${renderServicesPanelHead(p, ctx.draft, { mobile: true })}
               <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
@@ -8658,7 +8878,14 @@
         return `
           <div class="settings-loc loc-tone-${tone}" data-loc-id="${escapeHtml(loc.id)}">
             <div class="settings-loc__head">
-              <span class="settings-loc__swatch" aria-hidden="true"></span>
+              <div class="settings-loc__color">
+                <button type="button" class="settings-loc__swatch" data-action="settings-loc-color-toggle"
+                  data-id="${escapeHtml(loc.id)}" aria-label="Wybierz kolor miejsca" aria-haspopup="true"
+                  aria-expanded="false" title="Kolor miejsca"></button>
+                <div class="settings-loc__palette" role="group" aria-label="Kolor miejsca">
+                  <div class="settings-loc__palette-inner">${toneBtns}</div>
+                </div>
+              </div>
               <input type="text" class="settings-loc__name" data-role="settings-loc-name" data-id="${escapeHtml(loc.id)}"
                 value="${escapeHtml(loc.label || "")}" placeholder="Nazwa miejsca" maxlength="40" autocomplete="off" />
               <button type="button" class="settings-loc__remove" data-action="settings-loc-remove" data-id="${escapeHtml(loc.id)}"
@@ -8669,10 +8896,6 @@
               <input type="text" class="settings-loc__address" data-role="settings-loc-address" data-id="${escapeHtml(loc.id)}"
                 value="${escapeHtml(loc.address || "")}" placeholder="ul. Przykładowa 1, Miasto" maxlength="120" autocomplete="street-address" />
             </label>
-            <div class="settings-loc__tones" role="group" aria-label="Kolor miejsca">
-              <span class="settings-loc__field-label">Kolor</span>
-              <div class="settings-loc__tone-row">${toneBtns}</div>
-            </div>
           </div>`;
       })
       .join("");
@@ -8687,6 +8910,27 @@
             : `<p class="settings__cap">Osiągnięto limit ${SETTINGS_LOC_MAX} miejsc.</p>`
         }
       </div>`;
+  }
+
+  function closeSettingsLocColorPickers(exceptEl) {
+    document.querySelectorAll(".settings-loc__color.is-open").forEach(function (el) {
+      if (exceptEl && el === exceptEl) return;
+      el.classList.remove("is-open");
+      const btn = el.querySelector(".settings-loc__swatch");
+      if (btn) btn.setAttribute("aria-expanded", "false");
+    });
+  }
+
+  function toggleSettingsLocColorPicker(locId, trigger) {
+    const wrap = trigger && trigger.closest
+      ? trigger.closest(".settings-loc__color")
+      : document.querySelector('.settings-loc[data-loc-id="' + locId + '"] .settings-loc__color');
+    if (!wrap) return;
+    const willOpen = !wrap.classList.contains("is-open");
+    closeSettingsLocColorPickers(willOpen ? wrap : null);
+    wrap.classList.toggle("is-open", willOpen);
+    const btn = wrap.querySelector(".settings-loc__swatch");
+    if (btn) btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
   }
 
   function addProviderLocation() {
@@ -8814,17 +9058,115 @@
       </div>`;
   }
 
+  function renderSelectOptions(opts, selected) {
+    return opts
+      .map(function (o) {
+        const on = Number(selected) === Number(o.v);
+        return `<option value="${o.v}"${on ? " selected" : ""}>${escapeHtml(o.label)}</option>`;
+      })
+      .join("");
+  }
+
+  function renderSettingsProfile(p) {
+    ensureProviderBookingRules(p);
+    return `
+      <div class="settings__row settings__row--contact" data-field="profile">
+        <span class="settings__key">Profil firmy</span>
+        <p class="settings__help">Nazwa, adres i opis widoczne na stronie rezerwacji.</p>
+        <label class="settings-contact__field">
+          <span class="settings-contact__label">Nazwa</span>
+          <input type="text" class="settings-contact__input" data-role="settings-name"
+            value="${escapeHtml(p.name || "")}" placeholder="Nazwa firmy" maxlength="60" autocomplete="organization" />
+        </label>
+        <label class="settings-contact__field">
+          <span class="settings-contact__label">Adres główny</span>
+          <input type="text" class="settings-contact__input" data-role="settings-address"
+            value="${escapeHtml(p.address || "")}" placeholder="ul. Przykładowa 1, Miasto (puste = online)" maxlength="120" autocomplete="street-address" />
+        </label>
+        <label class="settings-contact__field">
+          <span class="settings-contact__label">O firmie</span>
+          <textarea class="settings-contact__input settings-contact__textarea" data-role="settings-about"
+            rows="3" maxlength="280" placeholder="Krótki opis dla klientów">${escapeHtml(p.about || "")}</textarea>
+        </label>
+        <label class="settings-contact__field">
+          <span class="settings-contact__label">Strona WWW</span>
+          <input type="url" class="settings-contact__input" data-role="settings-website"
+            value="${escapeHtml(p.website || "")}" placeholder="https://" autocomplete="url" inputmode="url" />
+        </label>
+        <div class="settings-share">
+          <div class="settings__toggle-text">
+            <span class="settings-contact__label">Link profilu</span>
+            <span class="settings__hint">/${escapeHtml(p.slug)}</span>
+          </div>
+          <button type="button" class="settings-share__btn" data-action="share-provider" data-slug="${escapeHtml(p.slug)}">Udostępnij</button>
+        </div>
+      </div>`;
+  }
+
+  function renderSettingsBookingRules(p) {
+    const r = ensureProviderBookingRules(p);
+    return `
+      <div class="settings__row settings__row--contact" data-field="bookingRules">
+        <span class="settings__key">Reguły rezerwacji</span>
+        <p class="settings__help">Jak w Booksy: okno terminów, wyprzedzenie i zasady anulowania.</p>
+        <label class="settings-contact__field">
+          <span class="settings-contact__label">Rezerwacja z wyprzedzeniem</span>
+          <select class="settings-contact__input" data-role="settings-rule-future" aria-label="Rezerwacja z wyprzedzeniem">
+            ${renderSelectOptions(BOOKING_FUTURE_OPTS, r.futureDays)}
+          </select>
+        </label>
+        <label class="settings-contact__field">
+          <span class="settings-contact__label">Minimalny czas przed wizytą</span>
+          <select class="settings-contact__input" data-role="settings-rule-lead" aria-label="Minimalny czas przed wizytą">
+            ${renderSelectOptions(BOOKING_LEAD_OPTS, r.minLeadHours)}
+          </select>
+        </label>
+        <label class="settings-contact__field">
+          <span class="settings-contact__label">Anulowanie / przełożenie do</span>
+          <select class="settings-contact__input" data-role="settings-rule-cancel" aria-label="Termin anulowania">
+            ${renderSelectOptions(BOOKING_CANCEL_OPTS, r.cancelHours)}
+          </select>
+        </label>
+        <label class="settings-contact__field">
+          <span class="settings-contact__label">Polityka anulowania (tekst dla klienta)</span>
+          <textarea class="settings-contact__input settings-contact__textarea" data-role="settings-rule-policy"
+            rows="3" maxlength="400" placeholder="Np. Anulowanie możliwe najpóźniej 24 h przed wizytą.">${escapeHtml(r.policy || "")}</textarea>
+        </label>
+      </div>`;
+  }
+
+  function captureProviderProfileFields() {
+    const p = myProvider();
+    if (!p) return;
+    ensureProviderBookingRules(p);
+    const nameEl = document.querySelector('[data-role="settings-name"]');
+    const addrEl = document.querySelector('[data-role="settings-address"]');
+    const aboutEl = document.querySelector('[data-role="settings-about"]');
+    const webEl = document.querySelector('[data-role="settings-website"]');
+    if (nameEl) {
+      const n = String(nameEl.value || "").trim();
+      p.name = n || p.name || "Firma";
+    }
+    if (addrEl) p.address = String(addrEl.value || "").trim();
+    if (aboutEl) p.about = String(aboutEl.value || "").trim();
+    if (webEl) p.website = String(webEl.value || "").trim();
+    const futureEl = document.querySelector('[data-role="settings-rule-future"]');
+    const leadEl = document.querySelector('[data-role="settings-rule-lead"]');
+    const cancelEl = document.querySelector('[data-role="settings-rule-cancel"]');
+    const policyEl = document.querySelector('[data-role="settings-rule-policy"]');
+    if (futureEl) p.bookingRules.futureDays = Number(futureEl.value) || 30;
+    if (leadEl) p.bookingRules.minLeadHours = Number(leadEl.value) || 0;
+    if (cancelEl) p.bookingRules.cancelHours = Number(cancelEl.value) || 0;
+    if (policyEl) p.bookingRules.policy = String(policyEl.value || "").trim();
+  }
+
   function renderSettings() {
     const p = myProvider();
     if (!p) return renderDashboard();
     ensureProviderContact(p);
+    ensureProviderBookingRules(p);
     const visible = !!p.visibleInSearch;
     const approval = p.bookingMode === "approval";
-    const rowsBefore = [
-      ["Nazwa", p.name],
-      ["Slug (link)", "/" + p.slug],
-      ["Adres", p.address || "— (usługa online)"],
-    ];
     const bookingModeRow = `
       <div class="settings__row settings__row--mode" data-field="bookingMode">
         <span class="settings__key">Tryb rezerwacji</span>
@@ -8867,13 +9209,10 @@
             </div>
           </header>
           <div class="settings">
-            ${rowsBefore
-              .map(
-                (r) => `<div class="settings__row"><span class="settings__key">${escapeHtml(r[0])}</span><span class="settings__val">${escapeHtml(r[1])}</span></div>`
-              )
-              .join("")}
+            ${renderSettingsProfile(p)}
             ${renderSettingsContact(p)}
             ${bookingModeRow}
+            ${renderSettingsBookingRules(p)}
             ${visibilityRow}
             ${renderSettingsLocations(p)}
           </div>
@@ -9074,6 +9413,13 @@
     if (screen === "search" && window.AppState.screen.client === "booking") {
       window.AppState.draft = null;
       window.AppState.params.client = {};
+    }
+    // Ekrany klienta (konto, ulubione…) — przełącz rolę, jeśli jesteśmy jako usługodawca.
+    if (
+      (screen === "account" || screen === "favorites" || screen === "search" || screen === "myCalendar") &&
+      window.AppState.activeRole === "provider"
+    ) {
+      window.AppState.activeRole = "client";
     }
     window.AppState.screen.client = screen;
     if (window.AppState.loggedIn) {
@@ -9432,7 +9778,7 @@
       id: "bk-" + Date.now(),
       providerId: p.id,
       providerName: p.name,
-      clientName: (data().CURRENT_USER && data().CURRENT_USER.name) || "Klient",
+      clientName: ensureClientProfile().name || "Klient",
       serviceIds: svcs.map((s) => s.id),
       serviceNames: svcs.map((s) => s.name),
       dateISO: draft.dateISO,
@@ -9464,7 +9810,7 @@
       id: "rq-" + Date.now(),
       providerId: p.id,
       providerName: p.name,
-      clientName: (data().CURRENT_USER && data().CURRENT_USER.name) || "Klient",
+      clientName: ensureClientProfile().name || "Klient",
       serviceIds: svcs.map((s) => s.id),
       serviceNames: svcs.map((s) => s.name),
       status: "pending",
@@ -9659,8 +10005,9 @@
 
   function updateAppHeader(activeRole) {
     const user = data().CURRENT_USER;
+    const cp = ensureClientProfile();
     const userEl = document.getElementById("app-header-user");
-    if (userEl && user) userEl.textContent = user.name || "";
+    if (userEl) userEl.textContent = cp.name || (user && user.name) || "";
 
     const pageApp = document.getElementById("page-app");
     if (pageApp) pageApp.dataset.activeRole = activeRole || "client";
@@ -9855,6 +10202,9 @@
   });
 
   document.addEventListener("click", function (event) {
+    if (!event.target.closest(".settings-loc__color")) {
+      closeSettingsLocColorPickers();
+    }
     if (
       !event.target.closest('[data-role="avail-loc-pick"]') &&
       !event.target.closest('[data-role="avail-repeat-pick"]')
@@ -10187,22 +10537,33 @@
         break;
       case "settings-booking-mode":
         event.preventDefault();
+        captureProviderProfileFields();
+        captureProviderContactFields();
+        captureProviderLocationFields();
         setProviderBookingMode(d.mode);
         break;
       case "settings-loc-add":
         event.preventDefault();
+        captureProviderProfileFields();
         captureProviderContactFields();
         captureProviderLocationFields();
         addProviderLocation();
         break;
       case "settings-loc-remove":
         event.preventDefault();
+        captureProviderProfileFields();
         captureProviderContactFields();
         captureProviderLocationFields();
         removeProviderLocation(d.id);
         break;
+      case "settings-loc-color-toggle":
+        event.preventDefault();
+        event.stopPropagation();
+        toggleSettingsLocColorPicker(d.id, event.target.closest(".settings-loc__swatch") || event.target);
+        break;
       case "settings-loc-tone":
         event.preventDefault();
+        captureProviderProfileFields();
         captureProviderContactFields();
         captureProviderLocationFields();
         setProviderLocationTone(d.id, d.tone);
@@ -10582,9 +10943,40 @@
 
     const emailVisibleToggle = event.target.closest('[data-role="settings-email-visible"]');
     if (emailVisibleToggle) {
+      captureProviderProfileFields();
       captureProviderContactFields();
       saveState();
       renderAll();
+      return;
+    }
+
+    const accountNotif = event.target.closest(
+      '[data-role="account-notif-reminders"], [data-role="account-notif-status"], [data-role="account-notif-marketing"]'
+    );
+    if (accountNotif) {
+      captureClientAccountFields();
+      saveState();
+      renderAll();
+      return;
+    }
+
+    const accountField = event.target.closest(
+      '[data-role="account-name"], [data-role="account-phone"], [data-role="account-email"]'
+    );
+    if (accountField) {
+      captureClientAccountFields();
+      saveState();
+      updateAppHeader(window.AppState.activeRole || "client");
+      return;
+    }
+
+    const profileField = event.target.closest(
+      '[data-role="settings-name"], [data-role="settings-address"], [data-role="settings-about"], [data-role="settings-website"], [data-role="settings-rule-future"], [data-role="settings-rule-lead"], [data-role="settings-rule-cancel"], [data-role="settings-rule-policy"]'
+    );
+    if (profileField) {
+      captureProviderProfileFields();
+      saveState();
+      if (profileField.matches("select")) renderAll();
       return;
     }
 
@@ -10592,6 +10984,7 @@
       '[data-role="settings-phone"], [data-role="settings-email"], [data-role="settings-social"]'
     );
     if (contactField) {
+      captureProviderProfileFields();
       captureProviderContactFields();
       saveState();
       return;
