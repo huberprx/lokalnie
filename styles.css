@@ -2500,6 +2500,10 @@ body.pwa-install-help-open {
   background: var(--surface);
 }
 
+.app-screen--settings .app-scroll {
+  background: #eef0f4;
+}
+
 .screen-head {
   margin-bottom: 0.9rem;
 }
@@ -2509,6 +2513,10 @@ body.pwa-install-help-open {
   align-items: center;
   gap: 0.15rem;
   min-width: 0;
+}
+
+.screen-head--with-back:has(.screen-head__text) {
+  align-items: flex-start;
 }
 
 .screen-head__back {
@@ -2548,6 +2556,19 @@ body.pwa-install-help-open {
 .screen-head--with-back .screen-head__title {
   flex: 1;
   min-width: 0;
+}
+
+.screen-head__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.screen-head__text .screen-head__title {
+  flex: none;
+}
+
+.screen-head__text .screen-head__sub {
+  margin-top: 0.15rem;
 }
 
 .screen-head__title {
@@ -5399,6 +5420,7 @@ body.service-photo-preview-open {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--surface);
 }
 
 .app-screen--booking {
@@ -5408,6 +5430,7 @@ body.service-photo-preview-open {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  background: var(--surface);
 }
 
 .app-screen--booking .booking-mobile {
@@ -5416,6 +5439,7 @@ body.service-photo-preview-open {
   padding: 0 var(--app-pad-x);
   padding-bottom: 0;
   box-sizing: border-box;
+  background: var(--surface);
 }
 
 .device-frame .app-screen--booking .booking-mobile {
@@ -5454,6 +5478,7 @@ body.service-photo-preview-open {
   flex-direction: column;
   overflow: hidden;
   padding-top: 0;
+  background: var(--surface);
 }
 
 .booking__main .booking__label {
@@ -6479,7 +6504,7 @@ body.service-photo-preview-open {
 }
 
 .prov-cal-add__client-pick.is-details-open .prov-cal-add__client-contacts {
-  max-height: 14rem;
+  max-height: 18rem;
   margin-top: 0.25rem;
   opacity: 1;
   visibility: visible;
@@ -10016,7 +10041,7 @@ body.prov-cal-resizing * {
   scroll-snap-stop: always;
   box-sizing: border-box;
   padding: 0.85rem;
-  background: var(--surface-2);
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
   display: flex;
@@ -11905,21 +11930,109 @@ body.prov-cal-resizing * {
 
 .settings__row {
   display: flex;
-  justify-content: space-between;
-  gap: 1rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.2rem;
   padding: 0.7rem 0.8rem;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  background: var(--surface);
+  border: none;
   border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
 }
 
 .settings__key {
-  font-size: 0.82rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
   color: var(--text-muted);
 }
 
 .settings__val {
-  font-size: 0.82rem;
+  font-size: 0.92rem;
   font-weight: 600;
-  text-align: right;
+  text-align: left;
+  color: var(--text);
+}
+
+.settings__row--toggle {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.settings__toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.settings__hint {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settings__toggle {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.settings__row--mode {
+  gap: 0.45rem;
+}
+
+.settings__mode {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.settings__mode-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.12rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.settings__mode-btn:hover {
+  border-color: color-mix(in srgb, var(--accent-provider) 35%, var(--border));
+}
+
+.settings__mode-btn.is-on {
+  border-color: color-mix(in srgb, var(--accent-provider) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent-provider) 10%, var(--surface));
+}
+
+.settings__mode-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.settings__mode-btn.is-on .settings__mode-title {
+  color: var(--accent-provider);
+}
+
+.settings__mode-desc {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  line-height: 1.3;
 }

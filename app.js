@@ -4910,6 +4910,23 @@
     );
   }
 
+  /** Klient z listy kontaktów (zapisani + wizyty/prośby), ze scalanymi danymi kontaktowymi. */
+  function findCollectedProviderClientByName(providerId, name) {
+    const key = String(name || "")
+      .trim()
+      .toLowerCase();
+    if (!providerId || !key) return null;
+    return (
+      collectProviderClients(providerId).find(function (c) {
+        return (
+          String((c && c.name) || "")
+            .trim()
+            .toLowerCase() === key
+        );
+      }) || null
+    );
+  }
+
   /** Upsert klienta: imię + opcjonalnie telefon / e-mail / adres. */
   function upsertProviderClient(providerId, data) {
     const n = String((data && data.name) || "").trim();
@@ -5223,13 +5240,22 @@
       return;
     }
     captureClientSheetNewDetails();
-    let client = p ? findProviderClientByName(p.id, n) : null;
+    let client = null;
     if (options.addNew && p) {
       const phone =
         options.phone != null ? String(options.phone || "").trim() : String(draft.clientSheetNewPhone || "").trim();
       const email =
         options.email != null ? String(options.email || "").trim() : String(draft.clientSheetNewEmail || "").trim();
       client = upsertProviderClient(p.id, { name: n, phone: phone, email: email });
+    } else if (p) {
+      client = findCollectedProviderClientByName(p.id, n);
+      if (client && (client.phone || client.email || client.address)) {
+        const payload = { name: client.name };
+        if (client.phone) payload.phone = client.phone;
+        if (client.email) payload.email = client.email;
+        if (client.address) payload.address = client.address;
+        upsertProviderClient(p.id, payload);
+      }
     }
     draft.clientName = n;
     draft.clientPickOpen = false;
@@ -5463,7 +5489,7 @@
     applyClientContactsToDraft(draft, bk);
     if (!draft.clientPhone && !draft.clientEmail && !draft.clientAddress) {
       const p = myProvider();
-      const saved = p ? findProviderClientByName(p.id, draft.clientName) : null;
+      const saved = p ? findCollectedProviderClientByName(p.id, draft.clientName) : null;
       if (saved) applyClientContactsToDraft(draft, saved);
     }
     draft.clientDetailsOpen = !!(draft.clientPhone || draft.clientEmail || draft.clientAddress);
@@ -8415,20 +8441,64 @@
   function renderSettings() {
     const p = myProvider();
     if (!p) return renderDashboard();
-    const rows = [
+    const visible = !!p.visibleInSearch;
+    const approval = p.bookingMode === "approval";
+    const rowsBefore = [
       ["Nazwa", p.name],
       ["Slug (link)", "/" + p.slug],
       ["Adres", p.address || "— (usługa online)"],
-      ["Tryb rezerwacji", p.bookingMode === "approval" ? "Na akceptację" : "Automatyczny"],
-      ["Widoczność w katalogu", p.visibleInSearch ? "Widoczny" : "Ukryty (tylko z linku)"],
-      ["Lokalizacje", (p.locations || []).map((l) => l.label).join(", ")],
     ];
+    const rowsAfter = [["Lokalizacje", (p.locations || []).map((l) => l.label).join(", ")]];
+    const bookingModeRow = `
+      <div class="settings__row settings__row--mode" data-field="bookingMode">
+        <span class="settings__key">Tryb rezerwacji</span>
+        <div class="settings__mode" role="radiogroup" aria-label="Tryb rezerwacji">
+          <button type="button" class="settings__mode-btn${approval ? "" : " is-on"}"
+            data-action="settings-booking-mode" data-mode="auto"
+            role="radio" aria-checked="${approval ? "false" : "true"}">
+            <span class="settings__mode-title">Automatyczny</span>
+            <span class="settings__mode-desc">Klient wybiera termin z kalendarza</span>
+          </button>
+          <button type="button" class="settings__mode-btn${approval ? " is-on" : ""}"
+            data-action="settings-booking-mode" data-mode="approval"
+            role="radio" aria-checked="${approval ? "true" : "false"}">
+            <span class="settings__mode-title">Na prośbę</span>
+            <span class="settings__mode-desc">Klient prosi o termin — Ty akceptujesz lub zmieniasz</span>
+          </button>
+        </div>
+      </div>`;
+    const visibilityRow = `
+      <div class="settings__row settings__row--toggle" data-field="visibleInSearch">
+        <div class="settings__toggle-text">
+          <span class="settings__key">Widoczność w katalogu</span>
+          <span class="settings__hint">${visible ? "Widoczny w wyszukiwaniu" : "Ukryty — tylko z linku"}</span>
+        </div>
+        <label class="settings__toggle">
+          <input type="checkbox" class="avail-edit__switch" data-role="settings-visible-search"
+            ${visible ? "checked" : ""} aria-label="Widoczność w katalogu" />
+        </label>
+      </div>`;
     return `
-      <div class="app-screen app-screen--provider">
+      <div class="app-screen app-screen--provider app-screen--settings">
         <div class="app-scroll">
-          <header class="screen-head"><h2 class="screen-head__title">Ustawienia</h2><p class="screen-head__sub">Dane profilu usługodawcy.</p></header>
+          <header class="screen-head screen-head--with-back">
+            <button type="button" class="screen-head__back" data-action="provider-tab" data-tab="dashboard" aria-label="Wróć">
+              <span class="screen-head__back-icon" aria-hidden="true"></span>
+            </button>
+            <div class="screen-head__text">
+              <h2 class="screen-head__title">Ustawienia</h2>
+              <p class="screen-head__sub">Dane profilu usługodawcy.</p>
+            </div>
+          </header>
           <div class="settings">
-            ${rows
+            ${rowsBefore
+              .map(
+                (r) => `<div class="settings__row"><span class="settings__key">${escapeHtml(r[0])}</span><span class="settings__val">${escapeHtml(r[1])}</span></div>`
+              )
+              .join("")}
+            ${bookingModeRow}
+            ${visibilityRow}
+            ${rowsAfter
               .map(
                 (r) => `<div class="settings__row"><span class="settings__key">${escapeHtml(r[0])}</span><span class="settings__val">${escapeHtml(r[1])}</span></div>`
               )
@@ -8437,6 +8507,17 @@
         </div>
         ${providerBottomNav("settings")}
       </div>`;
+  }
+
+  function setProviderBookingMode(mode) {
+    const p = myProvider();
+    if (!p) return;
+    const next = mode === "approval" ? "approval" : "auto";
+    if (p.bookingMode === next) return;
+    p.bookingMode = next;
+    saveState();
+    renderAll();
+    showToast(next === "approval" ? "Tryb: na prośbę o termin" : "Tryb: automatyczna rezerwacja");
   }
 
   function renderProvider(screen) {
@@ -9727,6 +9808,10 @@
           navigate("provider", "calendar", {});
         } else navigate("provider", d.tab, {});
         break;
+      case "settings-booking-mode":
+        event.preventDefault();
+        setProviderBookingMode(d.mode);
+        break;
       case "select-prov-cal-slot":
         event.preventDefault();
         event.stopPropagation();
@@ -10086,6 +10171,17 @@
       window.AppState.dashShowFreeSlots = !!showFreeToggle.checked;
       saveState();
       renderAll();
+      return;
+    }
+
+    const visibleSearchToggle = event.target.closest('[data-role="settings-visible-search"]');
+    if (visibleSearchToggle) {
+      const p = myProvider();
+      if (p) {
+        p.visibleInSearch = !!visibleSearchToggle.checked;
+        saveState();
+        renderAll();
+      }
       return;
     }
 
