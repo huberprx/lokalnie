@@ -1042,6 +1042,7 @@
     const itemClass = opts.itemClass || "provider-card-popover__item";
     const iconClass = opts.iconClass || "provider-card-popover__item-icon";
     const role = opts.role || "menuitem";
+    ensureProviderContact(p);
 
     const navItem = p.address
       ? `<a href="${escapeHtml(mapsSearchUrl(p.address))}" class="${itemClass}" role="${role}" target="_blank" rel="noopener noreferrer">
@@ -1050,8 +1051,9 @@
         </a>`
       : "";
 
-    const callItem = p.phone
-      ? `<a href="tel:${escapeHtml(String(p.phone).replace(/\s/g, ""))}" class="${itemClass}" role="${role}">
+    const phone = String(p.phone || "").replace(/\s/g, "");
+    const callItem = phone
+      ? `<a href="tel:${escapeHtml(phone)}" class="${itemClass}" role="${role}">
           <span class="${iconClass} ${iconClass}--call" aria-hidden="true"></span>
           Zadzwoń
         </a>`
@@ -1060,12 +1062,31 @@
           Zadzwoń
         </button>`;
 
+    const email = providerPublicEmail(p);
+    const mailItem = email
+      ? `<a href="mailto:${escapeHtml(email)}" class="${itemClass}" role="${role}">
+          <span class="${iconClass} ${iconClass}--mail" aria-hidden="true"></span>
+          Napisz e-mail
+        </a>`
+      : "";
+
+    const socialItems = providerSocialLinks(p)
+      .map(function (s) {
+        return `<a href="${escapeHtml(s.href)}" class="${itemClass}" role="${role}" target="_blank" rel="noopener noreferrer">
+          <span class="${iconClass} ${iconClass}--social ${iconClass}--${escapeHtml(s.key)}" aria-hidden="true"></span>
+          ${escapeHtml(s.label)}
+        </a>`;
+      })
+      .join("");
+
     return `
       <button type="button" class="${itemClass}" role="${role}" data-action="open-provider-info" data-slug="${escapeHtml(p.slug)}">
         <span class="${iconClass} ${iconClass}--info" aria-hidden="true"></span>
         Więcej informacji
       </button>
       ${callItem}
+      ${mailItem}
+      ${socialItems}
       <button type="button" class="${itemClass}" role="${role}" data-action="share-provider" data-slug="${escapeHtml(p.slug)}">
         <span class="${iconClass} ${iconClass}--share" aria-hidden="true"></span>
         Udostępnij
@@ -1255,9 +1276,15 @@
     return loc ? loc.label : "";
   }
 
-  /** Stały indeks koloru miejsca (0–5) wg kolejności w profilu. */
+  /** Stały indeks koloru miejsca (0–5): z pola toneIndex albo kolejność w profilu. */
   function locationToneIndex(provider, locId) {
     const locs = (provider && provider.locations) || [];
+    const loc = locs.find(function (l) {
+      return l.id === locId;
+    });
+    if (loc && typeof loc.toneIndex === "number" && isFinite(loc.toneIndex)) {
+      return ((Math.floor(loc.toneIndex) % 6) + 6) % 6;
+    }
     const idx = locs.findIndex(function (l) {
       return l.id === locId;
     });
@@ -1266,6 +1293,85 @@
 
   function locationToneClass(provider, locId) {
     return "loc-tone-" + locationToneIndex(provider, locId);
+  }
+
+  const SETTINGS_LOC_MAX = 3;
+  const SETTINGS_LOC_TONES = [0, 1, 2, 3, 4, 5];
+
+  function nextLocationToneIndex(provider) {
+    const used = {};
+    ((provider && provider.locations) || []).forEach(function (l) {
+      used[locationToneIndex(provider, l.id)] = true;
+    });
+    for (let i = 0; i < SETTINGS_LOC_TONES.length; i++) {
+      if (!used[SETTINGS_LOC_TONES[i]]) return SETTINGS_LOC_TONES[i];
+    }
+    return ((provider.locations || []).length) % 6;
+  }
+
+  function ensureProviderLocations(provider) {
+    if (!provider) return [];
+    if (!Array.isArray(provider.locations)) provider.locations = [];
+    provider.locations.forEach(function (loc, i) {
+      if (!loc || typeof loc !== "object") return;
+      if (typeof loc.toneIndex !== "number" || !isFinite(loc.toneIndex)) {
+        loc.toneIndex = i % 6;
+      } else {
+        loc.toneIndex = ((Math.floor(loc.toneIndex) % 6) + 6) % 6;
+      }
+      if (typeof loc.label !== "string") loc.label = String(loc.label || "Miejsce");
+      if (loc.address == null) loc.address = "";
+    });
+    return provider.locations;
+  }
+
+  const SETTINGS_SOCIALS = [
+    { key: "instagram", label: "Instagram", placeholder: "@nazwa lub link" },
+    { key: "facebook", label: "Facebook", placeholder: "nazwa strony lub link" },
+    { key: "tiktok", label: "TikTok", placeholder: "@nazwa lub link" },
+  ];
+
+  function ensureProviderContact(provider) {
+    if (!provider) return null;
+    if (typeof provider.phone !== "string") provider.phone = provider.phone ? String(provider.phone) : "";
+    if (typeof provider.email !== "string") provider.email = provider.email ? String(provider.email) : "";
+    if (typeof provider.emailVisible !== "boolean") provider.emailVisible = !!provider.email;
+    if (!provider.socials || typeof provider.socials !== "object") provider.socials = {};
+    SETTINGS_SOCIALS.forEach(function (s) {
+      if (typeof provider.socials[s.key] !== "string") {
+        provider.socials[s.key] = provider.socials[s.key] ? String(provider.socials[s.key]) : "";
+      }
+    });
+    return provider;
+  }
+
+  function normalizeSocialUrl(kind, value) {
+    const v = String(value || "").trim();
+    if (!v) return "";
+    if (/^https?:\/\//i.test(v)) return v;
+    const handle = v.replace(/^@/, "").replace(/^\/+/, "");
+    if (!handle) return "";
+    if (kind === "instagram") return "https://instagram.com/" + encodeURIComponent(handle);
+    if (kind === "facebook") return "https://facebook.com/" + encodeURIComponent(handle);
+    if (kind === "tiktok") return "https://www.tiktok.com/@" + encodeURIComponent(handle);
+    return v;
+  }
+
+  function providerPublicEmail(provider) {
+    if (!provider) return "";
+    ensureProviderContact(provider);
+    if (!provider.emailVisible) return "";
+    return String(provider.email || "").trim();
+  }
+
+  function providerSocialLinks(provider) {
+    if (!provider) return [];
+    ensureProviderContact(provider);
+    return SETTINGS_SOCIALS.map(function (s) {
+      const raw = String(provider.socials[s.key] || "").trim();
+      const href = normalizeSocialUrl(s.key, raw);
+      return href ? { key: s.key, label: s.label, href: href } : null;
+    }).filter(Boolean);
   }
 
   function saveState() {
@@ -3126,6 +3232,41 @@
       </div>`;
   }
 
+  function renderProfileContact(p) {
+    ensureProviderContact(p);
+    const phone = String(p.phone || "").trim();
+    const phoneHref = phone.replace(/\s/g, "");
+    const email = providerPublicEmail(p);
+    const socials = providerSocialLinks(p);
+    if (!phone && !email && !socials.length) return "";
+    const links = [];
+    if (phoneHref) {
+      links.push(
+        `<a class="profile__contact-link" href="tel:${escapeHtml(phoneHref)}">
+          <span class="profile__contact-label">Telefon</span>
+          <span class="profile__contact-val">${escapeHtml(phone)}</span>
+        </a>`
+      );
+    }
+    if (email) {
+      links.push(
+        `<a class="profile__contact-link" href="mailto:${escapeHtml(email)}">
+          <span class="profile__contact-label">E-mail</span>
+          <span class="profile__contact-val">${escapeHtml(email)}</span>
+        </a>`
+      );
+    }
+    socials.forEach(function (s) {
+      links.push(
+        `<a class="profile__contact-link" href="${escapeHtml(s.href)}" target="_blank" rel="noopener noreferrer">
+          <span class="profile__contact-label">${escapeHtml(s.label)}</span>
+          <span class="profile__contact-val">Otwórz</span>
+        </a>`
+      );
+    });
+    return `<div class="profile__contact" aria-label="Kontakt">${links.join("")}</div>`;
+  }
+
   function renderProfile(slug) {
     const p = getProviderBySlug(slug);
     if (!p) return renderSearch();
@@ -3156,6 +3297,7 @@
                 <p class="profile__addr">${escapeHtml(p.address || "Usługa online")}${p.address ? " · " + p.distanceKm.toFixed(1) + " km" : ""}</p>
               </div>
             </div>
+            ${renderProfileContact(p)}
             ${p.bookingMode === "approval" ? `<p class="profile__mode">Rezerwacja na akceptację — usługodawca zaproponuje termin.</p>` : ""}
 
             <h3 class="profile__section">Usługi ${p.multiSelect ? '<span class="profile__hint">(możesz wybrać kilka)</span>' : ""}</h3>
@@ -3283,8 +3425,8 @@
     const showFree = !!window.AppState.dashShowFreeSlots;
 
     return `
-      <div class="app-screen app-screen--provider">
-        <div class="app-scroll">
+      <div class="app-screen app-screen--provider app-screen--dashboard">
+        <div class="app-scroll app-scroll--dash">
           <header class="screen-head">
             <h2 class="screen-head__title">Pulpit</h2>
             <p class="screen-head__sub">${escapeHtml(myProvider() ? myProvider().name : "")}</p>
@@ -8502,9 +8644,180 @@
       </div>`;
   }
 
+  function renderSettingsLocations(p) {
+    const locs = ensureProviderLocations(p).slice(0, SETTINGS_LOC_MAX);
+    const canAdd = locs.length < SETTINGS_LOC_MAX;
+    const cards = locs
+      .map(function (loc) {
+        const tone = locationToneIndex(p, loc.id);
+        const toneBtns = SETTINGS_LOC_TONES.map(function (t) {
+          return `<button type="button" class="settings-loc__tone loc-tone-${t}${t === tone ? " is-on" : ""}"
+            data-action="settings-loc-tone" data-id="${escapeHtml(loc.id)}" data-tone="${t}"
+            aria-label="Kolor ${t + 1}" aria-pressed="${t === tone ? "true" : "false"}"></button>`;
+        }).join("");
+        return `
+          <div class="settings-loc loc-tone-${tone}" data-loc-id="${escapeHtml(loc.id)}">
+            <div class="settings-loc__head">
+              <span class="settings-loc__swatch" aria-hidden="true"></span>
+              <input type="text" class="settings-loc__name" data-role="settings-loc-name" data-id="${escapeHtml(loc.id)}"
+                value="${escapeHtml(loc.label || "")}" placeholder="Nazwa miejsca" maxlength="40" autocomplete="off" />
+              <button type="button" class="settings-loc__remove" data-action="settings-loc-remove" data-id="${escapeHtml(loc.id)}"
+                aria-label="Usuń miejsce">×</button>
+            </div>
+            <label class="settings-loc__field">
+              <span class="settings-loc__field-label">Adres</span>
+              <input type="text" class="settings-loc__address" data-role="settings-loc-address" data-id="${escapeHtml(loc.id)}"
+                value="${escapeHtml(loc.address || "")}" placeholder="ul. Przykładowa 1, Miasto" maxlength="120" autocomplete="street-address" />
+            </label>
+            <div class="settings-loc__tones" role="group" aria-label="Kolor miejsca">
+              <span class="settings-loc__field-label">Kolor</span>
+              <div class="settings-loc__tone-row">${toneBtns}</div>
+            </div>
+          </div>`;
+      })
+      .join("");
+    return `
+      <div class="settings__row settings__row--locations" data-field="locations">
+        <span class="settings__key">Lokalizacje</span>
+        <p class="settings__help">Do ${SETTINGS_LOC_MAX} miejsc usług. Kolor widać w ofercie klienta i w Twoim kalendarzu.</p>
+        <div class="settings-locs">${cards || `<p class="empty-note">Brak miejsc — dodaj pierwsze.</p>`}</div>
+        ${
+          canAdd
+            ? `<button type="button" class="settings-loc__add" data-action="settings-loc-add">Dodaj miejsce</button>`
+            : `<p class="settings__cap">Osiągnięto limit ${SETTINGS_LOC_MAX} miejsc.</p>`
+        }
+      </div>`;
+  }
+
+  function addProviderLocation() {
+    const p = myProvider();
+    if (!p) return;
+    const locs = ensureProviderLocations(p);
+    if (locs.length >= SETTINGS_LOC_MAX) {
+      showToast("Możesz dodać maksymalnie " + SETTINGS_LOC_MAX + " miejsca.");
+      return;
+    }
+    locs.push({
+      id: "loc-" + Date.now(),
+      label: "Nowe miejsce",
+      address: "",
+      toneIndex: nextLocationToneIndex(p),
+    });
+    saveState();
+    renderAll();
+  }
+
+  function removeProviderLocation(locId) {
+    const p = myProvider();
+    if (!p || !locId) return;
+    const locs = ensureProviderLocations(p);
+    if (locs.length <= 1) {
+      showToast("Zostaw przynajmniej jedno miejsce.");
+      return;
+    }
+    p.locations = locs.filter(function (l) {
+      return l.id !== locId;
+    });
+    saveState();
+    renderAll();
+  }
+
+  function setProviderLocationTone(locId, tone) {
+    const p = myProvider();
+    if (!p || !locId) return;
+    const locs = ensureProviderLocations(p);
+    const loc = locs.find(function (l) {
+      return l.id === locId;
+    });
+    if (!loc) return;
+    const t = Number(tone);
+    if (!isFinite(t)) return;
+    loc.toneIndex = ((Math.floor(t) % 6) + 6) % 6;
+    saveState();
+    renderAll();
+  }
+
+  function captureProviderLocationFields() {
+    const p = myProvider();
+    if (!p) return;
+    const locs = ensureProviderLocations(p);
+    locs.forEach(function (loc) {
+      const nameEl = document.querySelector(
+        '[data-role="settings-loc-name"][data-id="' + loc.id + '"]'
+      );
+      const addrEl = document.querySelector(
+        '[data-role="settings-loc-address"][data-id="' + loc.id + '"]'
+      );
+      if (nameEl) {
+        const n = String(nameEl.value || "").trim();
+        loc.label = n || loc.label || "Miejsce";
+      }
+      if (addrEl) loc.address = String(addrEl.value || "").trim();
+    });
+  }
+
+  function captureProviderContactFields() {
+    const p = myProvider();
+    if (!p) return;
+    ensureProviderContact(p);
+    const phoneEl = document.querySelector('[data-role="settings-phone"]');
+    const emailEl = document.querySelector('[data-role="settings-email"]');
+    const emailVisEl = document.querySelector('[data-role="settings-email-visible"]');
+    if (phoneEl) p.phone = String(phoneEl.value || "").trim();
+    if (emailEl) p.email = String(emailEl.value || "").trim();
+    if (emailVisEl) p.emailVisible = !!emailVisEl.checked;
+    SETTINGS_SOCIALS.forEach(function (s) {
+      const el = document.querySelector('[data-role="settings-social"][data-social="' + s.key + '"]');
+      if (el) p.socials[s.key] = String(el.value || "").trim();
+    });
+  }
+
+  function renderSettingsContact(p) {
+    ensureProviderContact(p);
+    const emailOn = !!p.emailVisible;
+    const socialFields = SETTINGS_SOCIALS.map(function (s) {
+      return `
+        <label class="settings-contact__field">
+          <span class="settings-contact__label">${escapeHtml(s.label)}</span>
+          <input type="text" class="settings-contact__input" data-role="settings-social" data-social="${escapeHtml(s.key)}"
+            value="${escapeHtml(p.socials[s.key] || "")}" placeholder="${escapeHtml(s.placeholder)}" autocomplete="off" />
+        </label>`;
+    }).join("");
+    return `
+      <div class="settings__row settings__row--contact" data-field="contact">
+        <span class="settings__key">Kontakt</span>
+        <p class="settings__help">Telefon, e-mail i social media widoczne dla klientów w Twoim profilu.</p>
+        <label class="settings-contact__field">
+          <span class="settings-contact__label">Telefon</span>
+          <input type="tel" class="settings-contact__input" data-role="settings-phone"
+            value="${escapeHtml(p.phone || "")}" placeholder="+48 500 000 000" autocomplete="tel" inputmode="tel" />
+        </label>
+        <label class="settings-contact__field">
+          <span class="settings-contact__label">E-mail</span>
+          <input type="email" class="settings-contact__input" data-role="settings-email"
+            value="${escapeHtml(p.email || "")}" placeholder="kontakt@twojafirma.pl" autocomplete="email" inputmode="email" />
+        </label>
+        <div class="settings-contact__toggle">
+          <div class="settings__toggle-text">
+            <span class="settings__hint">${emailOn ? "E-mail widoczny dla klientów" : "E-mail ukryty"}</span>
+            <span class="settings-contact__toggle-hint">${emailOn ? "Klienci mogą napisać na ten adres" : "Tylko Ty widzisz ten adres w ustawieniach"}</span>
+          </div>
+          <label class="settings__toggle">
+            <input type="checkbox" class="avail-edit__switch" data-role="settings-email-visible"
+              ${emailOn ? "checked" : ""} aria-label="Widoczność adresu e-mail" />
+          </label>
+        </div>
+        <div class="settings-contact__socials">
+          <span class="settings-contact__label">Social media</span>
+          ${socialFields}
+        </div>
+      </div>`;
+  }
+
   function renderSettings() {
     const p = myProvider();
     if (!p) return renderDashboard();
+    ensureProviderContact(p);
     const visible = !!p.visibleInSearch;
     const approval = p.bookingMode === "approval";
     const rowsBefore = [
@@ -8512,7 +8825,6 @@
       ["Slug (link)", "/" + p.slug],
       ["Adres", p.address || "— (usługa online)"],
     ];
-    const rowsAfter = [["Lokalizacje", (p.locations || []).map((l) => l.label).join(", ")]];
     const bookingModeRow = `
       <div class="settings__row settings__row--mode" data-field="bookingMode">
         <span class="settings__key">Tryb rezerwacji</span>
@@ -8560,13 +8872,10 @@
                 (r) => `<div class="settings__row"><span class="settings__key">${escapeHtml(r[0])}</span><span class="settings__val">${escapeHtml(r[1])}</span></div>`
               )
               .join("")}
+            ${renderSettingsContact(p)}
             ${bookingModeRow}
             ${visibilityRow}
-            ${rowsAfter
-              .map(
-                (r) => `<div class="settings__row"><span class="settings__key">${escapeHtml(r[0])}</span><span class="settings__val">${escapeHtml(r[1])}</span></div>`
-              )
-              .join("")}
+            ${renderSettingsLocations(p)}
           </div>
         </div>
         ${providerBottomNav("settings")}
@@ -9880,6 +10189,24 @@
         event.preventDefault();
         setProviderBookingMode(d.mode);
         break;
+      case "settings-loc-add":
+        event.preventDefault();
+        captureProviderContactFields();
+        captureProviderLocationFields();
+        addProviderLocation();
+        break;
+      case "settings-loc-remove":
+        event.preventDefault();
+        captureProviderContactFields();
+        captureProviderLocationFields();
+        removeProviderLocation(d.id);
+        break;
+      case "settings-loc-tone":
+        event.preventDefault();
+        captureProviderContactFields();
+        captureProviderLocationFields();
+        setProviderLocationTone(d.id, d.tone);
+        break;
       case "select-prov-cal-slot":
         event.preventDefault();
         event.stopPropagation();
@@ -10250,6 +10577,32 @@
         saveState();
         renderAll();
       }
+      return;
+    }
+
+    const emailVisibleToggle = event.target.closest('[data-role="settings-email-visible"]');
+    if (emailVisibleToggle) {
+      captureProviderContactFields();
+      saveState();
+      renderAll();
+      return;
+    }
+
+    const contactField = event.target.closest(
+      '[data-role="settings-phone"], [data-role="settings-email"], [data-role="settings-social"]'
+    );
+    if (contactField) {
+      captureProviderContactFields();
+      saveState();
+      return;
+    }
+
+    const locField = event.target.closest(
+      '[data-role="settings-loc-name"], [data-role="settings-loc-address"]'
+    );
+    if (locField) {
+      captureProviderLocationFields();
+      saveState();
       return;
     }
 

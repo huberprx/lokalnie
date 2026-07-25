@@ -99,8 +99,8 @@
       visibleInSearch: true,
       multiSelect: true,
       locations: [
-        { id: "loc-gb-1", label: "Studio główne", address: "ul. Marszałkowska 12, Warszawa" },
-        { id: "loc-gb-2", label: "Filia Praga", address: "ul. Ząbkowska 8, Warszawa" },
+        { id: "loc-gb-1", label: "Studio główne", address: "ul. Marszałkowska 12, Warszawa", toneIndex: 0 },
+        { id: "loc-gb-2", label: "Filia Praga", address: "ul. Ząbkowska 8, Warszawa", toneIndex: 1 },
       ],
       services: [
         {
@@ -177,7 +177,14 @@
         { startISO: "2026-07-17T11:00:00", endISO: "2026-07-17T11:45:00" },
         { startISO: "2026-07-20T14:00:00", endISO: "2026-07-20T15:00:00" },
       ],
-      phone: "+48221234567",
+      phone: "+48 221 234 567",
+      email: "kontakt@grzesiubarber.pl",
+      emailVisible: true,
+      socials: {
+        instagram: "grzesiubarber",
+        facebook: "",
+        tiktok: "",
+      },
     },
     {
       id: "studio-bella",
