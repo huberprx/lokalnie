@@ -86,7 +86,8 @@
   };
 
   // --- Providerzy (6–8). „Grzesiu Barber" wiodący. ---
-  // Wymagane: min. 1 bookingMode:'approval', min. 1 bez address, min. 1 visibleInSearch:false.
+  // Wymagane: min. 1 oferta bookingMode:'approval', min. 1 bez address, min. 1 visibleInSearch:false.
+  // bookingMode na poziomie usługi (auto | approval); stary bookingMode profilu = fallback.
   const PROVIDERS = [
     {
       id: "grzesiu-barber",
@@ -146,7 +147,8 @@
           name: "Combo: włosy + broda",
           durationMin: 45,
           price: 85,
-          subtitle: "Strzyżenie i pełna stylizacja brody",
+          bookingMode: "approval",
+          subtitle: "Strzyżenie i pełna stylizacja brody — termin po uzgodnieniu",
           photos: ["assets/services/svc-combo.jpg", "assets/services/svc-beard.jpg"],
         },
         {
@@ -190,6 +192,11 @@
       phone: "+48 221 234 567",
       email: "kontakt@grzesiubarber.pl",
       emailVisible: true,
+      website: "https://grzesiubarber.pl",
+      socialLinks: [
+        { id: "sl-gb-web", kind: "website", value: "https://grzesiubarber.pl" },
+        { id: "sl-gb-ig", kind: "instagram", value: "grzesiubarber" },
+      ],
       socials: {
         instagram: "grzesiubarber",
         facebook: "",
@@ -289,9 +296,9 @@
         { id: "loc-km-online", label: "Online", address: null },
       ],
       services: [
-        { id: "svc-km-1", name: "Konsultacja wstępna", durationMin: 30, price: null, subtitle: "Bezpłatne omówienie potrzeb" },
-        { id: "svc-km-2", name: "Korepetycje — 1h", durationMin: 60, price: 80, subtitle: "Matematyka, poziom szkolny" },
-        { id: "svc-km-3", name: "Przygotowanie do matury", durationMin: 90, price: 120, subtitle: "Intensywne powtórki" },
+        { id: "svc-km-1", name: "Konsultacja wstępna", durationMin: 30, price: null, bookingMode: "approval", subtitle: "Bezpłatne omówienie potrzeb" },
+        { id: "svc-km-2", name: "Korepetycje — 1h", durationMin: 60, price: 80, bookingMode: "approval", subtitle: "Matematyka, poziom szkolny" },
+        { id: "svc-km-3", name: "Przygotowanie do matury", durationMin: 90, price: 120, bookingMode: "approval", subtitle: "Intensywne powtórki" },
       ],
       availability: [],
       busy: [
@@ -338,9 +345,9 @@
         { id: "loc-fr-1", label: "Gabinet", address: "ul. Mokotowska 15, Warszawa" },
       ],
       services: [
-        { id: "svc-fr-1", name: "Konsultacja fizjoterapeutyczna", durationMin: 45, price: 140, subtitle: "Ocena i plan terapii" },
-        { id: "svc-fr-2", name: "Terapia manualna", durationMin: 60, price: 170, subtitle: "Praca z kręgosłupem" },
-        { id: "svc-fr-3", name: "Rehabilitacja pourazowa", durationMin: 60, price: 160, subtitle: "Powrót do sprawności" },
+        { id: "svc-fr-1", name: "Konsultacja fizjoterapeutyczna", durationMin: 45, price: 140, bookingMode: "approval", subtitle: "Ocena i plan terapii" },
+        { id: "svc-fr-2", name: "Terapia manualna", durationMin: 60, price: 170, bookingMode: "approval", subtitle: "Praca z kręgosłupem" },
+        { id: "svc-fr-3", name: "Rehabilitacja pourazowa", durationMin: 60, price: 160, bookingMode: "approval", subtitle: "Powrót do sprawności" },
       ],
       availability: [],
       busy: [

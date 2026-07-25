@@ -459,7 +459,7 @@
     const labelClass = mobile ? "booking__label booking__label--caps" : "booking__panel-label";
     return `
       <div class="booking__panel-head${mobile ? " booking__panel-head--mobile" : ""}">
-        <h3 class="${labelClass}">Usługi</h3>
+        <h3 class="${labelClass}">Oferta</h3>
       </div>`;
   }
 
@@ -493,7 +493,7 @@
 
     const summary = panel.querySelector(".selection-summary--inline");
     if (summary) summary.remove();
-    const mode = p.bookingMode === "approval" ? "approval" : "auto";
+    const mode = draftBookingMode(p);
     panel.insertAdjacentHTML("beforeend", renderSelectionSummaryBar(p, ctx, mode));
   }
 
@@ -846,15 +846,21 @@
   }
 
   function renderBookingLayoutBlock(p, ctx) {
-    const totals = ctx.totals;
+    const isApproval = draftBookingMode(p) === "approval";
     return `
-      <div class="booking-layout">
+      <div class="booking-layout${isApproval ? " booking-layout--approval" : ""}">
         <aside class="booking__services">
           ${renderServicesPanelHead(p, ctx.draft)}
           <div class="booking__services-list service-list">${ctx.services}</div>
         </aside>
 
-        <section class="booking__calendar">
+        ${
+          isApproval
+            ? `<section class="booking__approval-note">
+                <h3 class="booking__panel-label">Jak to działa</h3>
+                <p class="empty-note">Wyślij prośbę o termin — usługodawca zaproponuje wolny slot w kalendarzu.</p>
+              </section>`
+            : `<section class="booking__calendar">
           <h3 class="booking__panel-label">Wybierz dzień</h3>
           ${ctx.availDates.length ? ctx.calendarGrid : `<p class="empty-note">Brak dostępnych terminów.</p>`}
         </section>
@@ -864,7 +870,8 @@
           <div class="time-list time-list--vertical">
             ${ctx.activeDate ? ctx.timeList || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>` : `<p class="empty-note">Wybierz dzień w kalendarzu.</p>`}
           </div>
-        </aside>
+        </aside>`
+        }
       </div>`;
   }
 
@@ -872,10 +879,10 @@
     const ctx = buildBookingContext(p);
     if (!ctx) return "";
 
-    const isApproval = p.bookingMode === "approval";
+    const isApproval = draftBookingMode(p) === "approval";
     return `
       <div class="provider-booking-panel${isApproval ? " provider-booking-panel--approval" : ""}${window.AppState.bookingPanelEnterSlug === p.slug ? " provider-booking-panel--enter" : ""}">
-        ${isApproval ? `<p class="profile__mode">Rezerwacja na akceptację — usługodawca zaproponuje termin.</p>` : ""}
+        ${isApproval ? `<p class="profile__mode">Oferty na prośbę — podasz wolny termin, usługodawca zaproponuje wizytę.</p>` : ""}
         ${renderBookingLayoutBlock(p, ctx)}
         ${renderSelectionSummaryBar(p, ctx, isApproval ? "approval" : "auto")}
       </div>`;
@@ -1248,7 +1255,7 @@
     const hours = p.openHoursToday || "";
     const metaParts = [];
     if (hours) metaParts.push(hours);
-    if (p.bookingMode === "approval") metaParts.push("na akceptację");
+    if (providerHasApprovalOffers(p)) metaParts.push("także na prośbę");
     const metaLine = metaParts.join(" · ");
     const addrLine = p.address ? p.address + " · " + dist : dist;
 
@@ -1382,6 +1389,44 @@
     return "loc-tone-" + locationToneIndex(provider, locId);
   }
 
+  /** Tryb rezerwacji oferty: auto | approval (fallback: stary bookingMode profilu). */
+  function serviceBookingMode(service, provider) {
+    if (service && service.bookingMode === "approval") return "approval";
+    if (service && service.bookingMode === "auto") return "auto";
+    return provider && provider.bookingMode === "approval" ? "approval" : "auto";
+  }
+
+  function ensureServicesBookingMode(provider) {
+    if (!provider || !Array.isArray(provider.services)) return;
+    const fallback = provider.bookingMode === "approval" ? "approval" : "auto";
+    provider.services.forEach(function (s) {
+      if (!s || typeof s !== "object") return;
+      if (s.bookingMode !== "auto" && s.bookingMode !== "approval") s.bookingMode = fallback;
+    });
+  }
+
+  function draftBookingMode(provider) {
+    const draft = window.AppState.draft;
+    const ids = (draft && draft.serviceIds) || [];
+    if (!provider || !ids.length) return "auto";
+    ensureServicesBookingMode(provider);
+    for (let i = 0; i < ids.length; i++) {
+      const svc = (provider.services || []).find(function (s) {
+        return s && s.id === ids[i];
+      });
+      if (svc && serviceBookingMode(svc, provider) === "approval") return "approval";
+    }
+    return "auto";
+  }
+
+  function providerHasApprovalOffers(provider) {
+    if (!provider) return false;
+    ensureServicesBookingMode(provider);
+    return (provider.services || []).some(function (s) {
+      return serviceBookingMode(s, provider) === "approval";
+    });
+  }
+
   const SETTINGS_LOC_MAX = 3;
   const SETTINGS_LOC_TONES = [0, 1, 2, 3, 4, 5];
 
@@ -1412,24 +1457,82 @@
     return provider.locations;
   }
 
-  const SETTINGS_SOCIALS = [
+  const SETTINGS_SOCIAL_KINDS = [
+    { key: "website", label: "WWW", placeholder: "https://" },
     { key: "instagram", label: "Instagram", placeholder: "@nazwa lub link" },
     { key: "facebook", label: "Facebook", placeholder: "nazwa strony lub link" },
     { key: "tiktok", label: "TikTok", placeholder: "@nazwa lub link" },
+    { key: "youtube", label: "YouTube", placeholder: "@kanał lub link" },
+    { key: "pinterest", label: "Pinterest", placeholder: "nazwa lub link" },
+    { key: "linkedin", label: "LinkedIn", placeholder: "nazwa firmy lub link" },
+    { key: "x", label: "X", placeholder: "@nazwa lub link" },
   ];
+  const SETTINGS_SOCIAL_MAX = 8;
+
+  function socialKindMeta(kind) {
+    return (
+      SETTINGS_SOCIAL_KINDS.find(function (s) {
+        return s.key === kind;
+      }) || SETTINGS_SOCIAL_KINDS[0]
+    );
+  }
 
   function ensureProviderContact(provider) {
     if (!provider) return null;
     if (typeof provider.phone !== "string") provider.phone = provider.phone ? String(provider.phone) : "";
     if (typeof provider.email !== "string") provider.email = provider.email ? String(provider.email) : "";
     if (typeof provider.emailVisible !== "boolean") provider.emailVisible = !!provider.email;
-    if (!provider.socials || typeof provider.socials !== "object") provider.socials = {};
-    SETTINGS_SOCIALS.forEach(function (s) {
-      if (typeof provider.socials[s.key] !== "string") {
-        provider.socials[s.key] = provider.socials[s.key] ? String(provider.socials[s.key]) : "";
-      }
-    });
+    ensureProviderSocialLinks(provider);
     return provider;
+  }
+
+  function ensureProviderSocialLinks(provider) {
+    if (!provider) return [];
+    if (!Array.isArray(provider.socialLinks)) {
+      const migrated = [];
+      const website = String(provider.website || "").trim();
+      if (website) {
+        migrated.push({ id: "sl-web", kind: "website", value: website });
+      }
+      const legacy = provider.socials && typeof provider.socials === "object" ? provider.socials : {};
+      SETTINGS_SOCIAL_KINDS.forEach(function (s) {
+        if (s.key === "website") return;
+        const val = String(legacy[s.key] || "").trim();
+        if (val) migrated.push({ id: "sl-" + s.key, kind: s.key, value: val });
+      });
+      provider.socialLinks = migrated.length
+        ? migrated
+        : [{ id: "sl-" + Date.now(), kind: "instagram", value: "" }];
+    }
+    provider.socialLinks = provider.socialLinks
+      .filter(function (l) {
+        return l && typeof l === "object";
+      })
+      .map(function (l, i) {
+        const kind = socialKindMeta(l.kind).key;
+        return {
+          id: l.id || "sl-" + i + "-" + Date.now(),
+          kind: kind,
+          value: typeof l.value === "string" ? l.value : String(l.value || ""),
+        };
+      });
+    if (!provider.socialLinks.length) {
+      provider.socialLinks.push({ id: "sl-" + Date.now(), kind: "instagram", value: "" });
+    }
+    // Kompatybilność wsteczna dla starych pól.
+    const web = provider.socialLinks.find(function (l) {
+      return l.kind === "website" && l.value;
+    });
+    provider.website = web ? web.value : provider.website || "";
+    if (!provider.socials || typeof provider.socials !== "object") provider.socials = {};
+    SETTINGS_SOCIAL_KINDS.forEach(function (s) {
+      if (s.key === "website") return;
+      const hit = provider.socialLinks.find(function (l) {
+        return l.kind === s.key && l.value;
+      });
+      provider.socials[s.key] = hit ? hit.value : "";
+    });
+    return provider.socialLinks;
   }
 
   function normalizeSocialUrl(kind, value) {
@@ -1438,9 +1541,14 @@
     if (/^https?:\/\//i.test(v)) return v;
     const handle = v.replace(/^@/, "").replace(/^\/+/, "");
     if (!handle) return "";
+    if (kind === "website") return "https://" + handle;
     if (kind === "instagram") return "https://instagram.com/" + encodeURIComponent(handle);
     if (kind === "facebook") return "https://facebook.com/" + encodeURIComponent(handle);
     if (kind === "tiktok") return "https://www.tiktok.com/@" + encodeURIComponent(handle);
+    if (kind === "youtube") return "https://www.youtube.com/@" + encodeURIComponent(handle);
+    if (kind === "pinterest") return "https://www.pinterest.com/" + encodeURIComponent(handle);
+    if (kind === "linkedin") return "https://www.linkedin.com/company/" + encodeURIComponent(handle);
+    if (kind === "x") return "https://x.com/" + encodeURIComponent(handle);
     return v;
   }
 
@@ -1453,12 +1561,14 @@
 
   function providerSocialLinks(provider) {
     if (!provider) return [];
-    ensureProviderContact(provider);
-    return SETTINGS_SOCIALS.map(function (s) {
-      const raw = String(provider.socials[s.key] || "").trim();
-      const href = normalizeSocialUrl(s.key, raw);
-      return href ? { key: s.key, label: s.label, href: href } : null;
-    }).filter(Boolean);
+    ensureProviderSocialLinks(provider);
+    return provider.socialLinks
+      .map(function (l) {
+        const meta = socialKindMeta(l.kind);
+        const href = normalizeSocialUrl(l.kind, l.value);
+        return href ? { key: l.kind, label: meta.label, href: href } : null;
+      })
+      .filter(Boolean);
   }
 
   function saveState() {
@@ -2265,7 +2375,7 @@
   }
 
   function bookingConfirmCTA(p, draft, totals) {
-    const isApproval = !!(p && p.bookingMode === "approval");
+    const isApproval = draftBookingMode(p) === "approval";
     if (isApproval) {
       return {
         action: "send-request",
@@ -3068,65 +3178,97 @@
       </div>`;
   }
 
-  /** Lista ofert (rezerwacja / profil) — płaskie separatory, miniatura, radio. */
+  function renderBookingServiceRow(p, s, selectedIds, draft, expandedIds) {
+    const on = selectedIds.indexOf(s.id) !== -1;
+    const expanded = expandedIds.indexOf(s.id) !== -1;
+    const detail = serviceOfferText(s);
+    const summary = serviceListSummary(s);
+    const photos = servicePhotos(s);
+    const hasDesc = !!detail;
+    const thumb = photos[0] || "";
+    const variants = serviceVariants(s);
+    const mode = serviceBookingMode(s, p);
+    const variantId = on ? selectedVariantIdForService(draft, s) : defaultServiceVariantId(s);
+    const resolved = resolveServiceVariant(s, variantId);
+    const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
+    const expandLabel = (expanded ? "Zwiń" : "Rozwiń") + " szczegóły: " + s.name;
+    const thumbHtml = thumb
+      ? `<button type="button" class="service-row__thumb service-row__thumb--btn" data-action="preview-service-photos" data-service-id="${escapeHtml(s.id)}" aria-label="Zdjęcia: ${escapeHtml(s.name)}" title="Zdjęcia">
+          <img class="service-row__thumb-img" src="${escapeHtml(thumb)}" alt="" loading="lazy" />
+        </button>`
+      : `<span class="service-row__thumb service-row__thumb--empty" aria-hidden="true"></span>`;
+
+    return `
+      <article class="service-row service-row--booking-b${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}${variants.length ? " service-row--has-variants" : ""}" data-service-id="${escapeHtml(s.id)}" data-booking-mode="${escapeHtml(mode)}">
+        <div class="service-row__top">
+          ${thumbHtml}
+          <button type="button" class="service-row__static-main service-row__static-main--btn"${hasDesc ? ` data-action="toggle-service-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}"` : " disabled aria-disabled=\"true\""} aria-label="${escapeHtml(hasDesc ? expandLabel : s.name)}" title="${escapeHtml(hasDesc ? expandLabel : s.name)}">
+            <span class="service-row__body">
+              <span class="service-row__name">${escapeHtml(s.name)}</span>
+              ${summary ? `<span class="service-row__sub">${escapeHtml(summary)}</span>` : ""}
+            </span>
+            <span class="service-row__meta">
+              <span class="service-row__dur">${escapeHtml(formatDuration(resolved.durationMin))}</span>
+              <span class="service-row__price">${escapeHtml(formatPrice(resolved.price))}</span>
+            </span>
+          </button>
+          <button type="button" class="service-row__check service-row__check--radio${on ? " service-row__check--on" : ""}" data-action="toggle-service-check" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
+            <span class="service-row__check-visual" aria-hidden="true"></span>
+          </button>
+        </div>
+        ${renderServiceVariantCarousel(s, on ? resolved.id : null, { interactive: true })}
+        ${
+          hasDesc
+            ? `<div class="service-row__detail"${expanded ? "" : " hidden"}>
+                <p class="service-row__detail-text">${escapeHtml(detail)}</p>
+              </div>`
+            : ""
+        }
+      </article>`;
+  }
+
+  /** Lista ofert — grupy: automatyczne potwierdzenie / na prośbę o termin. */
   function renderBookingServiceRows(p, selectedIds) {
     const draft = window.AppState.draft;
     const expandedIds = (draft && draft.expandedServiceIds) || [];
     ensureDraftServiceVariants(draft);
+    ensureServicesBookingMode(p);
 
-    return (p.services || [])
-      .map(function (s) {
-        const on = selectedIds.indexOf(s.id) !== -1;
-        const expanded = expandedIds.indexOf(s.id) !== -1;
-        const detail = serviceOfferText(s);
-        const summary = serviceListSummary(s);
-        const photos = servicePhotos(s);
-        const hasDesc = !!detail;
-        const thumb = photos[0] || "";
-        const variants = serviceVariants(s);
-        // Cena/czas: domyślnie pierwsza opcja; podświetlenie chipa dopiero po checkmarku oferty.
-        const variantId = on
-          ? selectedVariantIdForService(draft, s)
-          : defaultServiceVariantId(s);
-        const resolved = resolveServiceVariant(s, variantId);
-        const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
-        const expandLabel = (expanded ? "Zwiń" : "Rozwiń") + " szczegóły: " + s.name;
+    const auto = [];
+    const approval = [];
+    (p.services || []).forEach(function (s) {
+      if (serviceBookingMode(s, p) === "approval") approval.push(s);
+      else auto.push(s);
+    });
 
-        const thumbHtml = thumb
-          ? `<button type="button" class="service-row__thumb service-row__thumb--btn" data-action="preview-service-photos" data-service-id="${escapeHtml(s.id)}" aria-label="Zdjęcia: ${escapeHtml(s.name)}" title="Zdjęcia">
-              <img class="service-row__thumb-img" src="${escapeHtml(thumb)}" alt="" loading="lazy" />
-            </button>`
-          : `<span class="service-row__thumb service-row__thumb--empty" aria-hidden="true"></span>`;
-
-        return `
-        <article class="service-row service-row--booking-b${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}${variants.length ? " service-row--has-variants" : ""}" data-service-id="${escapeHtml(s.id)}">
-          <div class="service-row__top">
-            ${thumbHtml}
-            <button type="button" class="service-row__static-main service-row__static-main--btn"${hasDesc ? ` data-action="toggle-service-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}"` : " disabled aria-disabled=\"true\""} aria-label="${escapeHtml(hasDesc ? expandLabel : s.name)}" title="${escapeHtml(hasDesc ? expandLabel : s.name)}">
-              <span class="service-row__body">
-                <span class="service-row__name">${escapeHtml(s.name)}</span>
-                ${summary ? `<span class="service-row__sub">${escapeHtml(summary)}</span>` : ""}
-              </span>
-              <span class="service-row__meta">
-                <span class="service-row__dur">${escapeHtml(formatDuration(resolved.durationMin))}</span>
-                <span class="service-row__price">${escapeHtml(formatPrice(resolved.price))}</span>
-              </span>
-            </button>
-            <button type="button" class="service-row__check service-row__check--radio${on ? " service-row__check--on" : ""}" data-action="toggle-service-check" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
-              <span class="service-row__check-visual" aria-hidden="true"></span>
-            </button>
+    function group(title, hint, list) {
+      if (!list.length) return "";
+      return `
+        <div class="service-list__group">
+          <div class="service-list__group-head">
+            <h4 class="service-list__group-title">${escapeHtml(title)}</h4>
+            <p class="service-list__group-hint">${escapeHtml(hint)}</p>
           </div>
-          ${renderServiceVariantCarousel(s, on ? resolved.id : null, { interactive: true })}
-          ${
-            hasDesc
-              ? `<div class="service-row__detail"${expanded ? "" : " hidden"}>
-                  <p class="service-row__detail-text">${escapeHtml(detail)}</p>
-                </div>`
-              : ""
-          }
-        </article>`;
-      })
-      .join("");
+          ${list
+            .map(function (s) {
+              return renderBookingServiceRow(p, s, selectedIds, draft, expandedIds);
+            })
+            .join("")}
+        </div>`;
+    }
+
+    const html =
+      group(
+        "Automatyczne potwierdzenie",
+        "Wybierasz termin z kalendarza — wizyta od razu potwierdzona.",
+        auto
+      ) +
+      group(
+        "Na prośbę o termin",
+        "Wysyłasz prośbę — usługodawca zaproponuje wolny termin.",
+        approval
+      );
+    return html || `<p class="empty-note">Brak usług w ofercie.</p>`;
   }
 
   function ensureServicePhotoPreview() {
@@ -3417,6 +3559,13 @@
             : ""
         }
         ${
+          b.status === "confirmed"
+            ? `<div class="visit-card__actions">
+                 <button type="button" class="btn btn--ghost btn--sm" data-action="cancel-visit" data-booking-id="${escapeHtml(b.id)}">Odwołaj</button>
+               </div>`
+            : ""
+        }
+        ${
           canReschedule
             ? `<div class="visit-card__actions">
                  <button type="button" class="btn btn--ghost btn--sm" data-action="open-profile" data-slug="${escapeHtml(slug)}">Wybierz inny termin</button>
@@ -3433,13 +3582,7 @@
     const phoneHref = phone.replace(/\s/g, "");
     const email = providerPublicEmail(p);
     const socials = providerSocialLinks(p);
-    const website = String(p.website || "").trim();
-    const websiteHref = website
-      ? /^https?:\/\//i.test(website)
-        ? website
-        : "https://" + website
-      : "";
-    if (!phone && !email && !socials.length && !websiteHref) return "";
+    if (!phone && !email && !socials.length) return "";
     const links = [];
     if (phoneHref) {
       links.push(
@@ -3454,14 +3597,6 @@
         `<a class="profile__contact-link" href="mailto:${escapeHtml(email)}">
           <span class="profile__contact-label">E-mail</span>
           <span class="profile__contact-val">${escapeHtml(email)}</span>
-        </a>`
-      );
-    }
-    if (websiteHref) {
-      links.push(
-        `<a class="profile__contact-link" href="${escapeHtml(websiteHref)}" target="_blank" rel="noopener noreferrer">
-          <span class="profile__contact-label">WWW</span>
-          <span class="profile__contact-val">Otwórz</span>
         </a>`
       );
     }
@@ -3485,8 +3620,9 @@
     const selectedIds = (window.AppState.draft && window.AppState.draft.serviceIds) || [];
     const services = renderBookingServiceRows(p, selectedIds);
 
-    const ctaLabel = p.bookingMode === "approval" ? "Wyślij prośbę o termin" : "Rezerwuj termin";
-    const ctaAction = p.bookingMode === "approval" ? "send-request" : "start-booking";
+    const isApproval = draftBookingMode(p) === "approval";
+    const ctaLabel = isApproval ? "Wyślij prośbę o termin" : "Rezerwuj termin";
+    const ctaAction = isApproval ? "send-request" : "start-booking";
 
     return `
       <div class="app-screen app-screen--client">
@@ -3513,9 +3649,8 @@
                 ? `<p class="profile__policy"><span class="profile__policy-label">Zasady anulowania</span>${escapeHtml(providerCancelPolicyText(p))}</p>`
                 : ""
             }
-            ${p.bookingMode === "approval" ? `<p class="profile__mode">Rezerwacja na akceptację — usługodawca zaproponuje termin.</p>` : ""}
 
-            <h3 class="profile__section">Usługi ${p.multiSelect ? '<span class="profile__hint">(możesz wybrać kilka)</span>' : ""}</h3>
+            <h3 class="profile__section">Oferta ${p.multiSelect ? '<span class="profile__hint">(możesz wybrać kilka z tej samej grupy)</span>' : ""}</h3>
             <div class="service-list">${services}</div>
           </div>
         </div>
@@ -3541,6 +3676,7 @@
 
     const ctx = buildBookingContext(p);
     if (!ctx) return renderSearch();
+    const isApproval = draftBookingMode(p) === "approval";
 
     return `
       <div class="app-screen app-screen--client app-screen--booking">
@@ -3552,18 +3688,16 @@
                 ${ctx.draft.providerInfoOpen ? renderBookingProviderInfoPanel(p) : ""}
               </div>
 
-              ${p.bookingMode === "approval" ? `<p class="profile__mode">Rezerwacja na akceptację — usługodawca zaproponuje termin.</p>` : ""}
-              ${
-                providerCancelPolicyText(p)
-                  ? `<p class="profile__policy profile__policy--compact">${escapeHtml(providerCancelPolicyText(p))}</p>`
-                  : ""
-              }
+              ${isApproval ? `<p class="profile__mode">Oferty na prośbę — wyślij prośbę, a usługodawca zaproponuje termin.</p>` : ""}
 
               ${renderServicesPanelHead(p, ctx.draft, { mobile: true })}
               <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
             </div>
 
-            <div class="booking__schedule" data-role="booking-mobile-schedule">
+            ${
+              isApproval
+                ? ""
+                : `<div class="booking__schedule" data-role="booking-mobile-schedule">
               <div class="booking__label-row">
                 <h3 class="booking__label booking__label--caps">Wybierz datę</h3>
                 <span class="booking__month" data-role="booking-mobile-month">${escapeHtml(monthLabelFromISO(ctx.activeDate || ctx.availDates[0]))}</span>
@@ -3572,7 +3706,8 @@
 
               <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>Wolne terminy</h3>
               <div class="time-list time-list--horizontal" data-role="booking-mobile-times"${ctx.activeDate ? "" : " hidden"}>${ctx.activeDate ? ctx.timeListMobile || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>` : ""}</div>
-            </div>
+            </div>`
+            }
           </div>
         </div>
 
@@ -6732,6 +6867,7 @@
       id: "__new__",
       name: "",
       description: "",
+      bookingMode: "auto",
       durationMin: 30,
       price: null,
       photos: [],
@@ -6797,10 +6933,14 @@
     if (!form) return;
     const variants = readServiceEditVariantsFromForm(form);
     const first = variants[0];
+    const modeEl = form.querySelector('[name="bookingMode"]:checked') || form.querySelector('[data-role="service-booking-mode"].is-on');
+    const bookingMode =
+      (modeEl && (modeEl.value || modeEl.getAttribute("data-mode"))) === "approval" ? "approval" : "auto";
     window.AppState.params.provider = Object.assign({}, window.AppState.params.provider || {}, {
       editServiceDraft: {
         name: String(form.elements.name && form.elements.name.value || ""),
         description: String(form.elements.description && form.elements.description.value || ""),
+        bookingMode: bookingMode,
         durationMin: first.durationMin,
         price: first.price,
         variants: variants,
@@ -6927,6 +7067,7 @@
     const serviceId = isNew ? "__new__" : s.id;
     const photos = getEditServicePhotos();
     const variants = normalizeEditVariants(s);
+    const mode = s.bookingMode === "approval" ? "approval" : "auto";
     return `
       <form class="service-edit" data-service-id="${escapeHtml(serviceId)}" data-new="${isNew ? "true" : "false"}" onsubmit="return false;">
         <header class="screen-head screen-head--with-back">
@@ -6943,6 +7084,25 @@
           <span class="service-edit__label">Opis</span>
           <textarea class="service-edit__input service-edit__textarea" name="description" rows="6" maxlength="500" placeholder="Pierwsza linia widać na liście, reszta po rozwinięciu przez klienta">${escapeHtml(s.description || s.subtitle || "")}</textarea>
         </label>
+        <div class="service-edit__field" data-field="bookingMode">
+          <span class="service-edit__label">Rezerwacja oferty</span>
+          <p class="service-edit__hint">Widoczne u klienta jako osobna grupa w ofercie.</p>
+          <div class="settings__mode" role="radiogroup" aria-label="Tryb rezerwacji oferty">
+            <button type="button" class="settings__mode-btn${mode === "auto" ? " is-on" : ""}"
+              data-action="service-booking-mode" data-mode="auto" data-role="service-booking-mode"
+              role="radio" aria-checked="${mode === "auto" ? "true" : "false"}">
+              <span class="settings__mode-title">Automatyczne potwierdzenie</span>
+              <span class="settings__mode-desc">Klient wybiera termin z kalendarza</span>
+            </button>
+            <button type="button" class="settings__mode-btn${mode === "approval" ? " is-on" : ""}"
+              data-action="service-booking-mode" data-mode="approval" data-role="service-booking-mode"
+              role="radio" aria-checked="${mode === "approval" ? "true" : "false"}">
+              <span class="settings__mode-title">Na prośbę o termin</span>
+              <span class="settings__mode-desc">Klient prosi — Ty proponujesz wolny slot</span>
+            </button>
+          </div>
+          <input type="hidden" name="bookingMode" value="${escapeHtml(mode)}" data-role="service-booking-mode-value" />
+        </div>
         ${renderServiceEditPhotos(photos)}
         ${renderServiceEditVariants(variants)}
         <div class="service-edit__actions">
@@ -6969,12 +7129,15 @@
       </div>`;
     }
 
+    ensureServicesBookingMode(p);
     const list = (p ? p.services : [])
       .map(function (s) {
         const thumb = servicePhotos(s)[0];
         const variants = serviceVariants(s);
         const defId = defaultServiceVariantId(s);
         const resolved = resolveServiceVariant(s, defId);
+        const mode = serviceBookingMode(s, p);
+        const modeLabel = mode === "approval" ? "Na prośbę o termin" : "Automatyczne potwierdzenie";
         return `
       <div class="service-row service-row--static${variants.length ? " service-row--has-variants" : ""}">
         <div class="service-row__top">
@@ -6987,6 +7150,7 @@
             <span class="service-row__body">
               <span class="service-row__name">${escapeHtml(s.name)}</span>
               <span class="service-row__sub">${escapeHtml(serviceListSummary(s))}</span>
+              <span class="service-row__mode service-row__mode--${escapeHtml(mode)}">${escapeHtml(modeLabel)}</span>
             </span>
             <span class="service-row__meta">
               <span class="service-row__dur">${escapeHtml(formatDuration(resolved.durationMin))}</span>
@@ -7004,7 +7168,7 @@
     return `
       <div class="app-screen app-screen--provider">
         <div class="app-scroll">
-          <header class="screen-head"><h2 class="screen-head__title">Usługi</h2><p class="screen-head__sub">Oferta widoczna dla klientów.</p></header>
+          <header class="screen-head"><h2 class="screen-head__title">Usługi</h2><p class="screen-head__sub">Oferta i tryb rezerwacji widoczne dla klientów.</p></header>
           <div class="service-list">${list || `<p class="empty-note">Brak usług w ofercie.</p>`}</div>
           <button type="button" class="btn btn--primary service-list__add" data-action="add-service">Dodaj usługę</button>
         </div>
@@ -7140,11 +7304,17 @@
     const durationMin = Math.round(first.durationMin);
     const price = first.price;
 
+    const bookingMode =
+      String((form.elements.bookingMode && form.elements.bookingMode.value) || "auto") === "approval"
+        ? "approval"
+        : "auto";
+
     if (isNew) {
       if (!Array.isArray(p.services)) p.services = [];
       s = {
         id: "svc-" + Date.now().toString(36),
         name: name,
+        bookingMode: bookingMode,
         durationMin: durationMin,
         price: price,
         photos: photos,
@@ -7165,6 +7335,7 @@
       s.name = name;
       s.description = description || undefined;
       delete s.subtitle;
+      s.bookingMode = bookingMode;
       s.durationMin = durationMin;
       s.price = price;
       s.photos = photos;
@@ -8901,8 +9072,7 @@
       .join("");
     return `
       <div class="settings__row settings__row--locations" data-field="locations">
-        <span class="settings__key">Lokalizacje</span>
-        <p class="settings__help">Do ${SETTINGS_LOC_MAX} miejsc usług. Kolor widać w ofercie klienta i w Twoim kalendarzu.</p>
+        <p class="settings__help">Do ${SETTINGS_LOC_MAX} miejsc usług. Kolor widać w ofercie i w kalendarzu.</p>
         <div class="settings-locs">${cards || `<p class="empty-note">Brak miejsc — dodaj pierwsze.</p>`}</div>
         ${
           canAdd
@@ -9010,27 +9180,81 @@
     if (phoneEl) p.phone = String(phoneEl.value || "").trim();
     if (emailEl) p.email = String(emailEl.value || "").trim();
     if (emailVisEl) p.emailVisible = !!emailVisEl.checked;
-    SETTINGS_SOCIALS.forEach(function (s) {
-      const el = document.querySelector('[data-role="settings-social"][data-social="' + s.key + '"]');
-      if (el) p.socials[s.key] = String(el.value || "").trim();
+    captureProviderSocialFields();
+  }
+
+  function captureProviderSocialFields() {
+    const p = myProvider();
+    if (!p) return;
+    const links = ensureProviderSocialLinks(p);
+    links.forEach(function (l) {
+      const kindEl = document.querySelector(
+        '[data-role="settings-social-kind"][data-id="' + l.id + '"]'
+      );
+      const valEl = document.querySelector(
+        '[data-role="settings-social-value"][data-id="' + l.id + '"]'
+      );
+      if (kindEl) l.kind = socialKindMeta(kindEl.value).key;
+      if (valEl) l.value = String(valEl.value || "").trim();
     });
+    ensureProviderSocialLinks(p);
+  }
+
+  function addProviderSocialLink() {
+    const p = myProvider();
+    if (!p) return;
+    captureProviderSocialFields();
+    const links = ensureProviderSocialLinks(p);
+    if (links.length >= SETTINGS_SOCIAL_MAX) {
+      showToast("Możesz dodać maksymalnie " + SETTINGS_SOCIAL_MAX + " linki.");
+      return;
+    }
+    const used = {};
+    links.forEach(function (l) {
+      used[l.kind] = true;
+    });
+    const nextKind =
+      (SETTINGS_SOCIAL_KINDS.find(function (s) {
+        return !used[s.key];
+      }) || SETTINGS_SOCIAL_KINDS[0]).key;
+    links.push({ id: "sl-" + Date.now(), kind: nextKind, value: "" });
+    saveState();
+    renderAll();
+  }
+
+  function removeProviderSocialLink(linkId) {
+    const p = myProvider();
+    if (!p || !linkId) return;
+    captureProviderSocialFields();
+    const links = ensureProviderSocialLinks(p);
+    if (links.length <= 1) {
+      links[0].value = "";
+      saveState();
+      renderAll();
+      return;
+    }
+    p.socialLinks = links.filter(function (l) {
+      return l.id !== linkId;
+    });
+    ensureProviderSocialLinks(p);
+    saveState();
+    renderAll();
+  }
+
+  function renderSettingsGroup(title, bodyHtml) {
+    return `
+      <section class="settings__group">
+        <h3 class="settings__group-title">${escapeHtml(title)}</h3>
+        <div class="settings__group-body">${bodyHtml}</div>
+      </section>`;
   }
 
   function renderSettingsContact(p) {
     ensureProviderContact(p);
     const emailOn = !!p.emailVisible;
-    const socialFields = SETTINGS_SOCIALS.map(function (s) {
-      return `
-        <label class="settings-contact__field">
-          <span class="settings-contact__label">${escapeHtml(s.label)}</span>
-          <input type="text" class="settings-contact__input" data-role="settings-social" data-social="${escapeHtml(s.key)}"
-            value="${escapeHtml(p.socials[s.key] || "")}" placeholder="${escapeHtml(s.placeholder)}" autocomplete="off" />
-        </label>`;
-    }).join("");
     return `
       <div class="settings__row settings__row--contact" data-field="contact">
-        <span class="settings__key">Kontakt</span>
-        <p class="settings__help">Telefon, e-mail i social media widoczne dla klientów w Twoim profilu.</p>
+        <p class="settings__help">Dane do kontaktu z klientem.</p>
         <label class="settings-contact__field">
           <span class="settings-contact__label">Telefon</span>
           <input type="tel" class="settings-contact__input" data-role="settings-phone"
@@ -9051,10 +9275,45 @@
               ${emailOn ? "checked" : ""} aria-label="Widoczność adresu e-mail" />
           </label>
         </div>
-        <div class="settings-contact__socials">
-          <span class="settings-contact__label">Social media</span>
-          ${socialFields}
-        </div>
+      </div>`;
+  }
+
+  function renderSettingsSocial(p) {
+    ensureProviderContact(p);
+    const links = ensureProviderSocialLinks(p);
+    const canAdd = links.length < SETTINGS_SOCIAL_MAX;
+    const kindOptions = SETTINGS_SOCIAL_KINDS.map(function (s) {
+      return `<option value="${escapeHtml(s.key)}">${escapeHtml(s.label)}</option>`;
+    }).join("");
+    const rows = links
+      .map(function (l) {
+        const meta = socialKindMeta(l.kind);
+        const opts = SETTINGS_SOCIAL_KINDS.map(function (s) {
+          return `<option value="${escapeHtml(s.key)}"${s.key === l.kind ? " selected" : ""}>${escapeHtml(s.label)}</option>`;
+        }).join("");
+        return `
+          <div class="settings-social" data-social-id="${escapeHtml(l.id)}">
+            <label class="settings-social__kind" title="${escapeHtml(meta.label)}">
+              <span class="settings-social__logo settings-social__logo--${escapeHtml(l.kind)}" aria-hidden="true"></span>
+              <select class="settings-social__kind-select" data-role="settings-social-kind" data-id="${escapeHtml(l.id)}"
+                aria-label="Platforma">${opts || kindOptions}</select>
+            </label>
+            <input type="text" class="settings-social__input" data-role="settings-social-value" data-id="${escapeHtml(l.id)}"
+              value="${escapeHtml(l.value || "")}" placeholder="${escapeHtml(meta.placeholder)}" autocomplete="off" />
+            <button type="button" class="settings-social__remove" data-action="settings-social-remove" data-id="${escapeHtml(l.id)}"
+              aria-label="Usuń link">×</button>
+          </div>`;
+      })
+      .join("");
+    return `
+      <div class="settings__row settings__row--contact settings__row--socials" data-field="social">
+        <p class="settings__help">Logo po lewej, link po prawej — widoczne w profilu klienta.</p>
+        <div class="settings-socials">${rows}</div>
+        ${
+          canAdd
+            ? `<button type="button" class="settings-social__add" data-action="settings-social-add">Dodaj link</button>`
+            : `<p class="settings__cap">Osiągnięto limit ${SETTINGS_SOCIAL_MAX} linków.</p>`
+        }
       </div>`;
   }
 
@@ -9071,8 +9330,7 @@
     ensureProviderBookingRules(p);
     return `
       <div class="settings__row settings__row--contact" data-field="profile">
-        <span class="settings__key">Profil firmy</span>
-        <p class="settings__help">Nazwa, adres i opis widoczne na stronie rezerwacji.</p>
+        <p class="settings__help">Nazwa i opis na stronie rezerwacji.</p>
         <label class="settings-contact__field">
           <span class="settings-contact__label">Nazwa</span>
           <input type="text" class="settings-contact__input" data-role="settings-name"
@@ -9088,11 +9346,6 @@
           <textarea class="settings-contact__input settings-contact__textarea" data-role="settings-about"
             rows="3" maxlength="280" placeholder="Krótki opis dla klientów">${escapeHtml(p.about || "")}</textarea>
         </label>
-        <label class="settings-contact__field">
-          <span class="settings-contact__label">Strona WWW</span>
-          <input type="url" class="settings-contact__input" data-role="settings-website"
-            value="${escapeHtml(p.website || "")}" placeholder="https://" autocomplete="url" inputmode="url" />
-        </label>
         <div class="settings-share">
           <div class="settings__toggle-text">
             <span class="settings-contact__label">Link profilu</span>
@@ -9107,8 +9360,7 @@
     const r = ensureProviderBookingRules(p);
     return `
       <div class="settings__row settings__row--contact" data-field="bookingRules">
-        <span class="settings__key">Reguły rezerwacji</span>
-        <p class="settings__help">Jak w Booksy: okno terminów, wyprzedzenie i zasady anulowania.</p>
+        <p class="settings__help">Okno terminów, wyprzedzenie i zasady anulowania.</p>
         <label class="settings-contact__field">
           <span class="settings-contact__label">Rezerwacja z wyprzedzeniem</span>
           <select class="settings-contact__input" data-role="settings-rule-future" aria-label="Rezerwacja z wyprzedzeniem">
@@ -9128,9 +9380,9 @@
           </select>
         </label>
         <label class="settings-contact__field">
-          <span class="settings-contact__label">Polityka anulowania (tekst dla klienta)</span>
+          <span class="settings-contact__label">Polityka anulowania</span>
           <textarea class="settings-contact__input settings-contact__textarea" data-role="settings-rule-policy"
-            rows="3" maxlength="400" placeholder="Np. Anulowanie możliwe najpóźniej 24 h przed wizytą.">${escapeHtml(r.policy || "")}</textarea>
+            rows="3" maxlength="400" placeholder="Tekst pokazywany przy odwołaniu wizyty">${escapeHtml(r.policy || "")}</textarea>
         </label>
       </div>`;
   }
@@ -9142,14 +9394,13 @@
     const nameEl = document.querySelector('[data-role="settings-name"]');
     const addrEl = document.querySelector('[data-role="settings-address"]');
     const aboutEl = document.querySelector('[data-role="settings-about"]');
-    const webEl = document.querySelector('[data-role="settings-website"]');
     if (nameEl) {
       const n = String(nameEl.value || "").trim();
       p.name = n || p.name || "Firma";
     }
     if (addrEl) p.address = String(addrEl.value || "").trim();
     if (aboutEl) p.about = String(aboutEl.value || "").trim();
-    if (webEl) p.website = String(webEl.value || "").trim();
+    captureProviderSocialFields();
     const futureEl = document.querySelector('[data-role="settings-rule-future"]');
     const leadEl = document.querySelector('[data-role="settings-rule-lead"]');
     const cancelEl = document.querySelector('[data-role="settings-rule-cancel"]');
@@ -9166,25 +9417,6 @@
     ensureProviderContact(p);
     ensureProviderBookingRules(p);
     const visible = !!p.visibleInSearch;
-    const approval = p.bookingMode === "approval";
-    const bookingModeRow = `
-      <div class="settings__row settings__row--mode" data-field="bookingMode">
-        <span class="settings__key">Tryb rezerwacji</span>
-        <div class="settings__mode" role="radiogroup" aria-label="Tryb rezerwacji">
-          <button type="button" class="settings__mode-btn${approval ? "" : " is-on"}"
-            data-action="settings-booking-mode" data-mode="auto"
-            role="radio" aria-checked="${approval ? "false" : "true"}">
-            <span class="settings__mode-title">Automatyczny</span>
-            <span class="settings__mode-desc">Klient wybiera termin z kalendarza</span>
-          </button>
-          <button type="button" class="settings__mode-btn${approval ? " is-on" : ""}"
-            data-action="settings-booking-mode" data-mode="approval"
-            role="radio" aria-checked="${approval ? "true" : "false"}">
-            <span class="settings__mode-title">Na prośbę</span>
-            <span class="settings__mode-desc">Klient prosi o termin — Ty akceptujesz lub zmieniasz</span>
-          </button>
-        </div>
-      </div>`;
     const visibilityRow = `
       <div class="settings__row settings__row--toggle" data-field="visibleInSearch">
         <div class="settings__toggle-text">
@@ -9205,31 +9437,34 @@
             </button>
             <div class="screen-head__text">
               <h2 class="screen-head__title">Ustawienia</h2>
-              <p class="screen-head__sub">Dane profilu usługodawcy.</p>
+              <p class="screen-head__sub">Profil, lokalizacje i reguły rezerwacji.</p>
             </div>
           </header>
           <div class="settings">
-            ${renderSettingsProfile(p)}
-            ${renderSettingsContact(p)}
-            ${bookingModeRow}
-            ${renderSettingsBookingRules(p)}
-            ${visibilityRow}
-            ${renderSettingsLocations(p)}
+            ${renderSettingsGroup("Dane firmy", renderSettingsProfile(p))}
+            ${renderSettingsGroup("Kontakt", renderSettingsContact(p))}
+            ${renderSettingsGroup("Social media", renderSettingsSocial(p))}
+            ${renderSettingsGroup("Lokalizacje", renderSettingsLocations(p))}
+            ${renderSettingsGroup("Rezerwacje online", visibilityRow + renderSettingsBookingRules(p))}
           </div>
         </div>
         ${providerBottomNav("settings")}
       </div>`;
   }
 
-  function setProviderBookingMode(mode) {
-    const p = myProvider();
-    if (!p) return;
+  function setServiceBookingMode(mode) {
+    const form = document.querySelector("form.service-edit");
+    if (!form) return;
     const next = mode === "approval" ? "approval" : "auto";
-    if (p.bookingMode === next) return;
-    p.bookingMode = next;
+    const hidden = form.querySelector('[data-role="service-booking-mode-value"]') || form.elements.bookingMode;
+    if (hidden) hidden.value = next;
+    form.querySelectorAll('[data-role="service-booking-mode"]').forEach(function (btn) {
+      const on = btn.getAttribute("data-mode") === next;
+      btn.classList.toggle("is-on", on);
+      btn.setAttribute("aria-checked", on ? "true" : "false");
+    });
+    captureServiceEditDraft();
     saveState();
-    renderAll();
-    showToast(next === "approval" ? "Tryb: na prośbę o termin" : "Tryb: automatyczna rezerwacja");
   }
 
   function renderProvider(screen) {
@@ -9602,27 +9837,51 @@
     const p = getProviderBySlug(draft.slug);
     if (!p) return;
     ensureDraftServiceVariants(draft);
+    ensureServicesBookingMode(p);
 
-    const ids = draft.serviceIds || [];
+    let ids = (draft.serviceIds || []).slice();
     const idx = ids.indexOf(serviceId);
     const multi =
       mode === "multi" || (mode !== "single" && (!!p.multiSelect || !!draft.multiSelectMode));
     const svc = (p.services || []).find(function (s) {
       return s.id === serviceId;
     });
+    if (!svc) return;
+    const nextMode = serviceBookingMode(svc, p);
 
     if (!multi) {
       draft.serviceIds = idx === -1 ? [serviceId] : [];
-      if (idx === -1 && svc) selectedVariantIdForService(draft, svc);
+      if (idx === -1) selectedVariantIdForService(draft, svc);
       if (idx !== -1) delete draft.serviceVariants[serviceId];
-    } else {
-      if (idx === -1) {
-        ids.push(serviceId);
-        if (svc) selectedVariantIdForService(draft, svc);
-      } else {
-        ids.splice(idx, 1);
-        delete draft.serviceVariants[serviceId];
+    } else if (idx === -1) {
+      const compatible = ids.filter(function (id) {
+        const other = (p.services || []).find(function (s) {
+          return s && s.id === id;
+        });
+        return other && serviceBookingMode(other, p) === nextMode;
+      });
+      if (compatible.length !== ids.length) {
+        compatible.forEach(function (id) {
+          /* keep */
+        });
+        ids.forEach(function (id) {
+          if (compatible.indexOf(id) === -1 && draft.serviceVariants) {
+            delete draft.serviceVariants[id];
+          }
+        });
+        showToast(
+          nextMode === "approval"
+            ? "Oferty na prośbę — usunięto automatyczne z koszyka."
+            : "Oferty automatyczne — usunięto prośby z koszyka."
+        );
+        ids = compatible;
       }
+      ids.push(serviceId);
+      selectedVariantIdForService(draft, svc);
+      draft.serviceIds = ids;
+    } else {
+      ids.splice(idx, 1);
+      delete draft.serviceVariants[serviceId];
       draft.serviceIds = ids;
     }
     draft.slotId = null;
@@ -9656,10 +9915,24 @@
       return;
     }
     ensureDraftServiceVariants(draft);
+    ensureServicesBookingMode(p);
     draft.serviceVariants[serviceId] = variantId;
     if ((draft.serviceIds || []).indexOf(serviceId) === -1) {
       const multi = !!p.multiSelect || !!draft.multiSelectMode;
-      draft.serviceIds = multi ? (draft.serviceIds || []).concat([serviceId]) : [serviceId];
+      const nextMode = serviceBookingMode(svc, p);
+      let ids = multi ? (draft.serviceIds || []).slice() : [];
+      if (multi) {
+        ids = ids.filter(function (id) {
+          const other = (p.services || []).find(function (s) {
+            return s && s.id === id;
+          });
+          return other && serviceBookingMode(other, p) === nextMode;
+        });
+        ids.push(serviceId);
+        draft.serviceIds = ids;
+      } else {
+        draft.serviceIds = [serviceId];
+      }
     }
     draft.slotId = null;
     saveState();
@@ -9921,10 +10194,63 @@
     showToast("Propozycja odrzucona.");
   }
 
+  function ensureCancelVisitDialog() {
+    let el = document.getElementById("cancel-visit-dialog");
+    if (el) return el;
+    el = document.createElement("div");
+    el.id = "cancel-visit-dialog";
+    el.className = "cancel-visit-dialog";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-labelledby", "cancel-visit-title");
+    el.hidden = true;
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function closeCancelVisitDialog() {
+    const el = document.getElementById("cancel-visit-dialog");
+    if (!el || el.hidden) return;
+    el.hidden = true;
+    el.innerHTML = "";
+    delete el.dataset.bookingId;
+    document.body.classList.remove("cancel-visit-dialog-open");
+  }
+
+  function openCancelVisitDialog(bookingId) {
+    const bk = (window.AppState.bookings || []).find((b) => b.id === bookingId);
+    if (!bk || bk.status !== "confirmed") return;
+    const provider = getProviderById(bk.providerId);
+    const policy = providerCancelPolicyText(provider);
+    const when =
+      (bk.dateISO ? formatDateLong(bk.dateISO) : "") +
+      (bk.from && bk.to ? ", " + bk.from + "–" + bk.to : bk.from ? ", " + bk.from : "");
+    const el = ensureCancelVisitDialog();
+    el.dataset.bookingId = bookingId;
+    el.innerHTML = `
+      <button type="button" class="cancel-visit-dialog__backdrop" data-action="close-cancel-visit" aria-label="Zamknij"></button>
+      <div class="cancel-visit-dialog__panel">
+        <h2 class="cancel-visit-dialog__title" id="cancel-visit-title">Odwołać wizytę?</h2>
+        <p class="cancel-visit-dialog__lead">${escapeHtml(when || "Ta wizyta")} · ${escapeHtml(bk.providerName || bk.clientName || "wizyta")}</p>
+        ${
+          policy
+            ? `<p class="cancel-visit-dialog__policy"><span class="cancel-visit-dialog__policy-label">Zasady anulowania</span>${escapeHtml(policy)}</p>`
+            : ""
+        }
+        <div class="cancel-visit-dialog__actions">
+          <button type="button" class="btn btn--ghost" data-action="close-cancel-visit">Zostaw</button>
+          <button type="button" class="btn btn--primary" data-action="confirm-cancel-visit" data-booking-id="${escapeHtml(bookingId)}">Odwołaj wizytę</button>
+        </div>
+      </div>`;
+    el.hidden = false;
+    document.body.classList.add("cancel-visit-dialog-open");
+  }
+
   function cancelVisit(bookingId) {
     const bk = (window.AppState.bookings || []).find((b) => b.id === bookingId);
     if (!bk) return;
     bk.status = "cancelled";
+    closeCancelVisitDialog();
     saveState();
     renderAll();
     showToast("Wizyta odwołana.");
@@ -10535,12 +10861,21 @@
           navigate("provider", "calendar", {});
         } else navigate("provider", d.tab, {});
         break;
-      case "settings-booking-mode":
+      case "service-booking-mode":
+        event.preventDefault();
+        setServiceBookingMode(d.mode);
+        break;
+      case "settings-social-add":
         event.preventDefault();
         captureProviderProfileFields();
         captureProviderContactFields();
-        captureProviderLocationFields();
-        setProviderBookingMode(d.mode);
+        addProviderSocialLink();
+        break;
+      case "settings-social-remove":
+        event.preventDefault();
+        captureProviderProfileFields();
+        captureProviderContactFields();
+        removeProviderSocialLink(d.id);
         break;
       case "settings-loc-add":
         event.preventDefault();
@@ -10739,7 +11074,18 @@
           saveService(d.serviceId, form);
         }
         break;
-      case "cancel-visit": cancelVisit(d.bookingId); break;
+      case "cancel-visit":
+        event.preventDefault();
+        openCancelVisitDialog(d.bookingId);
+        break;
+      case "close-cancel-visit":
+        event.preventDefault();
+        closeCancelVisitDialog();
+        break;
+      case "confirm-cancel-visit":
+        event.preventDefault();
+        cancelVisit(d.bookingId);
+        break;
       case "filter-category":
         window.AppState.searchCategory = d.category || "";
         window.AppState.searchSubcategory = "";
@@ -10971,7 +11317,7 @@
     }
 
     const profileField = event.target.closest(
-      '[data-role="settings-name"], [data-role="settings-address"], [data-role="settings-about"], [data-role="settings-website"], [data-role="settings-rule-future"], [data-role="settings-rule-lead"], [data-role="settings-rule-cancel"], [data-role="settings-rule-policy"]'
+      '[data-role="settings-name"], [data-role="settings-address"], [data-role="settings-about"], [data-role="settings-rule-future"], [data-role="settings-rule-lead"], [data-role="settings-rule-cancel"], [data-role="settings-rule-policy"]'
     );
     if (profileField) {
       captureProviderProfileFields();
@@ -10980,8 +11326,23 @@
       return;
     }
 
+    const socialKindField = event.target.closest('[data-role="settings-social-kind"]');
+    if (socialKindField) {
+      captureProviderSocialFields();
+      saveState();
+      renderAll();
+      return;
+    }
+
+    const socialValueField = event.target.closest('[data-role="settings-social-value"]');
+    if (socialValueField) {
+      captureProviderSocialFields();
+      saveState();
+      return;
+    }
+
     const contactField = event.target.closest(
-      '[data-role="settings-phone"], [data-role="settings-email"], [data-role="settings-social"]'
+      '[data-role="settings-phone"], [data-role="settings-email"]'
     );
     if (contactField) {
       captureProviderProfileFields();
