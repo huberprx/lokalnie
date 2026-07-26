@@ -7059,14 +7059,36 @@
     return ids;
   }
 
-  function captureServiceEditDraft() {
-    const form = document.querySelector("form.service-edit");
+  /** Formularz edycji oferty — preferuj kontekst kliknięcia / pełny ekran (nie ukryty symulator). */
+  function serviceEditForm(fromEl) {
+    if (fromEl && fromEl.closest) {
+      const near = fromEl.closest("form.service-edit");
+      if (near) return near;
+    }
+    const pageApp = document.getElementById("page-app");
+    const fs = document.getElementById("app-fullscreen");
+    if (pageApp && !pageApp.hidden && fs) {
+      const full = fs.querySelector("form.service-edit");
+      if (full) return full;
+    }
+    return document.querySelector("form.service-edit");
+  }
+
+  function readServiceEditBookingMode(form) {
+    if (!form) return "auto";
+    const hidden = form.querySelector('[data-role="service-booking-mode-value"]');
+    if (hidden && (hidden.value === "approval" || hidden.value === "auto")) return hidden.value;
+    const on = form.querySelector('[data-role="service-booking-mode"].is-on');
+    if (on && on.getAttribute("data-mode") === "approval") return "approval";
+    return "auto";
+  }
+
+  function captureServiceEditDraft(fromEl) {
+    const form = serviceEditForm(fromEl);
     if (!form) return;
     const variants = readServiceEditVariantsFromForm(form);
     const first = variants[0];
-    const modeEl = form.querySelector('[name="bookingMode"]:checked') || form.querySelector('[data-role="service-booking-mode"].is-on');
-    const bookingMode =
-      (modeEl && (modeEl.value || modeEl.getAttribute("data-mode"))) === "approval" ? "approval" : "auto";
+    const bookingMode = readServiceEditBookingMode(form);
     window.AppState.params.provider = Object.assign({}, window.AppState.params.provider || {}, {
       editServiceDraft: {
         name: String(form.elements.name && form.elements.name.value || ""),
@@ -9739,64 +9761,66 @@
       </div>`;
   }
 
-  function setServiceBookingMode(mode) {
-    const form = document.querySelector("form.service-edit");
+  function setServiceBookingMode(mode, fromEl) {
+    const form = serviceEditForm(fromEl);
     if (!form) return;
     const next = mode === "approval" ? "approval" : "auto";
     const hidden = form.querySelector('[data-role="service-booking-mode-value"]') || form.elements.bookingMode;
     if (hidden) hidden.value = next;
-    form.querySelectorAll('[data-role="service-booking-mode"]').forEach(function (btn) {
-      const on = btn.getAttribute("data-mode") === next;
-      btn.classList.toggle("is-on", on);
-      btn.setAttribute("aria-checked", on ? "true" : "false");
+    form.querySelectorAll('[data-role="service-booking-mode"]').forEach(function (modeBtn) {
+      const on = modeBtn.getAttribute("data-mode") === next;
+      modeBtn.classList.toggle("is-on", on);
+      modeBtn.setAttribute("aria-checked", on ? "true" : "false");
     });
-    captureServiceEditDraft();
+    captureServiceEditDraft(form);
     saveState();
+    renderAll();
   }
 
-  function setServiceLocationMode(mode) {
-    const form = document.querySelector("form.service-edit");
+  function setServiceLocationMode(mode, fromEl) {
+    const form = serviceEditForm(fromEl);
     if (!form) return;
     const next = mode === "selected" ? "selected" : "all";
     const hidden = form.querySelector('[data-role="service-location-mode-value"]');
     if (hidden) hidden.value = next;
-    form.querySelectorAll('[data-role="service-location-mode"]').forEach(function (btn) {
-      const on = btn.getAttribute("data-mode") === next;
-      btn.classList.toggle("is-on", on);
-      btn.setAttribute("aria-checked", on ? "true" : "false");
+    form.querySelectorAll('[data-role="service-location-mode"]').forEach(function (modeBtn) {
+      const on = modeBtn.getAttribute("data-mode") === next;
+      modeBtn.classList.toggle("is-on", on);
+      modeBtn.setAttribute("aria-checked", on ? "true" : "false");
     });
     const list = form.querySelector('[data-role="service-location-list"]');
     if (list) list.classList.toggle("is-disabled", next === "all");
     const checks = form.querySelectorAll('[data-role="service-location-check"]');
-    checks.forEach(function (btn) {
-      btn.disabled = next === "all";
+    checks.forEach(function (checkBtn) {
+      checkBtn.disabled = next === "all";
     });
     if (next === "selected") {
-      const anyOn = Array.prototype.some.call(checks, function (btn) {
-        return btn.classList.contains("is-on");
+      const anyOn = Array.prototype.some.call(checks, function (checkBtn) {
+        return checkBtn.classList.contains("is-on");
       });
       if (!anyOn && checks[0]) {
         checks[0].classList.add("is-on");
         checks[0].setAttribute("aria-pressed", "true");
       }
     } else {
-      checks.forEach(function (btn) {
-        btn.classList.remove("is-on");
-        btn.setAttribute("aria-pressed", "false");
+      checks.forEach(function (checkBtn) {
+        checkBtn.classList.remove("is-on");
+        checkBtn.setAttribute("aria-pressed", "false");
       });
     }
-    captureServiceEditDraft();
+    captureServiceEditDraft(form);
     saveState();
+    renderAll();
   }
 
-  function toggleServiceLocation(locId) {
-    const form = document.querySelector("form.service-edit");
+  function toggleServiceLocation(locId, fromEl) {
+    const form = serviceEditForm(fromEl);
     if (!form || !locId) return;
     const modeEl = form.querySelector('[data-role="service-location-mode-value"]');
     if (!modeEl || modeEl.value !== "selected") return;
-    const btn = form.querySelector('[data-role="service-location-check"][data-loc-id="' + locId + '"]');
-    if (!btn || btn.disabled) return;
-    const on = !btn.classList.contains("is-on");
+    const checkBtn = form.querySelector('[data-role="service-location-check"][data-loc-id="' + locId + '"]');
+    if (!checkBtn || checkBtn.disabled) return;
+    const on = !checkBtn.classList.contains("is-on");
     if (!on) {
       const selectedCount = form.querySelectorAll('[data-role="service-location-check"].is-on').length;
       if (selectedCount <= 1) {
@@ -9804,10 +9828,11 @@
         return;
       }
     }
-    btn.classList.toggle("is-on", on);
-    btn.setAttribute("aria-pressed", on ? "true" : "false");
-    captureServiceEditDraft();
+    checkBtn.classList.toggle("is-on", on);
+    checkBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    captureServiceEditDraft(form);
     saveState();
+    renderAll();
   }
 
   function renderProvider(screen) {
@@ -11231,15 +11256,15 @@
         break;
       case "service-booking-mode":
         event.preventDefault();
-        setServiceBookingMode(d.mode);
+        setServiceBookingMode(d.mode || btn.getAttribute("data-mode"), btn);
         break;
       case "service-location-mode":
         event.preventDefault();
-        setServiceLocationMode(d.mode);
+        setServiceLocationMode(d.mode || btn.getAttribute("data-mode"), btn);
         break;
       case "service-location-toggle":
         event.preventDefault();
-        toggleServiceLocation(d.locId);
+        toggleServiceLocation(d.locId || btn.getAttribute("data-loc-id"), btn);
         break;
       case "settings-social-add":
         event.preventDefault();
