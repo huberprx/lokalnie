@@ -3582,6 +3582,13 @@
     const address = resolveVisitNavAddress(b, provider);
     const phone = provider && provider.phone ? String(provider.phone).replace(/\s/g, "") : "";
     const placeLine = b.locationLabel || address || "";
+    const canAddToCalendar = !!(b.dateISO && b.from);
+    const calendarChip = canAddToCalendar
+      ? `<button type="button" class="visit-card__chip" data-action="add-visit-calendar" data-booking-id="${escapeHtml(b.id)}">
+            <span class="visit-card__chip-icon visit-card__chip-icon--calendar" aria-hidden="true"></span>
+            Dodaj do kalendarza
+          </button>`
+      : "";
     const rebookChip = slug
       ? `<button type="button" class="visit-card__chip" data-action="rebook-visit" data-booking-id="${escapeHtml(b.id)}">
             <span class="visit-card__chip-icon visit-card__chip-icon--rebook" aria-hidden="true"></span>
@@ -3589,7 +3596,7 @@
           </button>`
       : "";
     const quickActions =
-      address || phone || rebookChip
+      address || phone || calendarChip || rebookChip
         ? `<div class="visit-card__quick" role="group" aria-label="Szybkie akcje">
             ${
               address
@@ -3612,6 +3619,7 @@
                     </button>`
                   : ""
             }
+            ${calendarChip}
             ${rebookChip}
           </div>`
         : "";
@@ -10153,6 +10161,102 @@
     openProvider(p.slug, { serviceIds: b.serviceIds || [], force: true });
   }
 
+  function icsEscape(text) {
+    return String(text || "")
+      .replace(/\\/g, "\\\\")
+      .replace(/\n/g, "\\n")
+      .replace(/;/g, "\\;")
+      .replace(/,/g, "\\,");
+  }
+
+  function icsUtcStamp(date) {
+    const d = date instanceof Date ? date : new Date();
+    if (isNaN(d.getTime())) return "";
+    return d
+      .toISOString()
+      .replace(/[-:]/g, "")
+      .replace(/\.\d{3}Z$/, "Z");
+  }
+
+  /** Lokalna data+godzina wizyty → UTC w formacie ICS. */
+  function icsUtcFromLocal(dateISO, hhmm) {
+    const t = String(hhmm || "00:00");
+    const d = new Date(String(dateISO) + "T" + (t.length === 5 ? t + ":00" : t));
+    if (isNaN(d.getTime())) return "";
+    return icsUtcStamp(d);
+  }
+
+  function buildVisitIcs(b) {
+    if (!b || !b.dateISO || !b.from) return "";
+    const start = icsUtcFromLocal(b.dateISO, b.from);
+    let end = b.to ? icsUtcFromLocal(b.dateISO, b.to) : "";
+    if (!start) return "";
+    if (!end) {
+      const d = new Date(String(b.dateISO) + "T" + String(b.from).slice(0, 5) + ":00");
+      d.setMinutes(d.getMinutes() + 30);
+      end = icsUtcStamp(d);
+    }
+    const provider = getProviderById(b.providerId);
+    const services = (b.serviceNames || []).join(", ");
+    const summary = [services || "Wizyta", b.providerName || (provider && provider.name) || ""]
+      .filter(Boolean)
+      .join(" · ");
+    const location = resolveVisitNavAddress(b, provider) || b.locationLabel || "";
+    const descParts = [];
+    if (b.providerName) descParts.push("Usługodawca: " + b.providerName);
+    if (services) descParts.push("Usługa: " + services);
+    if (b.locationLabel) descParts.push("Miejsce: " + b.locationLabel);
+    const uid = String(b.id || "visit") + "@lokalnie.app";
+    return [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//Lokalnie//PL",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "BEGIN:VEVENT",
+      "UID:" + uid,
+      "DTSTAMP:" + icsUtcStamp(new Date()),
+      "DTSTART:" + start,
+      "DTEND:" + end,
+      "SUMMARY:" + icsEscape(summary),
+      location ? "LOCATION:" + icsEscape(location) : "",
+      descParts.length ? "DESCRIPTION:" + icsEscape(descParts.join("\n")) : "",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ]
+      .filter(Boolean)
+      .join("\r\n");
+  }
+
+  function addVisitToCalendar(bookingId) {
+    const b = (window.AppState.bookings || []).find(function (x) {
+      return x && x.id === bookingId;
+    });
+    if (!b) {
+      showToast("Nie znaleziono wizyty.");
+      return;
+    }
+    const ics = buildVisitIcs(b);
+    if (!ics) {
+      showToast("Brak terminu do dodania.");
+      return;
+    }
+    const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const day = String(b.dateISO || "wizyta").slice(0, 10);
+    a.href = url;
+    a.download = "lokalnie-" + day + ".ics";
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () {
+      URL.revokeObjectURL(url);
+    }, 1500);
+    showToast("Plik kalendarza pobrany ✓");
+  }
+
   function openProfile(slug) {
     openProvider(slug);
   }
@@ -11024,6 +11128,10 @@
       case "open-provider": openProvider(d.slug); break;
       case "open-profile": openProvider(d.slug); break;
       case "rebook-visit": rebookVisit(d.bookingId); break;
+      case "add-visit-calendar":
+        event.preventDefault();
+        addVisitToCalendar(d.bookingId);
+        break;
       case "preview-avatar":
         event.preventDefault();
         event.stopPropagation();
