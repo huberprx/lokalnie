@@ -9263,8 +9263,11 @@
                   <div class="settings-loc__palette-inner">${toneBtns}</div>
                 </div>
               </div>
-              <input type="text" class="settings-loc__name" data-role="settings-loc-name" data-id="${escapeHtml(loc.id)}"
-                value="${escapeHtml(loc.label || "")}" placeholder="Nazwa miejsca" maxlength="40" autocomplete="off" />
+              <label class="settings-contact__field settings-contact__field--float settings-loc__name-field">
+                <input type="text" class="settings-contact__input settings-loc__name" data-role="settings-loc-name" data-id="${escapeHtml(loc.id)}"
+                  value="${escapeHtml(loc.label || "")}" placeholder=" " maxlength="40" autocomplete="off" />
+                <span class="settings-contact__label">Nazwa miejsca</span>
+              </label>
               <button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--remove" data-action="settings-loc-remove" data-id="${escapeHtml(loc.id)}"
                 aria-label="Usuń miejsce" title="Usuń">
                 <span aria-hidden="true">×</span>

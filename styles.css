@@ -12711,24 +12711,13 @@ body.prov-cal-resizing * {
   box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.06);
 }
 
-.settings-loc__name {
+.settings-loc__name-field {
   flex: 1 1 auto;
   min-width: 0;
-  margin: 0;
-  padding: 0.35rem 0.45rem;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 0.95rem;
-  font-weight: 700;
 }
 
-.settings-loc__name:focus {
-  outline: none;
-  border-color: color-mix(in srgb, var(--accent-provider) 40%, var(--border));
-  background: var(--surface);
+.settings-loc__name-field .settings-loc__name {
+  font-weight: 650;
 }
 
 .settings-loc__head .avail-edit__icon-btn,
