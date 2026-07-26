@@ -789,7 +789,8 @@
     if (!draft || draft.slug !== p.slug) return null;
 
     const totals = draftTotals(p);
-    const availDates = resolveAvailDates(p, totals.duration || 15);
+    const slotOpts = slotOptsForServiceIds(p, draft.serviceIds || []);
+    const availDates = resolveAvailDates(p, totals.duration || 15, slotOpts);
     ensureDraftCalendar(draft, availDates);
 
     const activeDate =
@@ -797,7 +798,10 @@
     if (activeDate && draft.dateISO !== activeDate) draft.dateISO = activeDate;
 
     const calMonth = draft.calMonth || (activeDate ? activeDate.slice(0, 7) : new Date().toISOString().slice(0, 7));
-    const slots = activeDate ? computeSlots(p, activeDate, totals.duration || 15) : [];
+    const slots = activeDate ? computeSlots(p, activeDate, totals.duration || 15, slotOpts) : [];
+    if (draft.slotId && !slots.some(function (s) { return s.id === draft.slotId; })) {
+      draft.slotId = null;
+    }
 
     return {
       draft: draft,
@@ -896,6 +900,38 @@
     return location.origin + location.pathname + "#provider/" + slug;
   }
 
+  function providerEmbedUrl(slug) {
+    return location.origin + location.pathname + "#embed/" + slug;
+  }
+
+  function providerEmbedSnippet(slug) {
+    const p = getProviderBySlug(slug);
+    const title = (p && p.name) || "Lokalnie";
+    const src = providerEmbedUrl(slug);
+    return (
+      '<iframe src="' +
+      src +
+      '" title="Rezerwacja — ' +
+      title.replace(/"/g, "&quot;") +
+      '" style="width:100%;min-height:720px;border:0;border-radius:12px;" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>'
+    );
+  }
+
+  function copyTextOrToast(text, okMsg) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () {
+          showToast(okMsg || "Skopiowano ✓");
+        },
+        function () {
+          showToast(text);
+        }
+      );
+      return;
+    }
+    showToast(text);
+  }
+
   function shareProvider(slug) {
     const p = getProviderBySlug(slug);
     if (!p) return;
@@ -910,19 +946,18 @@
       return;
     }
 
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(url).then(
-        function () {
-          showToast("Link do profilu skopiowany ✓");
-        },
-        function () {
-          showToast(url);
-        }
-      );
-      return;
-    }
+    copyTextOrToast(url, "Link do profilu skopiowany ✓");
+  }
 
-    showToast(url);
+  function copyProviderEmbed(slug) {
+    const p = getProviderBySlug(slug);
+    if (!p) return;
+    copyTextOrToast(providerEmbedSnippet(slug), "Kod osadzenia skopiowany ✓");
+  }
+
+  function setEmbedMode(on) {
+    document.documentElement.classList.toggle("embed-mode", !!on);
+    document.body.classList.toggle("embed-mode", !!on);
   }
 
   function reportProvider(slug) {
@@ -1427,6 +1462,65 @@
     });
   }
 
+  /** Brak locationIds / pusta lista = usługa we wszystkich lokalizacjach. */
+  function serviceAllowsAllLocations(service) {
+    return !service || !Array.isArray(service.locationIds) || !service.locationIds.length;
+  }
+
+  /** null = bez ograniczeń; Set = dozwolone locationId (może być puste). */
+  function allowedLocationIdsForServices(provider, serviceIds) {
+    if (!provider) return null;
+    const valid = {};
+    ensureProviderLocations(provider).forEach(function (loc) {
+      if (loc && loc.id) valid[loc.id] = true;
+    });
+    let allowed = null;
+    (serviceIds || []).forEach(function (sid) {
+      const svc = (provider.services || []).find(function (s) {
+        return s && s.id === sid;
+      });
+      if (!svc || serviceAllowsAllLocations(svc)) return;
+      const ids = (svc.locationIds || []).filter(function (lid) {
+        return !!valid[lid];
+      });
+      if (allowed === null) {
+        allowed = {};
+        ids.forEach(function (lid) {
+          allowed[lid] = true;
+        });
+        return;
+      }
+      const next = {};
+      ids.forEach(function (lid) {
+        if (allowed[lid]) next[lid] = true;
+      });
+      allowed = next;
+    });
+    if (allowed === null) return null;
+    return new Set(Object.keys(allowed));
+  }
+
+  function slotOptsForServiceIds(provider, serviceIds, extra) {
+    const opts = Object.assign({}, extra || {});
+    const allowed = allowedLocationIdsForServices(provider, serviceIds);
+    if (allowed) opts.allowedLocationIds = allowed;
+    return opts;
+  }
+
+  function serviceLocationSummary(service, provider) {
+    if (serviceAllowsAllLocations(service)) return "Wszystkie miejsca";
+    const locs = ensureProviderLocations(provider);
+    const labels = (service.locationIds || [])
+      .map(function (id) {
+        const loc = locs.find(function (l) {
+          return l && l.id === id;
+        });
+        return loc ? loc.label : "";
+      })
+      .filter(Boolean);
+    return labels.length ? labels.join(", ") : "Brak miejsc";
+  }
+
   const SETTINGS_LOC_MAX = 3;
   const SETTINGS_LOC_TONES = [0, 1, 2, 3, 4, 5];
 
@@ -1735,6 +1829,11 @@
     opts = opts || {};
     const exceptBookingId = opts.exceptBookingId || null;
     const ignoreLead = !!opts.ignoreLead;
+    const allowedLocs = opts.allowedLocationIds
+      ? opts.allowedLocationIds instanceof Set
+        ? opts.allowedLocationIds
+        : new Set(opts.allowedLocationIds)
+      : null;
     const day = (provider.availability || []).find((d) => d.dateISO === dateISO);
     if (!day) return [];
 
@@ -1763,15 +1862,17 @@
 
     const slots = [];
     (day.blocks || []).forEach((block) => {
+      if (allowedLocs && !allowedLocs.has(block.locationId)) return;
       const bStart = timeToMin(block.from);
       const bEnd = timeToMin(block.to);
+      const locKey = block.locationId || "na";
       for (let s = bStart; s + totalDurationMin <= bEnd; s += 15) {
         if (s < nowMin) continue;
         const e = s + totalDurationMin;
         const overlaps = busy.some((iv) => s < iv[1] && e > iv[0]);
         if (!overlaps) {
           slots.push({
-            id: `slot-${dateISO}-${s}`,
+            id: `slot-${dateISO}-${s}-${locKey}`,
             from: minToTime(s),
             to: minToTime(e),
             locationId: block.locationId,
@@ -2552,21 +2653,26 @@
             <div class="settings__row settings__row--contact" data-field="account-details">
               <span class="settings__key">Dane konta</span>
               <p class="settings__help">Widoczne dla usługodawcy przy rezerwacji wizyty.</p>
-              <label class="settings-contact__field">
-                <span class="settings-contact__label">Imię i nazwisko</span>
-                <input type="text" class="settings-contact__input" data-role="account-name"
-                  value="${escapeHtml(cp.name || "")}" placeholder="Twoje imię" maxlength="60" autocomplete="name" />
-              </label>
-              <label class="settings-contact__field">
-                <span class="settings-contact__label">Telefon</span>
-                <input type="tel" class="settings-contact__input" data-role="account-phone"
-                  value="${escapeHtml(cp.phone || "")}" placeholder="+48 500 000 000" autocomplete="tel" inputmode="tel" />
-              </label>
-              <label class="settings-contact__field">
-                <span class="settings-contact__label">E-mail</span>
-                <input type="email" class="settings-contact__input" data-role="account-email"
-                  value="${escapeHtml(cp.email || "")}" placeholder="ty@email.pl" autocomplete="email" inputmode="email" />
-              </label>
+              ${renderSettingsFloatField({
+                label: "Imię i nazwisko",
+                role: "account-name",
+                value: cp.name || "",
+                attrs: 'maxlength="60" autocomplete="name"',
+              })}
+              ${renderSettingsFloatField({
+                label: "Telefon",
+                role: "account-phone",
+                type: "tel",
+                value: cp.phone || "",
+                attrs: 'autocomplete="tel" inputmode="tel"',
+              })}
+              ${renderSettingsFloatField({
+                label: "E-mail",
+                role: "account-email",
+                type: "email",
+                value: cp.email || "",
+                attrs: 'autocomplete="email" inputmode="email"',
+              })}
             </div>
             <div class="settings__row" data-field="account-notifications">
               <span class="settings__key">Powiadomienia</span>
@@ -3129,7 +3235,7 @@
       </div>`;
   }
 
-  function resolveAvailDates(p, durationMin) {
+  function resolveAvailDates(p, durationMin, slotOpts) {
     const dur = durationMin || 15;
     const rules = ensureProviderBookingRules(p);
     const today = demoTodayISO();
@@ -3137,7 +3243,7 @@
     return (p.availability || [])
       .filter(function (d) {
         if (d.dateISO < today || d.dateISO > maxISO) return false;
-        return computeSlots(p, d.dateISO, dur).length;
+        return computeSlots(p, d.dateISO, dur, slotOpts).length;
       })
       .map((d) => d.dateISO)
       .sort();
@@ -3241,13 +3347,12 @@
       else auto.push(s);
     });
 
-    function group(title, hint, list) {
+    function group(title, list) {
       if (!list.length) return "";
       return `
         <div class="service-list__group">
           <div class="service-list__group-head">
             <h4 class="service-list__group-title">${escapeHtml(title)}</h4>
-            <p class="service-list__group-hint">${escapeHtml(hint)}</p>
           </div>
           ${list
             .map(function (s) {
@@ -3260,12 +3365,10 @@
     const html =
       group(
         "Automatyczne potwierdzenie",
-        "Wybierasz termin z kalendarza — wizyta od razu potwierdzona.",
         auto
       ) +
       group(
         "Na prośbę o termin",
-        "Wysyłasz prośbę — usługodawca zaproponuje wolny termin.",
         approval
       );
     return html || `<p class="empty-note">Brak usług w ofercie.</p>`;
@@ -6454,7 +6557,14 @@
       return;
     }
     const totals = provCalAddServiceTotals(selected);
-    const slotOpts = draft.bookingId ? { exceptBookingId: draft.bookingId } : {};
+    const realIds = (draft.serviceIds || []).filter(function (id) {
+      return !isProvCalAddDurationId(id);
+    });
+    const slotOpts = slotOptsForServiceIds(
+      p,
+      realIds,
+      draft.bookingId ? { exceptBookingId: draft.bookingId } : {}
+    );
     const slots = computeSlots(p, draft.dateISO, totals.duration || 15, slotOpts);
     const slot = slots.find(function (s) {
       return s.id === draft.slotId;
@@ -6543,7 +6653,10 @@
     const totals = provCalAddServiceTotals(selected);
     const duration = totals.duration || 30;
     const isEdit = !!draft.bookingId;
-    const slotOpts = isEdit ? { exceptBookingId: draft.bookingId } : {};
+    const realIds = (draft.serviceIds || []).filter(function (id) {
+      return !isProvCalAddDurationId(id);
+    });
+    const slotOpts = slotOptsForServiceIds(p, realIds, isEdit ? { exceptBookingId: draft.bookingId } : {});
     const availDates = ((p && p.availability) || [])
       .map(function (d) {
         return d.dateISO;
@@ -6558,6 +6671,9 @@
     }
     const hasSvc = selected.length > 0;
     const slots = hasSvc ? computeSlots(p, activeDate, duration, slotOpts) : [];
+    if (draft.slotId && !slots.some(function (s) { return s.id === draft.slotId; })) {
+      draft.slotId = null;
+    }
     const dateStrip = hasSvc
       ? renderDateStripHtml(availDates, activeDate, { action: "prov-cal-add-date" })
       : `<p class="empty-note">Najpierw wybierz usługę.</p>`;
@@ -6806,9 +6922,10 @@
       return a + (s ? s.durationMin : 0);
     }, 0) || 30;
 
-    const availDays = (p.availability || []).filter((d) => computeSlots(p, d.dateISO, totalDur).length);
+    const slotOpts = slotOptsForServiceIds(p, req.serviceIds || []);
+    const availDays = (p.availability || []).filter((d) => computeSlots(p, d.dateISO, totalDur, slotOpts).length);
     const activeDate = req._proposeDate && availDays.some((d) => d.dateISO === req._proposeDate) ? req._proposeDate : (availDays[0] && availDays[0].dateISO);
-    const slots = activeDate ? computeSlots(p, activeDate, totalDur) : [];
+    const slots = activeDate ? computeSlots(p, activeDate, totalDur, slotOpts) : [];
 
     const todayISO = demoTodayISO();
     const dateStrip = availDays
@@ -6868,6 +6985,7 @@
       name: "",
       description: "",
       bookingMode: "auto",
+      locationIds: null,
       durationMin: 30,
       price: null,
       photos: [],
@@ -6928,6 +7046,19 @@
     return out.length ? out : [{ id: "v-1", durationMin: 30, price: null, label: "" }];
   }
 
+  function readServiceEditLocationIds(form) {
+    if (!form) return null;
+    const modeEl = form.querySelector('[data-role="service-location-mode-value"]');
+    const mode = modeEl ? String(modeEl.value || "all") : "all";
+    if (mode !== "selected") return null;
+    const ids = [];
+    form.querySelectorAll('[data-role="service-location-check"].is-on').forEach(function (btn) {
+      const id = btn.getAttribute("data-loc-id");
+      if (id) ids.push(id);
+    });
+    return ids;
+  }
+
   function captureServiceEditDraft() {
     const form = document.querySelector("form.service-edit");
     if (!form) return;
@@ -6941,6 +7072,7 @@
         name: String(form.elements.name && form.elements.name.value || ""),
         description: String(form.elements.description && form.elements.description.value || ""),
         bookingMode: bookingMode,
+        locationIds: readServiceEditLocationIds(form),
         durationMin: first.durationMin,
         price: first.price,
         variants: variants,
@@ -7063,7 +7195,64 @@
       </div>`;
   }
 
+  function renderServiceEditLocations(s, provider) {
+    const locs = ensureProviderLocations(provider);
+    if (!locs.length) {
+      return `
+        <div class="service-edit__field" data-field="locations">
+          <span class="service-edit__label">Miejsce wykonywania</span>
+          <p class="service-edit__hint">Dodaj lokalizacje w Ustawieniach — wtedy wybierzesz je tu dla oferty.</p>
+        </div>`;
+    }
+    const all = serviceAllowsAllLocations(s);
+    const selected = {};
+    (Array.isArray(s.locationIds) ? s.locationIds : []).forEach(function (id) {
+      selected[id] = true;
+    });
+    const checks = locs
+      .map(function (loc) {
+        const on = !all && !!selected[loc.id];
+        const tone = locationToneClass(provider, loc.id);
+        return `
+          <button type="button" class="service-edit__loc-check${on ? " is-on" : ""}" data-action="service-location-toggle"
+            data-role="service-location-check" data-loc-id="${escapeHtml(loc.id)}"
+            aria-pressed="${on ? "true" : "false"}"${all ? " disabled" : ""}>
+            <span class="service-edit__loc-dot ${escapeHtml(tone)}" aria-hidden="true"></span>
+            <span class="service-edit__loc-text">
+              <span class="service-edit__loc-name">${escapeHtml(loc.label || "Miejsce")}</span>
+              ${loc.address ? `<span class="service-edit__loc-addr">${escapeHtml(loc.address)}</span>` : ""}
+            </span>
+            <span class="service-edit__loc-mark" aria-hidden="true"></span>
+          </button>`;
+      })
+      .join("");
+    return `
+      <div class="service-edit__field" data-field="locations">
+        <span class="service-edit__label">Miejsce wykonywania</span>
+        <p class="service-edit__hint">Wszystkie lokalizacje albo tylko wybrane — klient zobaczy terminy wyłącznie w tych miejscach.</p>
+        <div class="settings__mode" role="radiogroup" aria-label="Miejsce wykonywania usługi">
+          <button type="button" class="settings__mode-btn${all ? " is-on" : ""}"
+            data-action="service-location-mode" data-mode="all" data-role="service-location-mode"
+            role="radio" aria-checked="${all ? "true" : "false"}">
+            <span class="settings__mode-title">Wszystkie lokalizacje</span>
+            <span class="settings__mode-desc">Usługa dostępna w każdym miejscu z dostępności</span>
+          </button>
+          <button type="button" class="settings__mode-btn${!all ? " is-on" : ""}"
+            data-action="service-location-mode" data-mode="selected" data-role="service-location-mode"
+            role="radio" aria-checked="${!all ? "true" : "false"}">
+            <span class="settings__mode-title">Wybrane miejsca</span>
+            <span class="settings__mode-desc">Tylko w lokalizacjach zaznaczonych poniżej</span>
+          </button>
+        </div>
+        <input type="hidden" name="locationMode" value="${all ? "all" : "selected"}" data-role="service-location-mode-value" />
+        <div class="service-edit__locs${all ? " is-disabled" : ""}" data-role="service-location-list">
+          ${checks}
+        </div>
+      </div>`;
+  }
+
   function renderServiceEditForm(s, isNew) {
+    const p = myProvider();
     const serviceId = isNew ? "__new__" : s.id;
     const photos = getEditServicePhotos();
     const variants = normalizeEditVariants(s);
@@ -7103,6 +7292,7 @@
           </div>
           <input type="hidden" name="bookingMode" value="${escapeHtml(mode)}" data-role="service-booking-mode-value" />
         </div>
+        ${renderServiceEditLocations(s, p)}
         ${renderServiceEditPhotos(photos)}
         ${renderServiceEditVariants(variants)}
         <div class="service-edit__actions">
@@ -7138,6 +7328,7 @@
         const resolved = resolveServiceVariant(s, defId);
         const mode = serviceBookingMode(s, p);
         const modeLabel = mode === "approval" ? "Na prośbę o termin" : "Automatyczne potwierdzenie";
+        const locLabel = serviceLocationSummary(s, p);
         return `
       <div class="service-row service-row--static${variants.length ? " service-row--has-variants" : ""}">
         <div class="service-row__top">
@@ -7151,6 +7342,7 @@
               <span class="service-row__name">${escapeHtml(s.name)}</span>
               <span class="service-row__sub">${escapeHtml(serviceListSummary(s))}</span>
               <span class="service-row__mode service-row__mode--${escapeHtml(mode)}">${escapeHtml(modeLabel)}</span>
+              <span class="service-row__locs">${escapeHtml(locLabel)}</span>
             </span>
             <span class="service-row__meta">
               <span class="service-row__dur">${escapeHtml(formatDuration(resolved.durationMin))}</span>
@@ -7309,6 +7501,21 @@
         ? "approval"
         : "auto";
 
+    const locIdsRaw = readServiceEditLocationIds(form);
+    const validLocIds = ensureProviderLocations(p).map(function (l) {
+      return l.id;
+    });
+    let locationIds = null;
+    if (Array.isArray(locIdsRaw)) {
+      locationIds = locIdsRaw.filter(function (id) {
+        return validLocIds.indexOf(id) !== -1;
+      });
+      if (!locationIds.length) {
+        showToast("Wybierz przynajmniej jedno miejsce.");
+        return;
+      }
+    }
+
     if (isNew) {
       if (!Array.isArray(p.services)) p.services = [];
       s = {
@@ -7320,6 +7527,7 @@
         photos: photos,
       };
       if (description) s.description = description;
+      if (locationIds) s.locationIds = locationIds;
       if (variants.length > 1) {
         s.variants = variants.map(function (v, i) {
           return {
@@ -7339,6 +7547,8 @@
       s.durationMin = durationMin;
       s.price = price;
       s.photos = photos;
+      if (locationIds) s.locationIds = locationIds;
+      else delete s.locationIds;
       if (variants.length > 1) {
         s.variants = variants.map(function (v, i) {
           return {
@@ -8606,7 +8816,8 @@
     }
     const toneDot = pick && pick.querySelector('[data-role="avail-loc-tone-dot"]');
     if (toneDot) {
-      toneDot.className = "avail-edit__loc-dot " + tone + (locationId ? "" : " is-hidden");
+      toneDot.className =
+        "avail-edit__loc-dot avail-edit__loc-dot--lead " + tone + (locationId ? "" : " is-hidden");
       toneDot.hidden = !locationId;
     }
     const times = row.querySelector('[data-role="avail-edit-times"]');
@@ -8713,15 +8924,9 @@
               <button type="button" class="avail-loc-pick__btn" data-action="toggle-avail-loc"
                 aria-haspopup="listbox" aria-expanded="false" aria-label="Wybierz lokalizację">
                 <span class="avail-edit__loc-lead" aria-hidden="true">
-                  <span class="avail-edit__loc-icon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M12 21s-6.5-5.4-6.5-10.2A6.5 6.5 0 0 1 12 4.3a6.5 6.5 0 0 1 6.5 6.5C18.5 15.6 12 21 12 21z" />
-                      <circle cx="12" cy="10.5" r="2.2" />
-                    </svg>
-                  </span>
+                  <span class="avail-edit__loc-dot avail-edit__loc-dot--lead ${locTone}${hasLoc ? "" : " is-hidden"}" data-role="avail-loc-tone-dot"${hasLoc ? "" : " hidden"}></span>
                 </span>
                 <span class="avail-edit__loc-content">
-                  <span class="avail-edit__loc-dot ${locTone}${hasLoc ? "" : " is-hidden"}" data-role="avail-loc-tone-dot" aria-hidden="true"${hasLoc ? "" : " hidden"}></span>
                   <span class="avail-loc-pick__label${hasLoc ? "" : " avail-loc-pick__label--placeholder"}" data-role="avail-loc-label">${escapeHtml(locLabel)}</span>
                 </span>
                 <span class="avail-loc-pick__chevron" aria-hidden="true"></span>
@@ -9073,10 +9278,10 @@
                   : `<span class="avail-edit__icon-spacer" aria-hidden="true"></span>`
               }
             </div>
-            <label class="settings-loc__field">
-              <span class="settings-loc__field-label">Adres</span>
-              <input type="text" class="settings-loc__address" data-role="settings-loc-address" data-id="${escapeHtml(loc.id)}"
-                value="${escapeHtml(loc.address || "")}" placeholder="ul. Przykładowa 1, Miasto" maxlength="120" autocomplete="street-address" />
+            <label class="settings-contact__field settings-contact__field--float settings-loc__field">
+              <input type="text" class="settings-contact__input settings-loc__address" data-role="settings-loc-address" data-id="${escapeHtml(loc.id)}"
+                value="${escapeHtml(loc.address || "")}" placeholder=" " maxlength="120" autocomplete="street-address" />
+              <span class="settings-contact__label">Adres</span>
             </label>
           </div>`;
       })
@@ -9269,22 +9474,57 @@
       </section>`;
   }
 
+  /** Pole z pływającą etykietą (duża w ramce → mała nad treścią). */
+  function renderSettingsFloatField(opts) {
+    opts = opts || {};
+    const tag = opts.tag === "textarea" || opts.tag === "select" ? opts.tag : "input";
+    const role = escapeHtml(opts.role || "");
+    const label = escapeHtml(opts.label || "");
+    const extra = opts.attrs ? " " + opts.attrs : "";
+    const selectClass = tag === "select" ? " settings-contact__field--select" : "";
+    const areaClass = tag === "textarea" ? " settings-contact__textarea" : "";
+    if (tag === "textarea") {
+      return `
+        <label class="settings-contact__field settings-contact__field--float">
+          <textarea class="settings-contact__input${areaClass}" data-role="${role}" placeholder=" "${extra}>${escapeHtml(opts.value || "")}</textarea>
+          <span class="settings-contact__label">${label}</span>
+        </label>`;
+    }
+    if (tag === "select") {
+      return `
+        <label class="settings-contact__field settings-contact__field--float${selectClass}">
+          <select class="settings-contact__input" data-role="${role}"${extra}>${opts.optionsHtml || ""}</select>
+          <span class="settings-contact__label">${label}</span>
+        </label>`;
+    }
+    return `
+      <label class="settings-contact__field settings-contact__field--float">
+        <input type="${escapeHtml(opts.type || "text")}" class="settings-contact__input" data-role="${role}"
+          value="${escapeHtml(opts.value || "")}" placeholder=" "${extra} />
+        <span class="settings-contact__label">${label}</span>
+      </label>`;
+  }
+
   function renderSettingsContact(p) {
     ensureProviderContact(p);
     const emailOn = !!p.emailVisible;
     return `
       <div class="settings__row settings__row--contact" data-field="contact">
         <p class="settings__help">Dane do kontaktu z klientem.</p>
-        <label class="settings-contact__field">
-          <span class="settings-contact__label">Telefon</span>
-          <input type="tel" class="settings-contact__input" data-role="settings-phone"
-            value="${escapeHtml(p.phone || "")}" placeholder="+48 500 000 000" autocomplete="tel" inputmode="tel" />
-        </label>
-        <label class="settings-contact__field">
-          <span class="settings-contact__label">E-mail</span>
-          <input type="email" class="settings-contact__input" data-role="settings-email"
-            value="${escapeHtml(p.email || "")}" placeholder="kontakt@twojafirma.pl" autocomplete="email" inputmode="email" />
-        </label>
+        ${renderSettingsFloatField({
+          label: "Telefon",
+          role: "settings-phone",
+          type: "tel",
+          value: p.phone || "",
+          attrs: 'autocomplete="tel" inputmode="tel"',
+        })}
+        ${renderSettingsFloatField({
+          label: "E-mail",
+          role: "settings-email",
+          type: "email",
+          value: p.email || "",
+          attrs: 'autocomplete="email" inputmode="email"',
+        })}
         <div class="settings-contact__toggle">
           <div class="settings__toggle-text">
             <span class="settings__hint">${emailOn ? "E-mail widoczny dla klientów" : "E-mail ukryty"}</span>
@@ -9358,27 +9598,40 @@
     return `
       <div class="settings__row settings__row--contact" data-field="profile">
         <p class="settings__help">Nazwa i opis na stronie rezerwacji.</p>
-        <label class="settings-contact__field">
-          <span class="settings-contact__label">Nazwa</span>
-          <input type="text" class="settings-contact__input" data-role="settings-name"
-            value="${escapeHtml(p.name || "")}" placeholder="Nazwa firmy" maxlength="60" autocomplete="organization" />
-        </label>
-        <label class="settings-contact__field">
-          <span class="settings-contact__label">Adres główny</span>
-          <input type="text" class="settings-contact__input" data-role="settings-address"
-            value="${escapeHtml(p.address || "")}" placeholder="ul. Przykładowa 1, Miasto (puste = online)" maxlength="120" autocomplete="street-address" />
-        </label>
-        <label class="settings-contact__field">
-          <span class="settings-contact__label">O firmie</span>
-          <textarea class="settings-contact__input settings-contact__textarea" data-role="settings-about"
-            rows="3" maxlength="280" placeholder="Krótki opis dla klientów">${escapeHtml(p.about || "")}</textarea>
-        </label>
-        <div class="settings-share">
-          <div class="settings__toggle-text">
-            <span class="settings-contact__label">Link profilu</span>
-            <span class="settings__hint">/${escapeHtml(p.slug)}</span>
+        ${renderSettingsFloatField({
+          label: "Nazwa",
+          role: "settings-name",
+          value: p.name || "",
+          attrs: 'maxlength="60" autocomplete="organization"',
+        })}
+        ${renderSettingsFloatField({
+          label: "Adres główny",
+          role: "settings-address",
+          value: p.address || "",
+          attrs: 'maxlength="120" autocomplete="street-address" title="Puste = usługi online"',
+        })}
+        ${renderSettingsFloatField({
+          tag: "textarea",
+          label: "O firmie",
+          role: "settings-about",
+          value: p.about || "",
+          attrs: 'rows="3" maxlength="280"',
+        })}
+        <div class="settings-share-stack">
+          <div class="settings-share">
+            <div class="settings__toggle-text">
+              <span class="settings-contact__label">Link profilu</span>
+              <span class="settings__hint">/${escapeHtml(p.slug)}</span>
+            </div>
+            <button type="button" class="settings-share__btn" data-action="share-provider" data-slug="${escapeHtml(p.slug)}">Udostępnij</button>
           </div>
-          <button type="button" class="settings-share__btn" data-action="share-provider" data-slug="${escapeHtml(p.slug)}">Udostępnij</button>
+          <div class="settings-share">
+            <div class="settings__toggle-text">
+              <span class="settings-contact__label">Osadzenie na stronie</span>
+              <span class="settings__hint">/embed/${escapeHtml(p.slug)}</span>
+            </div>
+            <button type="button" class="settings-share__btn" data-action="copy-provider-embed" data-slug="${escapeHtml(p.slug)}">Kopiuj</button>
+          </div>
         </div>
       </div>`;
   }
@@ -9388,29 +9641,34 @@
     return `
       <div class="settings__row settings__row--contact" data-field="bookingRules">
         <p class="settings__help">Okno terminów, wyprzedzenie i zasady anulowania.</p>
-        <label class="settings-contact__field">
-          <span class="settings-contact__label">Rezerwacja z wyprzedzeniem</span>
-          <select class="settings-contact__input" data-role="settings-rule-future" aria-label="Rezerwacja z wyprzedzeniem">
-            ${renderSelectOptions(BOOKING_FUTURE_OPTS, r.futureDays)}
-          </select>
-        </label>
-        <label class="settings-contact__field">
-          <span class="settings-contact__label">Minimalny czas przed wizytą</span>
-          <select class="settings-contact__input" data-role="settings-rule-lead" aria-label="Minimalny czas przed wizytą">
-            ${renderSelectOptions(BOOKING_LEAD_OPTS, r.minLeadHours)}
-          </select>
-        </label>
-        <label class="settings-contact__field">
-          <span class="settings-contact__label">Anulowanie / przełożenie do</span>
-          <select class="settings-contact__input" data-role="settings-rule-cancel" aria-label="Termin anulowania">
-            ${renderSelectOptions(BOOKING_CANCEL_OPTS, r.cancelHours)}
-          </select>
-        </label>
-        <label class="settings-contact__field">
-          <span class="settings-contact__label">Polityka anulowania</span>
-          <textarea class="settings-contact__input settings-contact__textarea" data-role="settings-rule-policy"
-            rows="3" maxlength="400" placeholder="Tekst pokazywany przy odwołaniu wizyty">${escapeHtml(r.policy || "")}</textarea>
-        </label>
+        ${renderSettingsFloatField({
+          tag: "select",
+          label: "Rezerwacja z wyprzedzeniem",
+          role: "settings-rule-future",
+          optionsHtml: renderSelectOptions(BOOKING_FUTURE_OPTS, r.futureDays),
+          attrs: 'aria-label="Rezerwacja z wyprzedzeniem"',
+        })}
+        ${renderSettingsFloatField({
+          tag: "select",
+          label: "Minimalny czas przed wizytą",
+          role: "settings-rule-lead",
+          optionsHtml: renderSelectOptions(BOOKING_LEAD_OPTS, r.minLeadHours),
+          attrs: 'aria-label="Minimalny czas przed wizytą"',
+        })}
+        ${renderSettingsFloatField({
+          tag: "select",
+          label: "Anulowanie / przełożenie do",
+          role: "settings-rule-cancel",
+          optionsHtml: renderSelectOptions(BOOKING_CANCEL_OPTS, r.cancelHours),
+          attrs: 'aria-label="Termin anulowania"',
+        })}
+        ${renderSettingsFloatField({
+          tag: "textarea",
+          label: "Polityka anulowania",
+          role: "settings-rule-policy",
+          value: r.policy || "",
+          attrs: 'rows="3" maxlength="400"',
+        })}
       </div>`;
   }
 
@@ -9490,6 +9748,62 @@
       btn.classList.toggle("is-on", on);
       btn.setAttribute("aria-checked", on ? "true" : "false");
     });
+    captureServiceEditDraft();
+    saveState();
+  }
+
+  function setServiceLocationMode(mode) {
+    const form = document.querySelector("form.service-edit");
+    if (!form) return;
+    const next = mode === "selected" ? "selected" : "all";
+    const hidden = form.querySelector('[data-role="service-location-mode-value"]');
+    if (hidden) hidden.value = next;
+    form.querySelectorAll('[data-role="service-location-mode"]').forEach(function (btn) {
+      const on = btn.getAttribute("data-mode") === next;
+      btn.classList.toggle("is-on", on);
+      btn.setAttribute("aria-checked", on ? "true" : "false");
+    });
+    const list = form.querySelector('[data-role="service-location-list"]');
+    if (list) list.classList.toggle("is-disabled", next === "all");
+    const checks = form.querySelectorAll('[data-role="service-location-check"]');
+    checks.forEach(function (btn) {
+      btn.disabled = next === "all";
+    });
+    if (next === "selected") {
+      const anyOn = Array.prototype.some.call(checks, function (btn) {
+        return btn.classList.contains("is-on");
+      });
+      if (!anyOn && checks[0]) {
+        checks[0].classList.add("is-on");
+        checks[0].setAttribute("aria-pressed", "true");
+      }
+    } else {
+      checks.forEach(function (btn) {
+        btn.classList.remove("is-on");
+        btn.setAttribute("aria-pressed", "false");
+      });
+    }
+    captureServiceEditDraft();
+    saveState();
+  }
+
+  function toggleServiceLocation(locId) {
+    const form = document.querySelector("form.service-edit");
+    if (!form || !locId) return;
+    const modeEl = form.querySelector('[data-role="service-location-mode-value"]');
+    if (!modeEl || modeEl.value !== "selected") return;
+    const btn = form.querySelector('[data-role="service-location-check"][data-loc-id="' + locId + '"]');
+    if (!btn || btn.disabled) return;
+    const on = !btn.classList.contains("is-on");
+    if (!on) {
+      const selectedCount = form.querySelectorAll('[data-role="service-location-check"].is-on').length;
+      if (selectedCount <= 1) {
+        showToast("Zostaw przynajmniej jedno miejsce.");
+        return;
+      }
+    }
+    btn.classList.toggle("is-on", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
     captureServiceEditDraft();
     saveState();
   }
@@ -9800,7 +10114,10 @@
     }
     window.AppState.params.client = { slug: slug };
 
-    if (clientUsesDesktopBookingLayout()) {
+    if (opts.embed) {
+      window.AppState.searchOpenSlug = null;
+      window.AppState.screen.client = "booking";
+    } else if (clientUsesDesktopBookingLayout()) {
       window.AppState.searchOpenSlug = slug;
       window.AppState.screen.client =
         window.AppState.screen.client === "favorites" ? "favorites" : "search";
@@ -10065,7 +10382,8 @@
     const p = getProviderBySlug(draft.slug);
     if (!p) return;
 
-    const slots = computeSlots(p, draft.dateISO, draftTotals(p).duration || 15);
+    const slotOpts = slotOptsForServiceIds(p, draft.serviceIds || []);
+    const slots = computeSlots(p, draft.dateISO, draftTotals(p).duration || 15, slotOpts);
     const slot = slots.find((s) => s.id === draft.slotId);
     if (!slot) {
       showToast("Ten termin jest już zajęty — wybierz inny.");
@@ -10084,6 +10402,7 @@
       dateISO: draft.dateISO,
       from: slot.from,
       to: slot.to,
+      locationId: slot.locationId,
       locationLabel: slot.locationLabel,
       status: "confirmed",
       side: "client",
@@ -10177,7 +10496,8 @@
       const s = (p.services || []).find((x) => x.id === id);
       return a + (s ? s.durationMin : 0);
     }, 0) || 30;
-    const slot = computeSlots(p, req._proposeDate, totalDur).find((s) => s.id === req._proposeSlot);
+    const slotOpts = slotOptsForServiceIds(p, req.serviceIds || []);
+    const slot = computeSlots(p, req._proposeDate, totalDur, slotOpts).find((s) => s.id === req._proposeSlot);
     if (!slot) return;
 
     // Zaktualizuj wizytę klienta na "proposed" z terminem
@@ -10186,6 +10506,7 @@
       bk.dateISO = req._proposeDate;
       bk.from = slot.from;
       bk.to = slot.to;
+      bk.locationId = slot.locationId;
       bk.locationLabel = slot.locationLabel;
       bk.status = "proposed";
     }
@@ -10335,6 +10656,20 @@
 
   function handleRouteHash() {
     const hash = (location.hash || "").replace(/^#/, "");
+    const embedMatch = hash.match(/^embed\/(.+)$/);
+    if (embedMatch && embedMatch[1]) {
+      const slug = decodeURIComponent(embedMatch[1]);
+      setEmbedMode(true);
+      window.AppState.loggedIn = true;
+      window.AppState.activeRole = "client";
+      window.AppState.screen.client = "booking";
+      saveState();
+      updateAppHeader("client");
+      showPage("app");
+      openProvider(slug, { force: true, embed: true });
+      return;
+    }
+    setEmbedMode(false);
     if (hash === "simulator") {
       showSimulator();
       return;
@@ -10734,6 +11069,10 @@
         closeProviderCardMenu();
         closeBookingProviderInfo({ render: true });
         break;
+      case "copy-provider-embed":
+        event.preventDefault();
+        copyProviderEmbed(d.slug);
+        break;
       case "report-provider":
         event.preventDefault();
         reportProvider(d.slug);
@@ -10891,6 +11230,14 @@
       case "service-booking-mode":
         event.preventDefault();
         setServiceBookingMode(d.mode);
+        break;
+      case "service-location-mode":
+        event.preventDefault();
+        setServiceLocationMode(d.mode);
+        break;
+      case "service-location-toggle":
+        event.preventDefault();
+        toggleServiceLocation(d.locId);
         break;
       case "settings-social-add":
         event.preventDefault();

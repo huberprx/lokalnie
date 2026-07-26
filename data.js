@@ -178,6 +178,7 @@
           price: 50,
           subtitle: "Tradycyjne golenie z gorącym kompresem",
           photos: ["assets/services/svc-shave.jpg"],
+          locationIds: ["loc-gb-1"],
           variants: [
             { id: "svc-gb-6-std", durationMin: 25, price: 50, label: "Klasyczne" },
             { id: "svc-gb-6-ritual", durationMin: 40, price: 75, label: "Rytuał" },
