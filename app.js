@@ -7046,16 +7046,19 @@
     return out.length ? out : [{ id: "v-1", durationMin: 30, price: null, label: "" }];
   }
 
+  /** null = wszystkie miejsca; tablica = tylko zaznaczone; [] = nic nie wybrano. */
   function readServiceEditLocationIds(form) {
     if (!form) return null;
-    const modeEl = form.querySelector('[data-role="service-location-mode-value"]');
-    const mode = modeEl ? String(modeEl.value || "all") : "all";
-    if (mode !== "selected") return null;
+    const checks = form.querySelectorAll('[data-role="service-location-check"]');
+    if (!checks.length) return null;
     const ids = [];
-    form.querySelectorAll('[data-role="service-location-check"].is-on').forEach(function (btn) {
+    checks.forEach(function (btn) {
+      if (!btn.classList.contains("is-on")) return;
       const id = btn.getAttribute("data-loc-id");
       if (id) ids.push(id);
     });
+    if (!ids.length) return [];
+    if (ids.length >= checks.length) return null;
     return ids;
   }
 
@@ -7078,8 +7081,10 @@
     if (!form) return "auto";
     const hidden = form.querySelector('[data-role="service-booking-mode-value"]');
     if (hidden && (hidden.value === "approval" || hidden.value === "auto")) return hidden.value;
-    const on = form.querySelector('[data-role="service-booking-mode"].is-on');
-    if (on && on.getAttribute("data-mode") === "approval") return "approval";
+    const on = form.querySelector('[data-role="service-booking-mode-switch"]:checked');
+    if (on && (on.getAttribute("data-mode") === "approval" || on.getAttribute("data-mode") === "auto")) {
+      return on.getAttribute("data-mode");
+    }
     return "auto";
   }
 
@@ -7232,12 +7237,12 @@
     });
     const checks = locs
       .map(function (loc) {
-        const on = !all && !!selected[loc.id];
+        const on = all || !!selected[loc.id];
         const tone = locationToneClass(provider, loc.id);
         return `
           <button type="button" class="service-edit__loc-check${on ? " is-on" : ""}" data-action="service-location-toggle"
             data-role="service-location-check" data-loc-id="${escapeHtml(loc.id)}"
-            aria-pressed="${on ? "true" : "false"}"${all ? " disabled" : ""}>
+            aria-pressed="${on ? "true" : "false"}">
             <span class="service-edit__loc-dot ${escapeHtml(tone)}" aria-hidden="true"></span>
             <span class="service-edit__loc-text">
               <span class="service-edit__loc-name">${escapeHtml(loc.label || "Miejsce")}</span>
@@ -7250,23 +7255,8 @@
     return `
       <div class="service-edit__field" data-field="locations">
         <span class="service-edit__label">Miejsce wykonywania</span>
-        <p class="service-edit__hint">Wszystkie lokalizacje albo tylko wybrane — klient zobaczy terminy wyłącznie w tych miejscach.</p>
-        <div class="settings__mode" role="radiogroup" aria-label="Miejsce wykonywania usługi">
-          <button type="button" class="settings__mode-btn${all ? " is-on" : ""}"
-            data-action="service-location-mode" data-mode="all" data-role="service-location-mode"
-            role="radio" aria-checked="${all ? "true" : "false"}">
-            <span class="settings__mode-title">Wszystkie lokalizacje</span>
-            <span class="settings__mode-desc">Usługa dostępna w każdym miejscu z dostępności</span>
-          </button>
-          <button type="button" class="settings__mode-btn${!all ? " is-on" : ""}"
-            data-action="service-location-mode" data-mode="selected" data-role="service-location-mode"
-            role="radio" aria-checked="${!all ? "true" : "false"}">
-            <span class="settings__mode-title">Wybrane miejsca</span>
-            <span class="settings__mode-desc">Tylko w lokalizacjach zaznaczonych poniżej</span>
-          </button>
-        </div>
-        <input type="hidden" name="locationMode" value="${all ? "all" : "selected"}" data-role="service-location-mode-value" />
-        <div class="service-edit__locs${all ? " is-disabled" : ""}" data-role="service-location-list">
+        <p class="service-edit__hint">Zaznacz wszystkie miejsca albo tylko te, w których ta usługa jest dostępna.</p>
+        <div class="service-edit__locs" data-role="service-location-list" role="group" aria-label="Miejsce wykonywania usługi">
           ${checks}
         </div>
       </div>`;
@@ -7297,19 +7287,27 @@
         <div class="service-edit__field" data-field="bookingMode">
           <span class="service-edit__label">Rezerwacja oferty</span>
           <p class="service-edit__hint">Widoczne u klienta jako osobna grupa w ofercie.</p>
-          <div class="settings__mode" role="radiogroup" aria-label="Tryb rezerwacji oferty">
-            <button type="button" class="settings__mode-btn${mode === "auto" ? " is-on" : ""}"
-              data-action="service-booking-mode" data-mode="auto" data-role="service-booking-mode"
-              role="radio" aria-checked="${mode === "auto" ? "true" : "false"}">
-              <span class="settings__mode-title">Automatyczne potwierdzenie</span>
-              <span class="settings__mode-desc">Klient wybiera termin z kalendarza</span>
-            </button>
-            <button type="button" class="settings__mode-btn${mode === "approval" ? " is-on" : ""}"
-              data-action="service-booking-mode" data-mode="approval" data-role="service-booking-mode"
-              role="radio" aria-checked="${mode === "approval" ? "true" : "false"}">
-              <span class="settings__mode-title">Na prośbę o termin</span>
-              <span class="settings__mode-desc">Klient prosi — Ty proponujesz wolny slot</span>
-            </button>
+          <div class="service-edit__mode-list" data-role="service-booking-mode-panel">
+            <div class="settings-contact__toggle service-edit__mode-toggle">
+              <div class="settings__toggle-text">
+                <span class="settings__hint">Automatyczne potwierdzenie</span>
+                <span class="settings-contact__toggle-hint">Klient wybiera termin z kalendarza</span>
+              </div>
+              <label class="settings__toggle" title="Automatyczne potwierdzenie">
+                <input type="checkbox" class="avail-edit__switch" data-role="service-booking-mode-switch"
+                  data-mode="auto" ${mode === "auto" ? "checked" : ""} aria-label="Automatyczne potwierdzenie" />
+              </label>
+            </div>
+            <div class="settings-contact__toggle service-edit__mode-toggle">
+              <div class="settings__toggle-text">
+                <span class="settings__hint">Na prośbę o termin</span>
+                <span class="settings-contact__toggle-hint">Klient prosi — Ty proponujesz wolny slot</span>
+              </div>
+              <label class="settings__toggle" title="Na prośbę o termin">
+                <input type="checkbox" class="avail-edit__switch" data-role="service-booking-mode-switch"
+                  data-mode="approval" ${mode === "approval" ? "checked" : ""} aria-label="Na prośbę o termin" />
+              </label>
+            </div>
           </div>
           <input type="hidden" name="bookingMode" value="${escapeHtml(mode)}" data-role="service-booking-mode-value" />
         </div>
@@ -7332,7 +7330,7 @@
 
     if (editing) {
       return `
-      <div class="app-screen app-screen--provider">
+      <div class="app-screen app-screen--provider app-screen--service-edit">
         <div class="app-scroll">
           ${renderServiceEditForm(editing, isNew)}
         </div>
@@ -7528,6 +7526,10 @@
     });
     let locationIds = null;
     if (Array.isArray(locIdsRaw)) {
+      if (!locIdsRaw.length) {
+        showToast("Wybierz przynajmniej jedno miejsce.");
+        return;
+      }
       locationIds = locIdsRaw.filter(function (id) {
         return validLocIds.indexOf(id) !== -1;
       });
@@ -9761,78 +9763,54 @@
       </div>`;
   }
 
-  function setServiceBookingMode(mode, fromEl) {
+  /** Patch UI edycji oferty bez renderAll — zachowaj scroll (bez skoku ekranu). */
+  function withServiceEditScroll(fromEl, fn) {
     const form = serviceEditForm(fromEl);
-    if (!form) return;
-    const next = mode === "approval" ? "approval" : "auto";
-    const hidden = form.querySelector('[data-role="service-booking-mode-value"]') || form.elements.bookingMode;
-    if (hidden) hidden.value = next;
-    form.querySelectorAll('[data-role="service-booking-mode"]').forEach(function (modeBtn) {
-      const on = modeBtn.getAttribute("data-mode") === next;
-      modeBtn.classList.toggle("is-on", on);
-      modeBtn.setAttribute("aria-checked", on ? "true" : "false");
+    const scroller =
+      (fromEl && fromEl.closest && fromEl.closest(".app-scroll")) ||
+      (form && form.closest(".app-scroll")) ||
+      document.querySelector("#app-fullscreen .app-scroll");
+    const top = scroller ? scroller.scrollTop : 0;
+    fn(form);
+    if (!scroller) return;
+    scroller.scrollTop = top;
+    requestAnimationFrame(function () {
+      scroller.scrollTop = top;
     });
-    captureServiceEditDraft(form);
-    saveState();
-    renderAll();
   }
 
-  function setServiceLocationMode(mode, fromEl) {
-    const form = serviceEditForm(fromEl);
-    if (!form) return;
-    const next = mode === "selected" ? "selected" : "all";
-    const hidden = form.querySelector('[data-role="service-location-mode-value"]');
-    if (hidden) hidden.value = next;
-    form.querySelectorAll('[data-role="service-location-mode"]').forEach(function (modeBtn) {
-      const on = modeBtn.getAttribute("data-mode") === next;
-      modeBtn.classList.toggle("is-on", on);
-      modeBtn.setAttribute("aria-checked", on ? "true" : "false");
-    });
-    const list = form.querySelector('[data-role="service-location-list"]');
-    if (list) list.classList.toggle("is-disabled", next === "all");
-    const checks = form.querySelectorAll('[data-role="service-location-check"]');
-    checks.forEach(function (checkBtn) {
-      checkBtn.disabled = next === "all";
-    });
-    if (next === "selected") {
-      const anyOn = Array.prototype.some.call(checks, function (checkBtn) {
-        return checkBtn.classList.contains("is-on");
+  function setServiceBookingMode(mode, fromEl) {
+    withServiceEditScroll(fromEl, function (form) {
+      if (!form) return;
+      const next = mode === "approval" ? "approval" : "auto";
+      const hidden = form.querySelector('[data-role="service-booking-mode-value"]') || form.elements.bookingMode;
+      if (hidden) hidden.value = next;
+      form.querySelectorAll('[data-role="service-booking-mode-switch"]').forEach(function (sw) {
+        sw.checked = sw.getAttribute("data-mode") === next;
       });
-      if (!anyOn && checks[0]) {
-        checks[0].classList.add("is-on");
-        checks[0].setAttribute("aria-pressed", "true");
-      }
-    } else {
-      checks.forEach(function (checkBtn) {
-        checkBtn.classList.remove("is-on");
-        checkBtn.setAttribute("aria-pressed", "false");
-      });
-    }
-    captureServiceEditDraft(form);
-    saveState();
-    renderAll();
+      captureServiceEditDraft(form);
+      saveState();
+    });
   }
 
   function toggleServiceLocation(locId, fromEl) {
-    const form = serviceEditForm(fromEl);
-    if (!form || !locId) return;
-    const modeEl = form.querySelector('[data-role="service-location-mode-value"]');
-    if (!modeEl || modeEl.value !== "selected") return;
-    const checkBtn = form.querySelector('[data-role="service-location-check"][data-loc-id="' + locId + '"]');
-    if (!checkBtn || checkBtn.disabled) return;
-    const on = !checkBtn.classList.contains("is-on");
-    if (!on) {
-      const selectedCount = form.querySelectorAll('[data-role="service-location-check"].is-on').length;
-      if (selectedCount <= 1) {
-        showToast("Zostaw przynajmniej jedno miejsce.");
-        return;
+    withServiceEditScroll(fromEl, function (form) {
+      if (!form || !locId) return;
+      const checkBtn = form.querySelector('[data-role="service-location-check"][data-loc-id="' + locId + '"]');
+      if (!checkBtn) return;
+      const on = !checkBtn.classList.contains("is-on");
+      if (!on) {
+        const selectedCount = form.querySelectorAll('[data-role="service-location-check"].is-on').length;
+        if (selectedCount <= 1) {
+          showToast("Zostaw przynajmniej jedno miejsce.");
+          return;
+        }
       }
-    }
-    checkBtn.classList.toggle("is-on", on);
-    checkBtn.setAttribute("aria-pressed", on ? "true" : "false");
-    captureServiceEditDraft(form);
-    saveState();
-    renderAll();
+      checkBtn.classList.toggle("is-on", on);
+      checkBtn.setAttribute("aria-pressed", on ? "true" : "false");
+      captureServiceEditDraft(form);
+      saveState();
+    });
   }
 
   function renderProvider(screen) {
@@ -11254,14 +11232,6 @@
           navigate("provider", "calendar", {});
         } else navigate("provider", d.tab, {});
         break;
-      case "service-booking-mode":
-        event.preventDefault();
-        setServiceBookingMode(d.mode || btn.getAttribute("data-mode"), btn);
-        break;
-      case "service-location-mode":
-        event.preventDefault();
-        setServiceLocationMode(d.mode || btn.getAttribute("data-mode"), btn);
-        break;
       case "service-location-toggle":
         event.preventDefault();
         toggleServiceLocation(d.locId || btn.getAttribute("data-loc-id"), btn);
@@ -11694,6 +11664,15 @@
       captureProviderContactFields();
       saveState();
       renderAll();
+      return;
+    }
+
+    const bookingModeSwitch = event.target.closest('[data-role="service-booking-mode-switch"]');
+    if (bookingModeSwitch) {
+      const picked = bookingModeSwitch.getAttribute("data-mode") === "approval" ? "approval" : "auto";
+      // Włączenie jednej opcji wyłącza drugą; wyłączenie aktywnej przełącza na drugą.
+      const next = bookingModeSwitch.checked ? picked : picked === "approval" ? "auto" : "approval";
+      setServiceBookingMode(next, bookingModeSwitch);
       return;
     }
 
