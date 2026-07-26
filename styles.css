@@ -12699,18 +12699,19 @@ body.prov-cal-resizing * {
 .settings-loc {
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
-  padding: 0.35rem 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
+  gap: 0;
+  padding: 0.35rem 0.45rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
 }
 
 .settings-loc__head {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.45rem;
   min-width: 0;
+  padding-bottom: 0.15rem;
 }
 
 .settings-loc__color {
@@ -12783,6 +12784,35 @@ body.prov-cal-resizing * {
   font-weight: 650;
 }
 
+/* Wewnątrz karty: bez osobnych ramek pól, tylko wspólne obramowanie .settings-loc */
+.settings-loc .settings-contact__field--float .settings-contact__input {
+  border-color: transparent;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding-left: 0.35rem;
+  padding-right: 0.35rem;
+}
+
+.settings-loc .settings-contact__field--float .settings-contact__input:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.settings-loc .settings-contact__field--float .settings-contact__label {
+  left: 0.35rem;
+}
+
+.settings-loc .settings-loc__field.settings-contact__field--float {
+  margin-top: 0;
+  border-top: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  padding-top: 0.1rem;
+}
+
+.settings-loc:focus-within {
+  border-color: color-mix(in srgb, var(--accent-provider) 40%, var(--border));
+}
+
 .settings-loc__head .avail-edit__icon-btn,
 .settings-loc__head .avail-edit__icon-spacer {
   flex: 0 0 2rem;
@@ -12791,8 +12821,8 @@ body.prov-cal-resizing * {
 }
 
 .settings-loc--empty {
-  border: none;
-  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 50%, var(--surface));
 }
 
 .settings-loc__empty-label {
@@ -12801,10 +12831,6 @@ body.prov-cal-resizing * {
   font-size: 0.88rem;
   font-weight: 600;
   color: var(--text-muted);
-}
-
-.settings-loc__field.settings-contact__field--float {
-  margin-top: 0.15rem;
 }
 
 .settings-loc__field-label {
