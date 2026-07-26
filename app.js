@@ -7093,17 +7093,16 @@
         const priceVal = v.price == null || v.price === "" ? "" : String(v.price);
         const canRemove = list.length > 1;
         const isLast = i === list.length - 1;
-        const showLabels = i === 0;
         return `
         <div class="service-edit__variant" data-role="service-edit-variant" data-variant-id="${escapeHtml(v.id || "v-" + (i + 1))}">
           <div class="service-edit__variant-fields">
-            <label class="service-edit__field service-edit__field--price">
-              ${showLabels ? `<span class="service-edit__label">Cena (zł)</span>` : ""}
-              <input class="service-edit__input" name="variantPrice" type="number" min="0" max="99999" step="1" value="${escapeHtml(priceVal)}" placeholder="Indywid." aria-label="Cena wariantu ${i + 1}" />
+            <label class="service-edit__field service-edit__field--float service-edit__field--price">
+              <input class="service-edit__input" name="variantPrice" type="number" min="0" max="99999" step="1" value="${escapeHtml(priceVal)}" placeholder=" " aria-label="Cena wariantu ${i + 1}" />
+              <span class="service-edit__label">Cena (zł)</span>
             </label>
-            <label class="service-edit__field service-edit__field--duration">
-              ${showLabels ? `<span class="service-edit__label">Czas (min)</span>` : ""}
-              <input class="service-edit__input" name="variantDuration" type="number" required min="5" max="480" step="5" value="${escapeHtml(String(v.durationMin || 30))}" aria-label="Czas wariantu ${i + 1}" />
+            <label class="service-edit__field service-edit__field--float service-edit__field--duration">
+              <input class="service-edit__input" name="variantDuration" type="number" required min="5" max="480" step="5" value="${escapeHtml(String(v.durationMin || 30))}" placeholder=" " aria-label="Czas wariantu ${i + 1}" />
+              <span class="service-edit__label">Czas (min)</span>
             </label>
           </div>
           ${
@@ -7265,13 +7264,13 @@
           </button>
           <h2 class="screen-head__title">${isNew ? "Nowa usługa" : "Edytuj usługę"}</h2>
         </header>
-        <label class="service-edit__field">
+        <label class="service-edit__field service-edit__field--float">
+          <input class="service-edit__input" name="name" type="text" required maxlength="80" value="${escapeHtml(s.name || "")}" placeholder=" " />
           <span class="service-edit__label">Nazwa</span>
-          <input class="service-edit__input" name="name" type="text" required maxlength="80" value="${escapeHtml(s.name || "")}" />
         </label>
-        <label class="service-edit__field">
+        <label class="service-edit__field service-edit__field--float">
+          <textarea class="service-edit__input service-edit__textarea" name="description" rows="6" maxlength="500" placeholder=" ">${escapeHtml(s.description || s.subtitle || "")}</textarea>
           <span class="service-edit__label">Opis</span>
-          <textarea class="service-edit__input service-edit__textarea" name="description" rows="6" maxlength="500" placeholder="Pierwsza linia widać na liście, reszta po rozwinięciu przez klienta">${escapeHtml(s.description || s.subtitle || "")}</textarea>
         </label>
         <div class="service-edit__field" data-field="bookingMode">
           <span class="service-edit__label">Rezerwacja oferty</span>
