@@ -142,7 +142,41 @@ Wspólne przyciski/statusy:
 - Klient = niebieski (`--accent-client`), usługodawca = zielony (`--accent-provider`).
   Zmienne definiuje frontend w `:root`; backend używa klas, nie kolorów inline.
 
-## 10. Kontrakt slotów (booking.js — backend)
+## 10. Zapytanie o termin (tryb `approval`)
+Przepływ: klient wskazuje DNI + PORĘ DNIA → usługodawca odsyła KILKA konkretnych godzin →
+klient akceptuje DOKŁADNIE JEDNĄ (pozostałe przepadają) → usługodawca dostaje powiadomienie.
+
+Kształt danych:
+- `Request { id:'rq-…', providerId, providerName, clientName, serviceIds, serviceNames,
+  days:[{ dateISO, part:'am'|'pm'|'any' }], proposals:[Proposal], acceptedProposalId|null,
+  status:'pending'|'proposed'|'confirmed' }`
+- `Proposal { id (slotId), dateISO, from:'HH:MM', to:'HH:MM', locationId, locationLabel }`
+- Robocza lista propozycji usługodawcy: `request._proposals` (przed wysłaniem), aktywny dzień: `request._proposeDate`.
+- `AppState.draft.requestDays:[{ dateISO, part }]` — wybór klienta przed wysłaniem.
+- Powiązana wizyta: `Booking.requestId`; do czasu akceptacji ma pusty `dateISO` i status `pending|proposed`.
+- Pora dnia: `am` = start slotu < 12:00, `pm` = start ≥ 12:00, `any` = bez filtra.
+
+Klasy UI (klient): `.booking__request-days`, `.booking__request-parts`, `.booking__schedule--request`,
+`.request-day-list`, `.request-day`, `.request-day__head`, `.request-day__label`, `.request-day__remove`,
+`.day-part-chips`, `.day-part-chip[--active]`, `.client-requests`, `.client-request-card`,
+`.proposal-list--pick`, `.proposal-pick` z `.proposal-pick__range`, `.proposal-pick__place`, `.proposal-pick__cta`.
+
+Klasy UI (usługodawca): `.request-card__days`, `.request-day-badge` z `__day`/`__part`, `.request-card__note`,
+`.proposal-list`, `.proposal-row` z `__range`/`__place`/`__remove`, `.date-chip__badge` (licznik wybranych godzin),
+`.stat-card--link` (przejście z pulpitu do zapytań).
+
+Powiadomienia: `.notif-block` + `.notif-block__head` + `.notif-list` + `.notif-item[--unread]`;
+`AppState.notifications:[{ id, role:'client'|'provider', text, createdAt, read }]`.
+
+Akcje `data-action`: `request-toggle-day` (+`data-date`), `request-day-part` (+`data-date`,`data-part`),
+`send-request`, `propose-open`, `propose-date`, `propose-slot` (toggle), `propose-remove`, `propose-confirm`,
+`accept-request-proposal` (+`data-request-id`,`data-proposal-id`), `decline-request-proposals`,
+`clear-notifications` (+`data-notif-role`).
+
+Atrybut `data-booking-mode="auto"|"approval"` na `.app-screen--booking` i `.provider-booking-panel` —
+zmiana trybu wymusza pełny render zamiast częściowego odświeżenia.
+
+## 11. Kontrakt slotów (booking.js — backend)
 - `window.Booking.computeSlots(provider, dateISO, totalDurationMin) -> [{ id, startISO, endISO, label:'HH:MM→HH:MM', locationLabel }]`
 - Siatka co 15 min; `wolne = dostępność − busy − istniejące bookings`. Domyślnie zaznacz najbliższy wolny.
 - `window.Booking.generateICS(booking) -> string` (VCALENDAR/VEVENT), `window.Booking.downloadICS(booking)`.

@@ -36,6 +36,12 @@
     cancelled: "Odwołana",
   };
 
+  // Zapytanie o termin: klient podaje dni + porę dnia, usługodawca odsyła kilka konkretnych godzin.
+  const DAY_PARTS = ["am", "pm", "any"];
+  const DAY_PART_LABEL = { am: "Przed południem", pm: "Po południu", any: "Dowolna pora" };
+  const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
+  const DAY_PART_SPLIT_MIN = 12 * 60;
+
   const APP_VERSION = "1.0.0";
 
   const PWA = {
@@ -475,25 +481,28 @@
     const servicesList = panel.querySelector(".booking__services-list");
     if (servicesList) servicesList.innerHTML = ctx.services;
 
-    const calendar = panel.querySelector(".booking__calendar");
-    if (calendar) {
-      calendar.innerHTML = `
+    const mode = draftBookingMode(p);
+    // W trybie „na prośbę” te same kolumny trzymają wybór dni i pory dnia — odświeża je refreshBookingDraftUI().
+    if (mode !== "approval") {
+      const calendar = panel.querySelector(".booking__calendar");
+      if (calendar) {
+        calendar.innerHTML = `
         <h3 class="booking__panel-label">Wybierz dzień</h3>
         ${ctx.availDates.length ? ctx.calendarGrid : `<p class="empty-note">Brak dostępnych terminów.</p>`}`;
-    }
+      }
 
-    const times = panel.querySelector(".booking__times");
-    if (times) {
-      times.innerHTML = `
+      const times = panel.querySelector(".booking__times");
+      if (times) {
+        times.innerHTML = `
         <h3 class="booking__panel-label">${ctx.activeDate ? `Wolne terminy · ${escapeHtml(formatDateLong(ctx.activeDate))}` : "Wolne terminy"}</h3>
         <div class="time-list time-list--vertical">
           ${ctx.activeDate ? ctx.timeList || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>` : `<p class="empty-note">Wybierz dzień w kalendarzu.</p>`}
         </div>`;
+      }
     }
 
     const summary = panel.querySelector(".selection-summary--inline");
     if (summary) summary.remove();
-    const mode = draftBookingMode(p);
     panel.insertAdjacentHTML("beforeend", renderSelectionSummaryBar(p, ctx, mode));
   }
 
@@ -513,9 +522,90 @@
     return out;
   }
 
+  function normalizeDayPart(part) {
+    return part === "am" || part === "pm" ? part : "any";
+  }
+
+  function slotMatchesDayPart(slot, part) {
+    const p = normalizeDayPart(part);
+    if (p === "any") return true;
+    const startMin = timeToMin(slot.from);
+    return p === "am" ? startMin < DAY_PART_SPLIT_MIN : startMin >= DAY_PART_SPLIT_MIN;
+  }
+
+  /** „pt 14 sierpnia” — krótki opis dnia w kartach zapytań i propozycji. */
+  function formatDayWithDow(dateISO) {
+    const d = new Date(String(dateISO) + "T12:00:00");
+    if (isNaN(d.getTime())) return String(dateISO || "");
+    return `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  }
+
+  /** Dni zapytania: unikalne, posortowane, z porą dnia; opcjonalnie ograniczone do listy dat. */
+  function normalizeRequestDays(days, allowedDates) {
+    const allowed = allowedDates ? new Set(allowedDates) : null;
+    const seen = Object.create(null);
+    const out = [];
+    (Array.isArray(days) ? days : []).forEach(function (entry) {
+      const dateISO = entry && typeof entry === "object" ? entry.dateISO : entry;
+      if (!dateISO || seen[dateISO]) return;
+      if (allowed && !allowed.has(dateISO)) return;
+      seen[dateISO] = true;
+      out.push({ dateISO: dateISO, part: normalizeDayPart(entry && entry.part) });
+    });
+    return out.sort(function (a, b) {
+      return String(a.dateISO).localeCompare(String(b.dateISO));
+    });
+  }
+
+  function requestDaysSummary(days) {
+    return (days || [])
+      .map(function (d) {
+        return `${formatDayWithDow(d.dateISO)} · ${DAY_PART_SHORT[normalizeDayPart(d.part)]}`;
+      })
+      .join(" · ");
+  }
+
+  function pushNotification(role, text) {
+    if (!Array.isArray(window.AppState.notifications)) window.AppState.notifications = [];
+    window.AppState.notifications.unshift({
+      id: "nt-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7),
+      role: role,
+      text: String(text || ""),
+      createdAt: new Date().toISOString(),
+      read: false,
+    });
+    if (window.AppState.notifications.length > 20) window.AppState.notifications.length = 20;
+  }
+
+  function roleNotifications(role) {
+    return (window.AppState.notifications || []).filter(function (n) {
+      return n && n.role === role;
+    });
+  }
+
+  function renderNotificationsBlock(role, title) {
+    const items = roleNotifications(role);
+    if (!items.length) return "";
+    return `
+      <section class="notif-block" aria-label="${escapeHtml(title)}">
+        <div class="notif-block__head">
+          <h3 class="prov-section">${escapeHtml(title)}</h3>
+          <button type="button" class="btn btn--ghost btn--sm" data-action="clear-notifications" data-notif-role="${escapeHtml(role)}">Wyczyść</button>
+        </div>
+        <ul class="notif-list">
+          ${items
+            .map(function (n) {
+              return `<li class="notif-item${n.read ? "" : " notif-item--unread"}">${escapeHtml(n.text)}</li>`;
+            })
+            .join("")}
+        </ul>
+      </section>`;
+  }
+
   function renderDateStripHtml(availDates, activeDate, opts) {
     opts = opts || {};
     const action = opts.action || "pick-date";
+    const multi = opts.selectedDates instanceof Set ? opts.selectedDates : null;
     if (!availDates.length) return `<p class="empty-note">Brak dostępnych terminów.</p>`;
     const availSet = new Set(availDates);
     const today = demoTodayISO();
@@ -523,7 +613,7 @@
     return stripDates
       .map(function (dateISO) {
         const dt = new Date(dateISO + "T12:00:00");
-        const on = dateISO === activeDate;
+        const on = multi ? multi.has(dateISO) : dateISO === activeDate;
         const red = isRedCalendarDay(dateISO);
         const open = availSet.has(dateISO);
         // Wyszarzanie tylko dla dni przeszłych (już nie da się rezerwować).
@@ -533,7 +623,7 @@
         const isToday = dateISO === today;
         return `
         <button type="button" class="date-chip${on ? " date-chip--active" : ""}${isToday ? " date-chip--today" : ""}${red ? " date-chip--holiday" : ""}${past ? " date-chip--closed" : ""}${!bookable && !past ? " date-chip--unavailable" : ""}"
-          data-date="${escapeHtml(dateISO)}"${bookable ? ` data-action="${escapeHtml(action)}"` : " disabled aria-disabled=\"true\""}>
+          data-date="${escapeHtml(dateISO)}"${multi ? ` aria-pressed="${on ? "true" : "false"}"` : ""}${bookable ? ` data-action="${escapeHtml(action)}"` : " disabled aria-disabled=\"true\""}>
           <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span>
           <span class="date-chip__day">${dt.getDate()}</span>
         </button>`;
@@ -581,6 +671,13 @@
     }
 
     refreshBookingServiceLists(screen, ctx);
+
+    // Tryb „na prośbę”: zamiast paska dat i godzin jest wybór dni + pory dnia (odświeżany osobno).
+    if (draftBookingMode(p) === "approval") {
+      updateBookingBottomNav(screen, ctx.draft);
+      return;
+    }
+
     const dateStripEl = screen.querySelector(".booking-mobile .date-strip");
     const dateScrollLeft = dateStripEl ? dateStripEl.scrollLeft : 0;
     const timeListEl = screen.querySelector('[data-role="booking-mobile-times"]');
@@ -625,6 +722,16 @@
     const ctx = buildBookingContext(p);
     if (!ctx) return false;
 
+    // Zmiana trybu (auto ↔ na prośbę) przebudowuje układ ekranu — częściowe odświeżenie nie wystarczy.
+    const mode = draftBookingMode(p);
+    const staleLayout = Array.prototype.some.call(
+      document.querySelectorAll("[data-booking-mode]"),
+      function (el) {
+        return el.getAttribute("data-booking-mode") !== mode;
+      }
+    );
+    if (staleLayout) return false;
+
     let updated = false;
 
     document.querySelectorAll(".provider-item--open .provider-booking-panel").forEach(function (panel) {
@@ -653,6 +760,17 @@
       profileServices.innerHTML = renderBookingServiceRows(p, draft.serviceIds || []);
       updated = true;
     }
+
+    document.querySelectorAll('[data-role="booking-request-days"]').forEach(function (el) {
+      const scrollLeft = el.scrollLeft;
+      el.innerHTML = renderRequestDaysBody(ctx);
+      el.scrollLeft = scrollLeft;
+      updated = true;
+    });
+    document.querySelectorAll('[data-role="booking-request-parts"]').forEach(function (el) {
+      el.innerHTML = renderRequestPartsBody(ctx);
+      updated = true;
+    });
 
     return updated;
   }
@@ -692,6 +810,7 @@
       calMonth: null,
       multiSelectMode: false,
       providerInfoOpen: false,
+      requestDays: [],
     };
   }
 
@@ -803,6 +922,8 @@
       draft.slotId = null;
     }
 
+    draft.requestDays = normalizeRequestDays(draft.requestDays, availDates);
+
     return {
       draft: draft,
       totals: totals,
@@ -810,6 +931,8 @@
       activeDate: activeDate,
       calMonth: calMonth,
       slots: slots,
+      requestDays: draft.requestDays,
+      canSendRequest: !!(totals.count && draft.requestDays.length),
       timeList: renderTimeSlots(slots, draft),
       timeListMobile: renderTimeSlots(slots, draft, { mobile: true }),
       services: renderBookingServiceRows(p, draft.serviceIds || []),
@@ -817,6 +940,70 @@
       svcNames: draftServices(p).map((s) => s.name).join(", "),
       canConfirm: !!draft.slotId,
     };
+  }
+
+  function renderRequestDaysBody(ctx) {
+    if (!ctx.availDates.length) return `<p class="empty-note">Brak wolnych dni w grafiku.</p>`;
+    const selected = new Set(
+      ctx.requestDays.map(function (d) {
+        return d.dateISO;
+      })
+    );
+    return renderDateStripHtml(ctx.availDates, null, {
+      action: "request-toggle-day",
+      selectedDates: selected,
+    });
+  }
+
+  function renderRequestPartsBody(ctx) {
+    if (!ctx.requestDays.length) return `<p class="empty-note">Zaznacz dzień, żeby wybrać porę.</p>`;
+    return ctx.requestDays
+      .map(function (d) {
+        const part = normalizeDayPart(d.part);
+        const dayLabel = formatDayWithDow(d.dateISO);
+        return `
+        <div class="request-day" data-date="${escapeHtml(d.dateISO)}">
+          <div class="request-day__head">
+            <span class="request-day__label">${escapeHtml(dayLabel)}</span>
+            <button type="button" class="request-day__remove" data-action="request-toggle-day" data-date="${escapeHtml(d.dateISO)}"
+              aria-label="Usuń dzień ${escapeHtml(dayLabel)}" title="Usuń dzień">×</button>
+          </div>
+          <div class="day-part-chips" role="group" aria-label="Pora dnia — ${escapeHtml(dayLabel)}">
+            ${DAY_PARTS.map(function (key) {
+              const on = key === part;
+              return `<button type="button" class="day-part-chip${on ? " day-part-chip--active" : ""}" data-action="request-day-part"
+                data-date="${escapeHtml(d.dateISO)}" data-part="${escapeHtml(key)}" aria-pressed="${on ? "true" : "false"}">${escapeHtml(DAY_PART_LABEL[key])}</button>`;
+            }).join("")}
+          </div>
+        </div>`;
+      })
+      .join("");
+  }
+
+  /** Kolumny „dni + pora dnia” w układzie desktop (zamiast kalendarza i godzin). */
+  function renderRequestDaysSections(ctx) {
+    return `
+      <section class="booking__calendar booking__request-days">
+        <h3 class="booking__panel-label">Wybierz dni</h3>
+        <div class="date-strip date-strip--booking" data-role="booking-request-days">${renderRequestDaysBody(ctx)}</div>
+        <p class="booking__request-hint">Zaznacz jeden lub kilka pasujących dni — usługodawca odeśle konkretne godziny.</p>
+      </section>
+
+      <aside class="booking__times booking__request-parts">
+        <h3 class="booking__panel-label">Pora dnia</h3>
+        <div class="request-day-list" data-role="booking-request-parts">${renderRequestPartsBody(ctx)}</div>
+      </aside>`;
+  }
+
+  /** Ten sam wybór dni/pory w układzie mobilnym. */
+  function renderRequestSchedule(ctx) {
+    return `
+      <div class="booking__schedule booking__schedule--request">
+        <h3 class="booking__label booking__label--caps">Wybierz dni</h3>
+        <div class="date-strip date-strip--booking" data-role="booking-request-days">${renderRequestDaysBody(ctx)}</div>
+        <h3 class="booking__label booking__label--caps">Pora dnia</h3>
+        <div class="request-day-list" data-role="booking-request-parts">${renderRequestPartsBody(ctx)}</div>
+      </div>`;
   }
 
   function renderSelectionSummaryBar(p, ctx, mode) {
@@ -836,7 +1023,7 @@
             <span class="selection-summary__duration">${escapeHtml(durationText)}</span>
             <span class="selection-summary__price">${escapeHtml(priceText)}</span>
           </div>
-          <button type="button" class="btn btn--primary selection-summary__cta" data-action="send-request" data-slug="${escapeHtml(p.slug)}"${hasSelection ? "" : " disabled"}>Wyślij prośbę o termin</button>
+          <button type="button" class="btn btn--primary selection-summary__cta" data-action="send-request" data-slug="${escapeHtml(p.slug)}"${ctx.canSendRequest ? "" : " disabled"}>Wyślij prośbę o termin</button>
         </div>`;
     }
 
@@ -860,10 +1047,7 @@
 
         ${
           isApproval
-            ? `<section class="booking__approval-note">
-                <h3 class="booking__panel-label">Jak to działa</h3>
-                <p class="empty-note">Wyślij prośbę o termin — usługodawca zaproponuje wolny slot w kalendarzu.</p>
-              </section>`
+            ? renderRequestDaysSections(ctx)
             : `<section class="booking__calendar">
           <h3 class="booking__panel-label">Wybierz dzień</h3>
           ${ctx.availDates.length ? ctx.calendarGrid : `<p class="empty-note">Brak dostępnych terminów.</p>`}
@@ -885,8 +1069,8 @@
 
     const isApproval = draftBookingMode(p) === "approval";
     return `
-      <div class="provider-booking-panel${isApproval ? " provider-booking-panel--approval" : ""}${window.AppState.bookingPanelEnterSlug === p.slug ? " provider-booking-panel--enter" : ""}">
-        ${isApproval ? `<p class="profile__mode">Oferty na prośbę — podasz wolny termin, usługodawca zaproponuje wizytę.</p>` : ""}
+      <div class="provider-booking-panel${isApproval ? " provider-booking-panel--approval" : ""}${window.AppState.bookingPanelEnterSlug === p.slug ? " provider-booking-panel--enter" : ""}" data-booking-mode="${isApproval ? "approval" : "auto"}">
+        ${isApproval ? `<p class="profile__mode">Oferty na prośbę — wskaż pasujące dni, a usługodawca odeśle kilka godzin do wyboru.</p>` : ""}
         ${renderBookingLayoutBlock(p, ctx)}
         ${renderSelectionSummaryBar(p, ctx, isApproval ? "approval" : "auto")}
       </div>`;
@@ -2478,10 +2662,11 @@
   function bookingConfirmCTA(p, draft, totals) {
     const isApproval = draftBookingMode(p) === "approval";
     if (isApproval) {
+      const days = (draft && draft.requestDays) || [];
       return {
         action: "send-request",
         label: "Wyślij prośbę",
-        enabled: !!(totals && totals.count),
+        enabled: !!(totals && totals.count && days.length),
         slugAttr: p ? ` data-slug="${escapeHtml(p.slug)}"` : "",
       };
     }
@@ -3173,6 +3358,59 @@
       </div>`;
   }
 
+  function clientOpenRequests() {
+    return (window.AppState.requests || []).filter(function (r) {
+      return r && (r.status === "pending" || r.status === "proposed");
+    });
+  }
+
+  function renderClientRequestCard(r) {
+    const days = normalizeRequestDays(r.days);
+    const proposals = Array.isArray(r.proposals) ? r.proposals : [];
+    const waiting = r.status !== "proposed" || !proposals.length;
+    return `
+      <div class="client-request-card" data-request-id="${escapeHtml(r.id)}">
+        <div class="visit-card__top">
+          <span class="visit-card__name">${escapeHtml(r.providerName || "")}</span>
+          <span class="status-badge" data-status="${waiting ? "pending" : "proposed"}">${waiting ? "Czeka na propozycje" : "Wybierz termin"}</span>
+        </div>
+        <div class="visit-card__svc">${escapeHtml((r.serviceNames || []).join(", "))}</div>
+        ${
+          waiting
+            ? `${renderRequestDayBadges(days)}
+               <p class="request-card__note">Usługodawca odeśle konkretne godziny do wyboru.</p>`
+            : `<p class="request-card__note">Wybierz jeden termin — pozostałe propozycje przepadną.</p>
+               <ul class="proposal-list proposal-list--pick">
+                 ${proposals
+                   .map(function (c) {
+                     return `<li>
+                       <button type="button" class="proposal-pick" data-action="accept-request-proposal"
+                         data-request-id="${escapeHtml(r.id)}" data-proposal-id="${escapeHtml(c.id)}">
+                         <span class="proposal-pick__range">${escapeHtml(proposalRangeLabel(c))}</span>
+                         ${c.locationLabel ? `<span class="proposal-pick__place">${escapeHtml(c.locationLabel)}</span>` : ""}
+                         <span class="proposal-pick__cta">Rezerwuj</span>
+                       </button>
+                     </li>`;
+                   })
+                   .join("")}
+               </ul>
+               <div class="visit-card__actions">
+                 <button type="button" class="btn btn--ghost btn--sm" data-action="decline-request-proposals" data-request-id="${escapeHtml(r.id)}">Poproś o inne terminy</button>
+               </div>`
+        }
+      </div>`;
+  }
+
+  function renderClientRequestsSection() {
+    const list = clientOpenRequests();
+    if (!list.length) return "";
+    return `
+      <section class="client-requests" aria-label="Zapytania o termin">
+        <h3 class="booking__label booking__label--caps">Zapytania o termin</h3>
+        <div class="request-list">${list.map(renderClientRequestCard).join("")}</div>
+      </section>`;
+  }
+
   function renderMyCalendar() {
     const list = clientVisits();
     const visitSet = new Set(
@@ -3235,6 +3473,8 @@
             </aside>
             <div class="my-cal-layout__main">
               ${renderMyCalWeekStrip(selectedDate, visitSet)}
+              ${renderNotificationsBlock("client", "Powiadomienia")}
+              ${renderClientRequestsSection()}
               <section class="my-cal-visits" aria-label="${escapeHtml(listTitle)}">
                 <h3 class="booking__label booking__label--caps">${escapeHtml(listTitle)}</h3>
                 ${renderMyCalStatusFilters()}
@@ -3754,8 +3994,9 @@
     const services = renderBookingServiceRows(p, selectedIds);
 
     const isApproval = draftBookingMode(p) === "approval";
-    const ctaLabel = isApproval ? "Wyślij prośbę o termin" : "Rezerwuj termin";
-    const ctaAction = isApproval ? "send-request" : "start-booking";
+    // W trybie „na prośbę” klient najpierw wskazuje dni i porę dnia — dlatego przechodzimy do ekranu rezerwacji.
+    const ctaLabel = isApproval ? "Poproś o termin" : "Rezerwuj termin";
+    const ctaAction = "start-booking";
 
     return `
       <div class="app-screen app-screen--client">
@@ -3812,7 +4053,7 @@
     const isApproval = draftBookingMode(p) === "approval";
 
     return `
-      <div class="app-screen app-screen--client app-screen--booking">
+      <div class="app-screen app-screen--client app-screen--booking" data-booking-mode="${isApproval ? "approval" : "auto"}">
         <div class="booking-mobile">
           <div class="booking booking--mobile-split">
             <div class="booking__main">
@@ -3821,7 +4062,7 @@
                 ${ctx.draft.providerInfoOpen ? renderBookingProviderInfoPanel(p) : ""}
               </div>
 
-              ${isApproval ? `<p class="profile__mode">Oferty na prośbę — wyślij prośbę, a usługodawca zaproponuje termin.</p>` : ""}
+              ${isApproval ? `<p class="profile__mode">Oferty na prośbę — wskaż pasujące dni, a usługodawca odeśle kilka godzin do wyboru.</p>` : ""}
 
               ${renderServicesPanelHead(p, ctx.draft, { mobile: true })}
               <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
@@ -3829,7 +4070,7 @@
 
             ${
               isApproval
-                ? ""
+                ? renderRequestSchedule(ctx)
                 : `<div class="booking__schedule" data-role="booking-mobile-schedule">
               <div class="booking__label-row">
                 <h3 class="booking__label booking__label--caps">Wybierz datę</h3>
@@ -3921,8 +4162,11 @@
           </header>
           <div class="stat-row" role="region" aria-label="Statystyki">
             <div class="stat-card"><span class="stat-card__num">${upcoming.length}</span><span class="stat-card__lbl">Nadchodzące wizyty</span></div>
-            <div class="stat-card"><span class="stat-card__num">${pendingCount}</span><span class="stat-card__lbl">Oczekujące prośby</span></div>
+            <button type="button" class="stat-card stat-card--link${pendingCount > 0 ? " stat-card--alert" : ""}" data-action="provider-tab" data-tab="requests">
+              <span class="stat-card__num">${pendingCount}</span><span class="stat-card__lbl">Zapytania o termin</span>
+            </button>
           </div>
+          ${renderNotificationsBlock("provider", "Powiadomienia")}
           <div class="prov-section-row">
             <h3 class="prov-section">Nadchodzące wizyty</h3>
             <label class="prov-free-toggle">
@@ -6892,36 +7136,123 @@
       </div>`;
   }
 
+  function requestServicesDuration(p, serviceIds) {
+    return (
+      (serviceIds || []).reduce(function (acc, id) {
+        const s = (p.services || []).find(function (x) {
+          return x.id === id;
+        });
+        return acc + (s ? s.durationMin : 0);
+      }, 0) || 30
+    );
+  }
+
+  /** Dni wskazane przez klienta wraz z wolnymi slotami w jego porze dnia. */
+  function requestDayOptions(req, p) {
+    const totalDur = requestServicesDuration(p, req.serviceIds || []);
+    const slotOpts = slotOptsForServiceIds(p, req.serviceIds || []);
+    const days = normalizeRequestDays(req.days);
+    // Starsze zapytania (sprzed wyboru dni) — pokaż całą dostępność.
+    const source = days.length
+      ? days
+      : (p.availability || []).map(function (d) {
+          return { dateISO: d.dateISO, part: "any" };
+        });
+    return source
+      .map(function (d) {
+        const slots = computeSlots(p, d.dateISO, totalDur, slotOpts).filter(function (s) {
+          return slotMatchesDayPart(s, d.part);
+        });
+        return { dateISO: d.dateISO, part: normalizeDayPart(d.part), slots: slots };
+      })
+      .filter(function (d) {
+        return d.slots.length;
+      });
+  }
+
+  /** Robocza lista propozycji usługodawcy (przed wysłaniem klientowi). */
+  function requestProposalDraft(req) {
+    if (!Array.isArray(req._proposals)) req._proposals = [];
+    return req._proposals;
+  }
+
+  function proposalCountLabel(n) {
+    const abs = Math.abs(Number(n) || 0) % 100;
+    const last = abs % 10;
+    if (abs === 1) return "termin";
+    if (last >= 2 && last <= 4 && (abs < 12 || abs > 14)) return "terminy";
+    return "terminów";
+  }
+
+  function proposalRangeLabel(prop) {
+    return `${formatDayWithDow(prop.dateISO)} · ${prop.from}–${prop.to}`;
+  }
+
+  function renderRequestDayBadges(days) {
+    if (!days.length) return `<p class="request-card__note">Klient nie wskazał dni — możesz zaproponować dowolny termin.</p>`;
+    return `
+      <ul class="request-card__days">
+        ${days
+          .map(function (d) {
+            return `<li class="request-day-badge">
+              <span class="request-day-badge__day">${escapeHtml(formatDayWithDow(d.dateISO))}</span>
+              <span class="request-day-badge__part">${escapeHtml(DAY_PART_LABEL[normalizeDayPart(d.part)])}</span>
+            </li>`;
+          })
+          .join("")}
+      </ul>`;
+  }
+
+  function renderRequestCard(r) {
+    const days = normalizeRequestDays(r.days);
+    const proposals = Array.isArray(r.proposals) ? r.proposals : [];
+    const isProposed = r.status === "proposed";
+    return `
+      <div class="request-card" data-request-id="${escapeHtml(r.id)}">
+        <div class="visit-card__top">
+          <span class="visit-card__name">${escapeHtml(r.clientName || "Klient")}</span>
+          <span class="status-badge" data-status="${escapeHtml(isProposed ? "proposed" : "pending")}">${escapeHtml(isProposed ? "Wysłano propozycje" : "Oczekująca")}</span>
+        </div>
+        <div class="visit-card__svc">${escapeHtml((r.serviceNames || []).join(", "))}</div>
+        ${renderRequestDayBadges(days)}
+        ${
+          isProposed && proposals.length
+            ? `<p class="request-card__note">Wysłano ${proposals.length} ${escapeHtml(proposalCountLabel(proposals.length))} — czekamy na wybór klienta.</p>`
+            : ""
+        }
+        <div class="visit-card__actions">
+          <button type="button" class="btn btn--primary btn--sm" data-action="propose-open" data-request-id="${escapeHtml(r.id)}">${isProposed ? "Zmień propozycje" : "Zaproponuj terminy"}</button>
+        </div>
+      </div>`;
+  }
+
   function renderRequests() {
-    const reqs = (window.AppState.requests || []).filter((r) => r.providerId === MY_PROVIDER_ID && r.status === "pending");
+    const all = (window.AppState.requests || []).filter(function (r) {
+      return r.providerId === MY_PROVIDER_ID;
+    });
+    const pending = all.filter(function (r) {
+      return r.status === "pending";
+    });
+    const proposed = all.filter(function (r) {
+      return r.status === "proposed";
+    });
     return `
       <div class="app-screen app-screen--provider">
         <div class="app-scroll">
           <header class="screen-head">
-            <h2 class="screen-head__title">Prośby o termin</h2>
-            <p class="screen-head__sub">Tryb „na akceptację” — zaproponuj termin klientowi.</p>
+            <h2 class="screen-head__title">Zapytania o termin</h2>
+            <p class="screen-head__sub">Klient podaje dni i porę dnia — Ty odsyłasz kilka godzin do wyboru.</p>
           </header>
+          <h3 class="prov-section">Nowe zapytania</h3>
           <div class="request-list">
-            ${
-              reqs.length
-                ? reqs
-                    .map(
-                      (r) => `
-              <div class="request-card" data-request-id="${escapeHtml(r.id)}">
-                <div class="visit-card__top">
-                  <span class="visit-card__name">${escapeHtml(r.clientName || "Klient")}</span>
-                  <span class="status-badge" data-status="pending">Oczekująca</span>
-                </div>
-                <div class="visit-card__svc">${escapeHtml(r.serviceNames.join(", "))}</div>
-                <div class="visit-card__actions">
-                  <button type="button" class="btn btn--primary btn--sm" data-action="propose-open" data-request-id="${escapeHtml(r.id)}">Zaproponuj termin</button>
-                </div>
-              </div>`
-                    )
-                    .join("")
-                : `<p class="empty-note">Brak oczekujących próśb.</p>`
-            }
+            ${pending.length ? pending.map(renderRequestCard).join("") : `<p class="empty-note">Brak nowych zapytań.</p>`}
           </div>
+          ${
+            proposed.length
+              ? `<h3 class="prov-section">Czekają na wybór klienta</h3>
+                 <div class="request-list">${proposed.map(renderRequestCard).join("")}</div>`
+              : ""
+          }
         </div>
         ${providerBottomNav("requests")}
       </div>`;
@@ -6932,55 +7263,100 @@
     const p = myProvider();
     if (!req || !p) return renderRequests();
 
-    const totalDur = (req.serviceIds || []).reduce((a, id) => {
-      const s = (p.services || []).find((x) => x.id === id);
-      return a + (s ? s.durationMin : 0);
-    }, 0) || 30;
-
-    const slotOpts = slotOptsForServiceIds(p, req.serviceIds || []);
-    const availDays = (p.availability || []).filter((d) => computeSlots(p, d.dateISO, totalDur, slotOpts).length);
-    const activeDate = req._proposeDate && availDays.some((d) => d.dateISO === req._proposeDate) ? req._proposeDate : (availDays[0] && availDays[0].dateISO);
-    const slots = activeDate ? computeSlots(p, activeDate, totalDur, slotOpts) : [];
+    const totalDur = requestServicesDuration(p, req.serviceIds || []);
+    const dayOptions = requestDayOptions(req, p);
+    const chosen = requestProposalDraft(req);
+    const chosenIds = new Set(
+      chosen.map(function (c) {
+        return c.id;
+      })
+    );
+    const activeDate = dayOptions.some(function (d) {
+      return d.dateISO === req._proposeDate;
+    })
+      ? req._proposeDate
+      : (dayOptions[0] && dayOptions[0].dateISO) || null;
+    const activeDay =
+      dayOptions.find(function (d) {
+        return d.dateISO === activeDate;
+      }) || null;
 
     const todayISO = demoTodayISO();
-    const dateStrip = availDays
-      .map((d) => {
-        const dt = new Date(d.dateISO + "T00:00:00");
+    const dateStrip = dayOptions
+      .map(function (d) {
+        const dt = new Date(d.dateISO + "T12:00:00");
         const on = d.dateISO === activeDate;
         const red = isRedCalendarDay(d.dateISO);
-        const isToday = d.dateISO === todayISO;
-        return `<button type="button" class="date-chip${on ? " date-chip--active" : ""}${isToday ? " date-chip--today" : ""}${red ? " date-chip--holiday" : ""}" data-action="propose-date" data-request-id="${escapeHtml(req.id)}" data-date="${escapeHtml(d.dateISO)}">
-          <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span><span class="date-chip__day">${dt.getDate()}</span></button>`;
+        const picked = chosen.filter(function (c) {
+          return c.dateISO === d.dateISO;
+        }).length;
+        return `<button type="button" class="date-chip${on ? " date-chip--active" : ""}${d.dateISO === todayISO ? " date-chip--today" : ""}${red ? " date-chip--holiday" : ""}"
+          data-action="propose-date" data-request-id="${escapeHtml(req.id)}" data-date="${escapeHtml(d.dateISO)}">
+          <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span>
+          <span class="date-chip__day">${dt.getDate()}</span>
+          ${picked ? `<span class="date-chip__badge" aria-hidden="true">${picked}</span>` : ""}
+        </button>`;
       })
       .join("");
 
-    const timeList = slots
-      .map(
-        (s) => `<button type="button" class="time-row${req._proposeSlot === s.id ? " time-row--selected" : ""}" data-action="propose-slot" data-request-id="${escapeHtml(req.id)}" data-slot="${escapeHtml(s.id)}" data-date="${escapeHtml(activeDate)}">
-          <span class="time-row__range">${escapeHtml(s.from)}→${escapeHtml(s.to)}</span>${s.locationLabel ? `<span class="time-row__place">${escapeHtml(s.locationLabel)}</span>` : ""}</button>`
-      )
-      .join("");
+    const timeList = activeDay
+      ? activeDay.slots
+          .map(function (s) {
+            const on = chosenIds.has(s.id);
+            return `<button type="button" class="time-row time-row--chip${on ? " time-row--selected" : ""}" data-action="propose-slot"
+              data-request-id="${escapeHtml(req.id)}" data-slot="${escapeHtml(s.id)}" data-date="${escapeHtml(activeDay.dateISO)}" aria-pressed="${on ? "true" : "false"}">
+              <span class="time-row__info">
+                <span class="time-row__range">${escapeHtml(s.from)}→${escapeHtml(s.to)}</span>
+                ${s.locationLabel ? `<span class="time-row__place">${escapeHtml(s.locationLabel)}</span>` : ""}
+              </span>
+            </button>`;
+          })
+          .join("")
+      : "";
+
+    const chosenList = chosen.length
+      ? `<ul class="proposal-list">
+          ${chosen
+            .map(function (c) {
+              return `<li class="proposal-row">
+                <span class="proposal-row__range">${escapeHtml(proposalRangeLabel(c))}</span>
+                ${c.locationLabel ? `<span class="proposal-row__place">${escapeHtml(c.locationLabel)}</span>` : ""}
+                <button type="button" class="proposal-row__remove" data-action="propose-remove" data-request-id="${escapeHtml(req.id)}" data-slot="${escapeHtml(c.id)}"
+                  aria-label="Usuń propozycję ${escapeHtml(proposalRangeLabel(c))}" title="Usuń propozycję">×</button>
+              </li>`;
+            })
+            .join("")}
+        </ul>`
+      : `<p class="empty-note">Zaznacz godziny, które chcesz wysłać klientowi.</p>`;
 
     return `
       <div class="app-screen app-screen--provider">
         <div class="app-scroll">
           <div class="topbar">
             <button type="button" class="topbar__back" data-action="provider-tab" data-tab="requests" aria-label="Wróć">‹</button>
-            <span class="topbar__title">Zaproponuj termin</span><span class="topbar__spacer"></span>
+            <span class="topbar__title">Zaproponuj terminy</span><span class="topbar__spacer"></span>
           </div>
           <div class="booking">
             <div class="booking__header">
               <span class="booking__prov">${escapeHtml(req.clientName || "Klient")}</span>
-              <span class="booking__svc">${escapeHtml(req.serviceNames.join(", "))}</span>
+              <span class="booking__svc">${escapeHtml((req.serviceNames || []).join(", "))}</span>
             </div>
+            ${renderRequestDayBadges(normalizeRequestDays(req.days))}
             <h3 class="booking__label">Dzień</h3>
-            <div class="date-strip date-strip--booking">${dateStrip || `<p class="empty-note">Brak dostępności.</p>`}</div>
-            ${activeDate ? `<h3 class="booking__label">Godzina · ${escapeHtml(formatDateLong(activeDate))}</h3><div class="time-list">${timeList || `<p class="empty-note">Brak wolnych godzin.</p>`}</div>` : ""}
+            <div class="date-strip date-strip--booking">${dateStrip || `<p class="empty-note">Brak wolnych godzin w dniach wskazanych przez klienta.</p>`}</div>
+            ${
+              activeDay
+                ? `<h3 class="booking__label">Godziny · ${escapeHtml(formatDateLong(activeDay.dateISO))} · ${escapeHtml(DAY_PART_LABEL[activeDay.part])}</h3>
+                   <div class="time-list time-list--horizontal">${timeList}</div>`
+                : ""
+            }
+            <h3 class="booking__label">Do wysłania (${chosen.length})</h3>
+            ${chosenList}
           </div>
         </div>
         <div class="selection-summary">
           <div class="selection-summary__info"><span class="selection-summary__duration">${escapeHtml(formatDuration(totalDur))}</span></div>
-          <button type="button" class="btn btn--primary selection-summary__cta" data-action="propose-confirm" data-request-id="${escapeHtml(req.id)}" ${req._proposeSlot ? "" : "disabled"}>Wyślij propozycję</button>
+          <button type="button" class="btn btn--primary selection-summary__cta" data-action="propose-confirm" data-request-id="${escapeHtml(req.id)}"${chosen.length ? "" : " disabled"}>Wyślij ${chosen.length || ""} ${escapeHtml(proposalCountLabel(chosen.length))}</button>
         </div>
         ${providerBottomNav("requests")}
       </div>`;
@@ -10559,6 +10935,34 @@
     showToast("Rezerwacja potwierdzona ✓");
   }
 
+  function toggleRequestDay(dateISO) {
+    const draft = window.AppState.draft;
+    if (!draft || !dateISO) return;
+    const days = normalizeRequestDays(draft.requestDays);
+    const idx = days.findIndex(function (d) {
+      return d.dateISO === dateISO;
+    });
+    if (idx === -1) days.push({ dateISO: dateISO, part: "any" });
+    else days.splice(idx, 1);
+    draft.requestDays = normalizeRequestDays(days);
+    saveState();
+    if (!refreshBookingDraftUI()) renderAll();
+  }
+
+  function setRequestDayPart(dateISO, part) {
+    const draft = window.AppState.draft;
+    if (!draft || !dateISO) return;
+    const days = normalizeRequestDays(draft.requestDays);
+    const day = days.find(function (d) {
+      return d.dateISO === dateISO;
+    });
+    if (!day) return;
+    day.part = normalizeDayPart(part);
+    draft.requestDays = days;
+    saveState();
+    if (!refreshBookingDraftUI()) renderAll();
+  }
+
   function sendRequest(slug) {
     const draft = window.AppState.draft;
     const p = getProviderBySlug(slug);
@@ -10567,14 +10971,23 @@
       showToast("Wybierz co najmniej jedną usługę.");
       return;
     }
+    const days = normalizeRequestDays(draft.requestDays);
+    if (!days.length) {
+      showToast("Zaznacz co najmniej jeden pasujący dzień.");
+      return;
+    }
     const svcs = draftServices(p);
+    const clientName = ensureClientProfile().name || "Klient";
     const req = {
       id: "rq-" + Date.now(),
       providerId: p.id,
       providerName: p.name,
-      clientName: ensureClientProfile().name || "Klient",
+      clientName: clientName,
       serviceIds: svcs.map((s) => s.id),
       serviceNames: svcs.map((s) => s.name),
+      days: days,
+      proposals: [],
+      acceptedProposalId: null,
       status: "pending",
     };
     window.AppState.requests.push(req);
@@ -10596,16 +11009,29 @@
       side: "client",
     });
 
+    pushNotification(
+      "provider",
+      `Nowe zapytanie o termin — ${clientName}: ${req.serviceNames.join(", ")} (${requestDaysSummary(days)}).`
+    );
+
     window.AppState.draft = null;
     window.AppState.searchOpenSlug = null;
-    window.AppState.screen.client = "search";
+    window.AppState.screen.client = "myCalendar";
     saveState();
     renderAll();
-    showToast("Prośba wysłana — czekaj na propozycję terminu.");
+    showToast("Zapytanie wysłane — czekaj na propozycje terminów.");
   }
 
-  // Usługodawca proponuje termin
+  // Usługodawca proponuje kilka terminów w dniach wskazanych przez klienta
   function proposeOpen(requestId) {
+    const req = (window.AppState.requests || []).find((r) => r.id === requestId);
+    if (req) {
+      // Edycja wysłanych propozycji zaczyna się od tego, co klient już widzi.
+      req._proposals = (Array.isArray(req.proposals) ? req.proposals : []).map(function (c) {
+        return Object.assign({}, c);
+      });
+      req._proposeDate = null;
+    }
     window.AppState.params.provider = { requestId: requestId };
     window.AppState.screen.provider = "propose";
     saveState();
@@ -10616,16 +11042,54 @@
     const req = (window.AppState.requests || []).find((r) => r.id === requestId);
     if (!req) return;
     req._proposeDate = dateISO;
-    req._proposeSlot = null;
     saveState();
     renderAll();
   }
 
   function proposeSlot(requestId, slotId, dateISO) {
     const req = (window.AppState.requests || []).find((r) => r.id === requestId);
-    if (!req) return;
-    req._proposeSlot = slotId;
+    const p = myProvider();
+    if (!req || !p) return;
     req._proposeDate = dateISO;
+    const chosen = requestProposalDraft(req);
+    const idx = chosen.findIndex(function (c) {
+      return c.id === slotId;
+    });
+    if (idx !== -1) {
+      chosen.splice(idx, 1);
+    } else {
+      const day = requestDayOptions(req, p).find(function (d) {
+        return d.dateISO === dateISO;
+      });
+      const slot = day && day.slots.find(function (s) {
+        return s.id === slotId;
+      });
+      if (!slot) return;
+      chosen.push({
+        id: slot.id,
+        dateISO: dateISO,
+        from: slot.from,
+        to: slot.to,
+        locationId: slot.locationId,
+        locationLabel: slot.locationLabel,
+      });
+      chosen.sort(function (a, b) {
+        return (a.dateISO + a.from).localeCompare(b.dateISO + b.from);
+      });
+    }
+    saveState();
+    renderAll();
+  }
+
+  function proposeRemove(requestId, slotId) {
+    const req = (window.AppState.requests || []).find((r) => r.id === requestId);
+    if (!req) return;
+    const chosen = requestProposalDraft(req);
+    const idx = chosen.findIndex(function (c) {
+      return c.id === slotId;
+    });
+    if (idx === -1) return;
+    chosen.splice(idx, 1);
     saveState();
     renderAll();
   }
@@ -10633,34 +11097,39 @@
   function proposeConfirm(requestId) {
     const req = (window.AppState.requests || []).find((r) => r.id === requestId);
     const p = myProvider();
-    if (!req || !p || !req._proposeSlot || !req._proposeDate) return;
+    if (!req || !p) return;
+    const chosen = requestProposalDraft(req);
+    if (!chosen.length) return;
 
-    const totalDur = (req.serviceIds || []).reduce((a, id) => {
-      const s = (p.services || []).find((x) => x.id === id);
-      return a + (s ? s.durationMin : 0);
-    }, 0) || 30;
-    const slotOpts = slotOptsForServiceIds(p, req.serviceIds || []);
-    const slot = computeSlots(p, req._proposeDate, totalDur, slotOpts).find((s) => s.id === req._proposeSlot);
-    if (!slot) return;
+    req.proposals = chosen.map(function (c) {
+      return Object.assign({}, c);
+    });
+    req.acceptedProposalId = null;
+    req.status = "proposed";
+    req._proposals = [];
+    req._proposeDate = null;
 
-    // Zaktualizuj wizytę klienta na "proposed" z terminem
+    // Wizyta klienta czeka bez terminu — konkretną godzinę wybierze on sam z propozycji.
     const bk = (window.AppState.bookings || []).find((b) => b.requestId === req.id);
     if (bk) {
-      bk.dateISO = req._proposeDate;
-      bk.from = slot.from;
-      bk.to = slot.to;
-      bk.locationId = slot.locationId;
-      bk.locationLabel = slot.locationLabel;
+      bk.dateISO = "";
+      bk.from = "";
+      bk.to = "";
+      bk.locationId = null;
+      bk.locationLabel = "";
       bk.status = "proposed";
     }
-    req.status = "proposed";
+
+    pushNotification(
+      "client",
+      `${req.providerName}: ${req.proposals.length} ${proposalCountLabel(req.proposals.length)} do wyboru.`
+    );
+
     window.AppState.screen.provider = "requests";
-    if (window.AppState.screen.client === "myCalendar" || window.AppState.screen.client === "profile") {
-      window.AppState.screen.client = "search";
-    }
+    window.AppState.screen.client = "myCalendar";
     saveState();
     renderAll();
-    showToast("Propozycja wysłana klientowi.");
+    showToast(`Wysłano ${req.proposals.length} ${proposalCountLabel(req.proposals.length)} klientowi.`);
   }
 
   function acceptProposal(bookingId) {
@@ -10683,6 +11152,85 @@
     saveState();
     renderAll();
     showToast("Propozycja odrzucona.");
+  }
+
+  /** Klient rezerwuje jedną z propozycji — pozostałe tracą ważność. */
+  function acceptRequestProposal(requestId, proposalId) {
+    const req = (window.AppState.requests || []).find((r) => r.id === requestId);
+    if (!req) return;
+    const prop = (req.proposals || []).find(function (c) {
+      return c.id === proposalId;
+    });
+    if (!prop) return;
+
+    let bk = (window.AppState.bookings || []).find((b) => b.requestId === req.id);
+    if (!bk) {
+      bk = {
+        id: "bk-" + Date.now(),
+        requestId: req.id,
+        providerId: req.providerId,
+        providerName: req.providerName,
+        clientName: req.clientName,
+        serviceIds: req.serviceIds,
+        serviceNames: req.serviceNames,
+        side: "client",
+      };
+      window.AppState.bookings.push(bk);
+    }
+    bk.dateISO = prop.dateISO;
+    bk.from = prop.from;
+    bk.to = prop.to;
+    bk.locationId = prop.locationId || null;
+    bk.locationLabel = prop.locationLabel || "";
+    bk.status = "confirmed";
+
+    req.status = "confirmed";
+    req.acceptedProposalId = prop.id;
+    req.proposals = [Object.assign({}, prop)];
+
+    pushNotification(
+      "provider",
+      `${req.clientName || "Klient"} zarezerwował(a) termin: ${proposalRangeLabel(prop)} — ${(req.serviceNames || []).join(", ")}.`
+    );
+
+    window.AppState.myCalDate = prop.dateISO;
+    window.AppState.myCalMonth = String(prop.dateISO).slice(0, 7);
+    window.AppState.screen.client = "myCalendar";
+    saveState();
+    renderAll();
+    showToast("Termin zarezerwowany ✓");
+  }
+
+  function declineRequestProposals(requestId) {
+    const req = (window.AppState.requests || []).find((r) => r.id === requestId);
+    if (!req) return;
+    req.proposals = [];
+    req.acceptedProposalId = null;
+    req.status = "pending";
+    const bk = (window.AppState.bookings || []).find((b) => b.requestId === req.id);
+    if (bk) {
+      bk.dateISO = "";
+      bk.from = "";
+      bk.to = "";
+      bk.locationId = null;
+      bk.locationLabel = "";
+      bk.status = "pending";
+    }
+    pushNotification(
+      "provider",
+      `${req.clientName || "Klient"} prosi o inne terminy — ${(req.serviceNames || []).join(", ")}.`
+    );
+    saveState();
+    renderAll();
+    showToast("Poprosiliśmy o inne terminy.");
+  }
+
+  function clearNotifications(role) {
+    window.AppState.notifications = (window.AppState.notifications || []).filter(function (n) {
+      return !n || n.role !== role;
+    });
+    saveState();
+    renderAll();
   }
 
   function ensureCancelVisitDialog() {
@@ -11366,6 +11914,11 @@
       case "confirm-booking": confirmBooking(); break;
       case "accept-proposal": acceptProposal(d.bookingId); break;
       case "reject-proposal": rejectProposal(d.bookingId); break;
+      case "request-toggle-day": toggleRequestDay(d.date); break;
+      case "request-day-part": setRequestDayPart(d.date, d.part); break;
+      case "accept-request-proposal": acceptRequestProposal(d.requestId, d.proposalId); break;
+      case "decline-request-proposals": declineRequestProposals(d.requestId); break;
+      case "clear-notifications": clearNotifications(d.notifRole); break;
 
       case "provider-tab":
         if (d.tab === "availability") openAvailability();
@@ -11555,6 +12108,7 @@
       case "propose-open": proposeOpen(d.requestId); break;
       case "propose-date": proposeDate(d.requestId, d.date); break;
       case "propose-slot": proposeSlot(d.requestId, d.slot, d.date); break;
+      case "propose-remove": proposeRemove(d.requestId, d.slot); break;
       case "propose-confirm": proposeConfirm(d.requestId); break;
       case "edit-service":
         event.preventDefault();

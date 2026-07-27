@@ -13284,3 +13284,404 @@ body.prov-cal-resizing * {
 .settings__row[data-field="account-notifications"] .settings-contact__toggle {
   margin: 0;
 }
+
+/* ============================================================
+   Zapytanie o termin — dni + pora dnia (klient),
+   wiele propozycji godzin (usługodawca), wybór jednej (klient)
+   ============================================================ */
+
+/* ---- Klient: wybór dni ---- */
+.booking__request-days .date-strip {
+  flex: 0 0 auto;
+}
+
+.booking__request-hint {
+  margin: 0.6rem 0 0;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.request-day-list {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.request-day-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.booking__schedule--request .request-day-list {
+  max-height: 9.5rem;
+}
+
+.request-day {
+  padding: 0.5rem 0.6rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.request-day__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.request-day__label {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.request-day__remove {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0.05rem 0.3rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1rem;
+  line-height: 1.1;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.request-day__remove:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.day-part-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.day-part-chip {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0.28rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.day-part-chip:hover {
+  border-color: var(--accent-client);
+  color: var(--text);
+}
+
+.day-part-chip--active,
+.day-part-chip--active:hover {
+  background: var(--accent-client);
+  border-color: var(--accent-client);
+  color: #fff;
+}
+
+/* ---- Podsumowanie dni w kartach zapytań ---- */
+.request-card__days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.request-day-badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.72rem;
+}
+
+.request-day-badge__day {
+  font-weight: 700;
+}
+
+.request-day-badge__part {
+  color: var(--text-muted);
+}
+
+.request-card__note {
+  margin: 0.5rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+/* ---- Usługodawca: koszyk propozycji ---- */
+.proposal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.proposal-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.8rem;
+}
+
+.proposal-row__range {
+  font-weight: 600;
+}
+
+.proposal-row__place {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.proposal-row__remove {
+  appearance: none;
+  -webkit-appearance: none;
+  margin-left: auto;
+  padding: 0.05rem 0.3rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1rem;
+  line-height: 1.1;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.proposal-row__remove:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.date-chip {
+  position: relative;
+}
+
+.date-chip__badge {
+  position: absolute;
+  top: 0.02rem;
+  right: 0.05rem;
+  display: grid;
+  place-items: center;
+  min-width: 0.95rem;
+  height: 0.95rem;
+  padding: 0 0.18rem;
+  border-radius: 999px;
+  background: var(--accent-provider);
+  color: #fff;
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Ekran propozycji — poziome chipy godzin (jak w panelu „+”) */
+.app-screen--provider .booking .time-list--horizontal {
+  display: flex;
+  flex-direction: row;
+  gap: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0.1rem 0 0.25rem;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.app-screen--provider .booking .time-list--horizontal::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.app-screen--provider .booking .time-row--chip {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0;
+  padding: 0.25rem 0.75rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-screen--provider .booking .time-list--horizontal .time-row--chip + .time-row--chip {
+  border-left: 1px solid var(--border);
+}
+
+.app-screen--provider .booking .time-row--chip .time-row__info {
+  flex: none;
+}
+
+.app-screen--provider .booking .time-row--chip.time-row--selected .time-row__range {
+  background: var(--accent-provider);
+  color: #fff;
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent-provider) 35%, transparent);
+}
+
+.app-screen--provider .day-part-chip:hover {
+  border-color: var(--accent-provider);
+}
+
+.app-screen--provider .day-part-chip--active,
+.app-screen--provider .day-part-chip--active:hover {
+  background: var(--accent-provider);
+  border-color: var(--accent-provider);
+}
+
+/* ---- Klient: zapytania i wybór jednego terminu ---- */
+.client-requests {
+  margin: 0.75rem 0 1rem;
+}
+
+.client-request-card {
+  padding: 0.8rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.proposal-list--pick {
+  gap: 0.45rem;
+}
+
+.proposal-pick {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.65rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.proposal-pick:hover {
+  border-color: var(--accent-client);
+  background: var(--accent-client-soft);
+}
+
+.proposal-pick__range {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.proposal-pick__place {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.proposal-pick__cta {
+  margin-left: auto;
+  padding: 0.22rem 0.6rem;
+  border-radius: 999px;
+  background: var(--accent-client);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ---- Powiadomienia w aplikacji ---- */
+.notif-block {
+  margin: 0.75rem 0 1rem;
+}
+
+.notif-block__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.notif-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notif-item {
+  padding: 0.5rem 0.65rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.notif-item--unread {
+  background: var(--surface);
+  color: var(--text);
+  border-left-color: var(--accent-provider);
+}
+
+.app-screen--client .notif-item--unread {
+  border-left-color: var(--accent-client);
+}
+
+/* ---- Pulpit: karta statystyki jako przejście do zapytań ---- */
+.stat-card--alert .stat-card__num {
+  color: var(--danger);
+}
+
+.stat-card--link {
+  appearance: none;
+  -webkit-appearance: none;
+  align-items: flex-start;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.stat-card--link:hover {
+  border-color: var(--accent-provider);
+  background: var(--accent-provider-soft);
+}
