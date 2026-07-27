@@ -99,6 +99,10 @@
       /** Panel „+” → nowy termin z kalendarza usługodawcy. */
       provCalAddOpen: false,
       provCalAddDraft: null,
+      /** Odpowiedź na zapytanie o termin w kalendarzu (panel „+” w trybie propozycji). */
+      provCalReplyRequestId: null,
+      /** false = fokusienie na dniach klienta; true = pełny kontekst kalendarza. */
+      provCalReplyShowAll: false,
       /** Pulpit: pokazywać karty wolnych luk między wizytami (domyślnie nie). */
       dashShowFreeSlots: false,
       /** Zapisani klienci usługodawcy: { [providerId]: [{ id, name, phone, email, address }] } */
@@ -606,6 +610,7 @@
     opts = opts || {};
     const action = opts.action || "pick-date";
     const multi = opts.selectedDates instanceof Set ? opts.selectedDates : null;
+    const highlight = opts.highlightDates instanceof Set ? opts.highlightDates : null;
     if (!availDates.length) return `<p class="empty-note">Brak dostępnych terminów.</p>`;
     const availSet = new Set(availDates);
     const today = demoTodayISO();
@@ -614,6 +619,7 @@
       .map(function (dateISO) {
         const dt = new Date(dateISO + "T12:00:00");
         const on = multi ? multi.has(dateISO) : dateISO === activeDate;
+        const marked = !!(highlight && highlight.has(dateISO));
         const red = isRedCalendarDay(dateISO);
         const open = availSet.has(dateISO);
         // Wyszarzanie tylko dla dni przeszłych (już nie da się rezerwować).
@@ -621,11 +627,16 @@
         const past = dateISO < today;
         const bookable = open && !past;
         const isToday = dateISO === today;
+        const badge =
+          opts.badgeCounts && opts.badgeCounts[dateISO]
+            ? `<span class="date-chip__badge" aria-hidden="true">${opts.badgeCounts[dateISO]}</span>`
+            : "";
         return `
-        <button type="button" class="date-chip${on ? " date-chip--active" : ""}${isToday ? " date-chip--today" : ""}${red ? " date-chip--holiday" : ""}${past ? " date-chip--closed" : ""}${!bookable && !past ? " date-chip--unavailable" : ""}"
+        <button type="button" class="date-chip${on ? " date-chip--active" : ""}${marked ? " date-chip--request" : ""}${isToday ? " date-chip--today" : ""}${red ? " date-chip--holiday" : ""}${past ? " date-chip--closed" : ""}${!bookable && !past ? " date-chip--unavailable" : ""}"
           data-date="${escapeHtml(dateISO)}"${multi ? ` aria-pressed="${on ? "true" : "false"}"` : ""}${bookable ? ` data-action="${escapeHtml(action)}"` : " disabled aria-disabled=\"true\""}>
           <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span>
           <span class="date-chip__day">${dt.getDate()}</span>
+          ${badge}
         </button>`;
       })
       .join("");
@@ -1070,7 +1081,6 @@
     const isApproval = draftBookingMode(p) === "approval";
     return `
       <div class="provider-booking-panel${isApproval ? " provider-booking-panel--approval" : ""}${window.AppState.bookingPanelEnterSlug === p.slug ? " provider-booking-panel--enter" : ""}" data-booking-mode="${isApproval ? "approval" : "auto"}">
-        ${isApproval ? `<p class="profile__mode">Oferty na prośbę — wskaż pasujące dni, a usługodawca odeśle kilka godzin do wyboru.</p>` : ""}
         ${renderBookingLayoutBlock(p, ctx)}
         ${renderSelectionSummaryBar(p, ctx, isApproval ? "approval" : "auto")}
       </div>`;
@@ -1937,6 +1947,8 @@
         provCalSearchQ: typeof stored.provCalSearchQ === "string" ? stored.provCalSearchQ : base.provCalSearchQ,
         provCalAddOpen: false,
         provCalAddDraft: null,
+        provCalReplyRequestId: null,
+        provCalReplyShowAll: false,
         dashShowFreeSlots: stored.dashShowFreeSlots === true,
         providerClients:
           stored.providerClients && typeof stored.providerClients === "object" ? stored.providerClients : base.providerClients,
@@ -3609,12 +3621,17 @@
       else auto.push(s);
     });
 
-    function group(title, list) {
+    function group(title, list, subtitle) {
       if (!list.length) return "";
       return `
         <div class="service-list__group">
           <div class="service-list__group-head">
             <h4 class="service-list__group-title">${escapeHtml(title)}</h4>
+            ${
+              subtitle
+                ? `<p class="service-list__group-sub">${escapeHtml(subtitle)}</p>`
+                : ""
+            }
           </div>
           ${list
             .map(function (s) {
@@ -3631,7 +3648,8 @@
       ) +
       group(
         "Na prośbę o termin",
-        approval
+        approval,
+        "Wskaż pasujące dni, a usługodawca odeśle kilka godzin do wyboru."
       );
     return html || `<p class="empty-note">Brak usług w ofercie.</p>`;
   }
@@ -4062,8 +4080,6 @@
                 ${ctx.draft.providerInfoOpen ? renderBookingProviderInfoPanel(p) : ""}
               </div>
 
-              ${isApproval ? `<p class="profile__mode">Oferty na prośbę — wskaż pasujące dni, a usługodawca odeśle kilka godzin do wyboru.</p>` : ""}
-
               ${renderServicesPanelHead(p, ctx.draft, { mobile: true })}
               <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
             </div>
@@ -4345,6 +4361,10 @@
     if (opts.forceDay) applyProvCalVisibleDays(1, { render: false, persist: false, closeMonth: false });
     else ensureProvCalVisibleDays();
     if (!opts.keepSelection) window.AppState.provCalSelection = null;
+    // Tryb odpowiedzi na zapytanie — synchronizuj dzień w panelu „+”.
+    if (window.AppState.provCalAddOpen && window.AppState.provCalAddDraft && window.AppState.provCalAddDraft.requestId) {
+      window.AppState.provCalAddDraft.dateISO = dateISO;
+    }
     saveState();
     if (opts.render !== false) renderAll();
   }
@@ -4482,8 +4502,13 @@
         : "";
     const draftSlot = renderProvCalFreeDraftHtml(dateISO, hourH, dayStartMin, dayEndMin);
 
+    const requestDays = replyRequestDaySet();
+    const isRequestDay = !!(requestDays && requestDays.has(dateISO));
+    const dimOther = !!(requestDays && !window.AppState.provCalReplyShowAll && !isRequestDay);
     return `
-      <div class="gcal-week__col${isToday ? " gcal-week__col--today" : ""}" data-date="${escapeHtml(dateISO)}">
+      <div class="gcal-week__col${isToday ? " gcal-week__col--today" : ""}${
+        isRequestDay ? " gcal-week__col--request" : ""
+      }${dimOther ? " gcal-week__col--dim" : ""}" data-date="${escapeHtml(dateISO)}">
         <div class="gcal__track gcal-week__track" data-role="prov-cal-track" data-date="${escapeHtml(dateISO)}">
           ${renderProvCalAvailBars(dateISO, hourH, dayStartMin, dayEndMin)}
           ${nowLine}
@@ -5388,12 +5413,19 @@
     const isToday = dateISO === demoTodayISO();
     const isSel = dateISO === selectedISO;
     const sun = d.getDay() === 0;
+    const requestDays = replyRequestDaySet();
+    const isRequestDay = !!(requestDays && requestDays.has(dateISO));
+    const dimOther = !!(requestDays && !window.AppState.provCalReplyShowAll && !isRequestDay);
     return `
       <button type="button" class="gcal-week__dayhead${isToday ? " gcal-week__dayhead--today" : ""}${
         isSel ? " gcal-week__dayhead--sel" : ""
-      }${sun ? " gcal-week__dayhead--sun" : ""}"
+      }${sun ? " gcal-week__dayhead--sun" : ""}${isRequestDay ? " gcal-week__dayhead--request" : ""}${
+        dimOther ? " gcal-week__dayhead--dim" : ""
+      }"
         data-action="prov-cal-pick-date" data-date="${escapeHtml(dateISO)}"
-        aria-label="${escapeHtml(PROV_CAL_DOW_SHORT[d.getDay()] + " " + d.getDate())}">
+        aria-label="${escapeHtml(PROV_CAL_DOW_SHORT[d.getDay()] + " " + d.getDate())}${
+          isRequestDay ? ", dzień z zapytania" : ""
+        }">
         <span class="gcal-week__dow">${PROV_CAL_DOW_SHORT[d.getDay()]}</span>
         <span class="gcal-week__num">${d.getDate()}</span>
       </button>`;
@@ -5420,18 +5452,21 @@
     for (let i = 0; i < startPad; i++) {
       cells += `<span class="gcal-month__day gcal-month__day--pad" aria-hidden="true"></span>`;
     }
+    const requestDays = replyRequestDaySet();
     for (let day = 1; day <= daysInMonth; day++) {
       const dateISO = year + "-" + pad(month) + "-" + pad(day);
       const selected = dateISO === selectedISO;
       const isToday = dateISO === today;
       const hasVisit = visitDays.has(dateISO);
       const red = isSunday(dateISO) || isRedCalendarDay(dateISO);
+      const isRequestDay = !!(requestDays && requestDays.has(dateISO));
+      const dimOther = !!(requestDays && !window.AppState.provCalReplyShowAll && !isRequestDay);
       cells += `
         <button type="button"
-          class="gcal-month__day${selected ? " gcal-month__day--on" : ""}${isToday ? " gcal-month__day--today" : ""}${hasVisit ? " gcal-month__day--busy" : ""}${red ? " gcal-month__day--red" : ""}"
+          class="gcal-month__day${selected ? " gcal-month__day--on" : ""}${isToday ? " gcal-month__day--today" : ""}${hasVisit ? " gcal-month__day--busy" : ""}${red ? " gcal-month__day--red" : ""}${isRequestDay ? " gcal-month__day--request" : ""}${dimOther ? " gcal-month__day--dim" : ""}"
           data-action="prov-cal-pick-date" data-date="${escapeHtml(dateISO)}"
           aria-pressed="${selected ? "true" : "false"}"
-          aria-label="${day}${hasVisit ? ", wizyty" : ""}">
+          aria-label="${day}${hasVisit ? ", wizyty" : ""}${isRequestDay ? ", zapytanie" : ""}">
           <span class="gcal-month__day-num">${day}</span>
           ${hasVisit ? `<span class="gcal-month__day-dot" aria-hidden="true"></span>` : ""}
         </button>`;
@@ -5683,6 +5718,7 @@
   function defaultProvCalAddDraft() {
     return {
       bookingId: null,
+      requestId: null,
       clientName: "",
       clientPhone: "",
       clientEmail: "",
@@ -5690,6 +5726,8 @@
       serviceIds: [PROV_CAL_ADD_DEFAULT_DURATION_ID],
       dateISO: ensureProvCalDate(),
       slotId: null,
+      /** Robocza lista propozycji w trybie odpowiedzi na zapytanie. */
+      proposals: [],
       servicePickOpen: false,
       clientPickOpen: false,
       /** Rozwinięte pola: telefon / e-mail / adres. */
@@ -5709,6 +5747,8 @@
       if (!Array.isArray(cur.serviceIds)) {
         cur.serviceIds = cur.serviceId ? [cur.serviceId] : [];
       }
+      if (!Array.isArray(cur.proposals)) cur.proposals = [];
+      if (cur.requestId == null) cur.requestId = null;
       if (typeof cur.servicePickOpen !== "boolean") cur.servicePickOpen = false;
       if (typeof cur.clientPickOpen !== "boolean") cur.clientPickOpen = false;
       if (typeof cur.clientDetailsOpen !== "boolean") cur.clientDetailsOpen = false;
@@ -5723,6 +5763,49 @@
     }
     window.AppState.provCalAddDraft = defaultProvCalAddDraft();
     return window.AppState.provCalAddDraft;
+  }
+
+  function replyRequestId() {
+    return (
+      window.AppState.provCalReplyRequestId ||
+      (window.AppState.provCalAddDraft && window.AppState.provCalAddDraft.requestId) ||
+      null
+    );
+  }
+
+  function replyRequest() {
+    const id = replyRequestId();
+    if (!id) return null;
+    return (window.AppState.requests || []).find(function (r) {
+      return r && r.id === id;
+    }) || null;
+  }
+
+  function replyRequestDays() {
+    const req = replyRequest();
+    return req ? normalizeRequestDays(req.days) : [];
+  }
+
+  function replyRequestDaySet() {
+    const days = replyRequestDays();
+    if (!days.length) return null;
+    return new Set(
+      days.map(function (d) {
+        return d.dateISO;
+      })
+    );
+  }
+
+  function replyDayPartForDate(dateISO) {
+    const day = replyRequestDays().find(function (d) {
+      return d.dateISO === dateISO;
+    });
+    return day ? normalizeDayPart(day.part) : "any";
+  }
+
+  function clearProvCalReplyMode() {
+    window.AppState.provCalReplyRequestId = null;
+    window.AppState.provCalReplyShowAll = false;
   }
 
   function provCalAddSlotIdForBooking(booking) {
@@ -6393,6 +6476,7 @@
   }
 
   function openProvCalAdd() {
+    clearProvCalReplyMode();
     const draft = defaultProvCalAddDraft();
     const sel = window.AppState.provCalSelection;
     if (sel && sel.kind === "free" && sel.dateISO) {
@@ -6453,14 +6537,17 @@
   }
 
   function closeProvCalAdd() {
+    const wasReply = !!replyRequestId();
     window.AppState.provCalAddOpen = false;
     window.AppState.provCalAddDraft = null;
+    clearProvCalReplyMode();
     setProvCalAddClientPickOpen(false);
     setProvCalAddServicePickOpen(false);
     const orphanClient = document.getElementById("prov-cal-add-client-menu");
     if (orphanClient) orphanClient.remove();
     const orphanService = document.getElementById("prov-cal-add-service-sheet");
     if (orphanService) orphanService.remove();
+    if (wasReply) window.AppState.screen.provider = "requests";
     saveState();
     renderAll();
   }
@@ -6714,7 +6801,7 @@
     captureProvCalAddClientName();
     const draft = ensureProvCalAddDraft();
     draft.dateISO = dateISO || ensureProvCalDate();
-    draft.slotId = null;
+    if (!draft.requestId) draft.slotId = null;
     window.AppState.provCalDate = draft.dateISO;
     window.AppState.provCalPickerMonth = draft.dateISO.slice(0, 7);
     saveState();
@@ -6724,7 +6811,67 @@
   function setProvCalAddSlot(slotId) {
     captureProvCalAddClientName();
     const draft = ensureProvCalAddDraft();
-    draft.slotId = slotId || null;
+    if (draft.requestId) {
+      toggleReplyProposalSlot(draft, slotId);
+    } else {
+      draft.slotId = slotId || null;
+    }
+    saveState();
+    renderAll();
+  }
+
+  function toggleReplyProposalSlot(draft, slotId) {
+    if (!draft || !slotId) return;
+    const p = myProvider();
+    const req = replyRequest();
+    if (!p || !req) return;
+    if (!Array.isArray(draft.proposals)) draft.proposals = [];
+    const idx = draft.proposals.findIndex(function (c) {
+      return c.id === slotId;
+    });
+    if (idx !== -1) {
+      draft.proposals.splice(idx, 1);
+      return;
+    }
+    const dateISO = draft.dateISO;
+    const totalDur = requestServicesDuration(p, draft.serviceIds || req.serviceIds || []);
+    const slotOpts = slotOptsForServiceIds(p, draft.serviceIds || req.serviceIds || []);
+    const part = replyDayPartForDate(dateISO);
+    const slot = computeSlots(p, dateISO, totalDur, slotOpts)
+      .filter(function (s) {
+        return slotMatchesDayPart(s, part);
+      })
+      .find(function (s) {
+        return s.id === slotId;
+      });
+    if (!slot) return;
+    draft.proposals.push({
+      id: slot.id,
+      dateISO: dateISO,
+      from: slot.from,
+      to: slot.to,
+      locationId: slot.locationId,
+      locationLabel: slot.locationLabel,
+    });
+    draft.proposals.sort(function (a, b) {
+      return (a.dateISO + a.from).localeCompare(b.dateISO + b.from);
+    });
+  }
+
+  function removeReplyProposalSlot(slotId) {
+    const draft = ensureProvCalAddDraft();
+    if (!Array.isArray(draft.proposals)) return;
+    const idx = draft.proposals.findIndex(function (c) {
+      return c.id === slotId;
+    });
+    if (idx === -1) return;
+    draft.proposals.splice(idx, 1);
+    saveState();
+    renderAll();
+  }
+
+  function toggleProvCalReplyShowAll() {
+    window.AppState.provCalReplyShowAll = !window.AppState.provCalReplyShowAll;
     saveState();
     renderAll();
   }
@@ -6905,8 +7052,10 @@
     if (!window.AppState.provCalAddOpen) return "";
     const p = myProvider();
     const draft = ensureProvCalAddDraft();
+    const replyReq = draft.requestId ? replyRequest() : null;
+    const isReply = !!replyReq;
     if (!Array.isArray(draft.serviceIds) || !draft.serviceIds.length) {
-      draft.serviceIds = [PROV_CAL_ADD_DEFAULT_DURATION_ID];
+      draft.serviceIds = isReply ? (replyReq.serviceIds || []).slice() : [PROV_CAL_ADD_DEFAULT_DURATION_ID];
     }
     const selected = provCalAddSelectedServices(p, draft);
     const totals = provCalAddServiceTotals(selected);
@@ -6916,35 +7065,78 @@
       return !isProvCalAddDurationId(id);
     });
     const slotOpts = slotOptsForServiceIds(p, realIds, isEdit ? { exceptBookingId: draft.bookingId } : {});
-    const availDates = ((p && p.availability) || [])
+    const allAvailDates = ((p && p.availability) || [])
       .map(function (d) {
         return d.dateISO;
       })
       .filter(function (dateISO) {
         return computeSlots(p, dateISO, duration, slotOpts).length > 0;
       });
+    const requestDays = isReply ? normalizeRequestDays(replyReq.days) : [];
+    const requestDaySet = new Set(
+      requestDays.map(function (d) {
+        return d.dateISO;
+      })
+    );
+    const showAll = !isReply || !!window.AppState.provCalReplyShowAll;
+    const stripDates = !isReply
+      ? allAvailDates
+      : showAll
+        ? allAvailDates
+        : requestDays
+            .map(function (d) {
+              return d.dateISO;
+            })
+            .filter(function (dateISO) {
+              return allAvailDates.indexOf(dateISO) !== -1 || true;
+            });
     let activeDate = draft.dateISO;
-    if (availDates.indexOf(activeDate) === -1) {
-      activeDate = availDates[0] || ensureProvCalDate();
+    if (stripDates.length && stripDates.indexOf(activeDate) === -1) {
+      activeDate = stripDates[0];
+      draft.dateISO = activeDate;
+    } else if (!activeDate) {
+      activeDate = stripDates[0] || allAvailDates[0] || ensureProvCalDate();
       draft.dateISO = activeDate;
     }
     const hasSvc = selected.length > 0;
-    const slots = hasSvc ? computeSlots(p, activeDate, duration, slotOpts) : [];
-    if (draft.slotId && !slots.some(function (s) { return s.id === draft.slotId; })) {
+    const dayPart = isReply ? replyDayPartForDate(activeDate) : "any";
+    const inRequestDay = !isReply || requestDaySet.has(activeDate);
+    let slots = hasSvc ? computeSlots(p, activeDate, duration, slotOpts) : [];
+    if (isReply && inRequestDay) {
+      slots = slots.filter(function (s) {
+        return slotMatchesDayPart(s, dayPart);
+      });
+    }
+    if (!isReply && draft.slotId && !slots.some(function (s) { return s.id === draft.slotId; })) {
       draft.slotId = null;
     }
+    if (!Array.isArray(draft.proposals)) draft.proposals = [];
+    const chosenIds = new Set(
+      draft.proposals.map(function (c) {
+        return c.id;
+      })
+    );
+    const badgeCounts = {};
+    draft.proposals.forEach(function (c) {
+      if (!c || !c.dateISO) return;
+      badgeCounts[c.dateISO] = (badgeCounts[c.dateISO] || 0) + 1;
+    });
     const dateStrip = hasSvc
-      ? renderDateStripHtml(availDates, activeDate, { action: "prov-cal-add-date" })
+      ? renderDateStripHtml(stripDates.length ? stripDates : allAvailDates, activeDate, {
+          action: "prov-cal-add-date",
+          highlightDates: isReply ? requestDaySet : null,
+          badgeCounts: isReply ? badgeCounts : null,
+        })
       : `<p class="empty-note">Najpierw wybierz usługę.</p>`;
     const timeList = !hasSvc
       ? ""
       : slots.length
         ? slots
             .map(function (s) {
-              const on = draft.slotId === s.id;
+              const on = isReply ? chosenIds.has(s.id) : draft.slotId === s.id;
               return `
           <button type="button" class="time-row time-row--chip${on ? " time-row--selected" : ""}" data-action="prov-cal-add-slot" data-slot="${escapeHtml(s.id)}"
-            aria-label="Wybierz ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${on ? "true" : "false"}">
+            aria-label="${isReply ? (on ? "Usuń" : "Dodaj") : "Wybierz"} ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${on ? "true" : "false"}">
             <span class="time-row__info">
               <span class="time-row__range">${escapeHtml(s.from)}→${escapeHtml(s.to)}</span>
               ${renderTimeSlotPlace(p, s)}
@@ -6952,9 +7144,39 @@
           </button>`;
             })
             .join("")
-        : `<p class="empty-note">Brak wolnych godzin tego dnia.</p>`;
+        : `<p class="empty-note">${
+            isReply && inRequestDay && dayPart !== "any"
+              ? "Brak wolnych godzin w porze wskazanej przez klienta."
+              : "Brak wolnych godzin tego dnia."
+          }</p>`;
 
-    const canSave = hasSvc && !!draft.slotId;
+    const partNote =
+      isReply && inRequestDay
+        ? `<p class="prov-cal-add__part-note" data-part="${escapeHtml(dayPart)}">Klient prosi: <strong>${escapeHtml(
+            DAY_PART_LABEL[dayPart]
+          )}</strong></p>`
+        : isReply && !inRequestDay
+          ? `<p class="prov-cal-add__part-note prov-cal-add__part-note--outside">Dzień poza zapytaniem klienta.</p>`
+          : "";
+
+    const chosenList = isReply
+      ? draft.proposals.length
+        ? `<ul class="proposal-list proposal-list--panel">
+            ${draft.proposals
+              .map(function (c) {
+                return `<li class="proposal-row">
+                  <span class="proposal-row__range">${escapeHtml(proposalRangeLabel(c))}</span>
+                  ${c.locationLabel ? `<span class="proposal-row__place">${escapeHtml(c.locationLabel)}</span>` : ""}
+                  <button type="button" class="proposal-row__remove" data-action="reply-propose-remove" data-slot="${escapeHtml(c.id)}"
+                    aria-label="Usuń propozycję ${escapeHtml(proposalRangeLabel(c))}" title="Usuń">×</button>
+                </li>`;
+              })
+              .join("")}
+          </ul>`
+        : `<p class="empty-note">Zaznacz godziny, które chcesz wysłać klientowi.</p>`
+      : "";
+
+    const canSave = isReply ? draft.proposals.length > 0 : hasSvc && !!draft.slotId;
     const priceText = !hasSvc
       ? "—"
       : totals.onlyDuration
@@ -6978,16 +7200,34 @@
     const hasClientName = !!String(draft.clientName || "").trim();
     const clientPhonePreview = String(draft.clientPhone || "").trim();
 
+    const title = isReply ? "Zaproponuj terminy" : isEdit ? "Edytuj termin" : "Nowy termin";
+    const saveAction = isReply ? "propose-confirm" : "confirm-prov-cal-add";
+    const saveLabel = isReply
+      ? `Wyślij ${draft.proposals.length || ""} ${proposalCountLabel(draft.proposals.length)}`.replace(/\s+/g, " ").trim()
+      : "Zapisz";
+    const saveAttrs = isReply ? ` data-request-id="${escapeHtml(replyReq.id)}"` : "";
+
     return `
-      <div class="prov-cal-add" data-role="prov-cal-add">
+      <div class="prov-cal-add${isReply ? " prov-cal-add--reply" : ""}" data-role="prov-cal-add">
         <button type="button" class="prov-cal-add__backdrop" data-action="close-prov-cal-add" aria-label="Zamknij"></button>
         <div class="prov-cal-add__sheet" role="dialog" aria-modal="true" aria-labelledby="prov-cal-add-title">
           <header class="prov-cal-add__head">
             <button type="button" class="prov-cal-add__close" data-action="close-prov-cal-add" aria-label="Zamknij">×</button>
-            <h3 class="prov-cal-add__title" id="prov-cal-add-title">${isEdit ? "Edytuj termin" : "Nowy termin"}</h3>
-            <button type="button" class="prov-cal-add__save" data-action="confirm-prov-cal-add"${canSave ? "" : " disabled"}>Zapisz</button>
+            <h3 class="prov-cal-add__title" id="prov-cal-add-title">${escapeHtml(title)}</h3>
+            <button type="button" class="prov-cal-add__save" data-action="${saveAction}"${saveAttrs}${canSave ? "" : " disabled"}>${escapeHtml(saveLabel)}</button>
           </header>
           <div class="prov-cal-add__body">
+            ${
+              isReply
+                ? `<button type="button" class="prov-cal-add__show-all${showAll ? " is-on" : ""}" data-action="toggle-prov-cal-reply-show-all" aria-pressed="${
+                    showAll ? "true" : "false"
+                  }">
+                    <span class="avail-edit__switch" aria-hidden="true"></span>
+                    <span>Pokaż cały kalendarz</span>
+                  </button>
+                  ${renderRequestDayBadges(requestDays)}`
+                : ""
+            }
             <div class="prov-cal-add__field prov-cal-add__client-pick${clientPickOpen ? " is-open" : ""}${clientDetailsOpen ? " is-details-open" : ""}${clientPhonePreview ? " has-phone" : ""}" data-role="prov-cal-add-client-pick" aria-label="Klient">
               <span class="prov-cal-add__client-row">
                 <span class="prov-cal-add__client-avatar" aria-hidden="true">
@@ -7062,21 +7302,33 @@
 
             <div class="booking__schedule prov-cal-add__schedule">
               <div class="booking__label-row">
-                <h3 class="booking__label booking__label--caps">Wybierz datę</h3>
-                <span class="booking__month" data-role="prov-cal-add-month">${escapeHtml(monthLabelFromISO(activeDate || availDates[0]))}</span>
+                <h3 class="booking__label booking__label--caps">${isReply ? "Dni z zapytania" : "Wybierz datę"}</h3>
+                <span class="booking__month" data-role="prov-cal-add-month">${escapeHtml(monthLabelFromISO(activeDate || stripDates[0] || allAvailDates[0]))}</span>
               </div>
               <div class="date-strip date-strip--booking" data-role="prov-cal-add-date-strip">${dateStrip}</div>
+              ${partNote}
 
-              <h3 class="booking__label booking__label--caps"${hasSvc && activeDate ? "" : " hidden"}>Wolne terminy</h3>
+              <h3 class="booking__label booking__label--caps"${hasSvc && activeDate ? "" : " hidden"}>${
+                isReply ? "Godziny do zaproponowania" : "Wolne terminy"
+              }</h3>
               <div class="time-list time-list--horizontal"${hasSvc && activeDate ? "" : " hidden"}>${timeList}</div>
+              ${
+                isReply
+                  ? `<h3 class="booking__label booking__label--caps">Do wysłania (${draft.proposals.length})</h3>${chosenList}`
+                  : ""
+              }
             </div>
           </div>
           <div class="prov-cal-add__foot booking-confirm-bar">
             <div class="bottom-nav__summary${hasSvc ? "" : " bottom-nav__summary--empty"}">
-              <span class="bottom-nav__summary-label">Suma:</span>
+              <span class="bottom-nav__summary-label">${isReply ? "Wybrane:" : "Suma:"}</span>
               <div class="bottom-nav__summary-meta">
-                <span class="bottom-nav__summary-dur">${escapeHtml(durText)}</span>
-                <span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>
+                <span class="bottom-nav__summary-dur">${
+                  isReply
+                    ? escapeHtml(String(draft.proposals.length) + " " + proposalCountLabel(draft.proposals.length))
+                    : escapeHtml(durText)
+                }</span>
+                ${isReply ? "" : `<span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>`}
               </div>
             </div>
           </div>
@@ -7093,20 +7345,26 @@
     if (ensureProvCalHourH() < dynMinHourH) window.AppState.provCalHourH = clampProvCalHourH(dynMinHourH);
     const monthOpen = !!window.AppState.provCalMonthOpen;
     const addOpen = !!window.AppState.provCalAddOpen;
+    const replyReq = replyRequest();
+    const isReply = !!(addOpen && replyReq);
     const selectedD = new Date(selected + "T12:00:00");
     const monthLabel = isNaN(selectedD.getTime())
       ? "Miesiąc"
       : MONTHS_NOM[selectedD.getMonth()] || "Miesiąc";
     return `
-      <div class="app-screen app-screen--provider app-screen--prov-cal${addOpen ? " app-screen--prov-cal-add-open" : ""}">
+      <div class="app-screen app-screen--provider app-screen--prov-cal${addOpen ? " app-screen--prov-cal-add-open" : ""}${
+        isReply ? " app-screen--prov-cal-reply" : ""
+      }">
         <div class="prov-cal-top">
           <header class="screen-head screen-head--prov-cal">
             <div class="prov-cal-head">
               <div class="prov-cal-head__title-row">
-                <button type="button" class="screen-head__back" data-action="provider-tab" data-tab="dashboard" aria-label="Wróć">
+                <button type="button" class="screen-head__back" data-action="${
+                  isReply ? "close-prov-cal-add" : "provider-tab"
+                }"${isReply ? "" : ' data-tab="dashboard"'} aria-label="Wróć">
                   <span class="screen-head__back-icon" aria-hidden="true"></span>
                 </button>
-                <h2 class="screen-head__title">Kalendarz</h2>
+                <h2 class="screen-head__title">${isReply ? "Zaproponuj terminy" : "Kalendarz"}</h2>
               </div>
               <div class="prov-cal-head__actions">
                 <div class="prov-cal__tools" role="toolbar" aria-label="Narzędzia kalendarza">
@@ -11009,11 +11267,6 @@
       side: "client",
     });
 
-    pushNotification(
-      "provider",
-      `Nowe zapytanie o termin — ${clientName}: ${req.serviceNames.join(", ")} (${requestDaysSummary(days)}).`
-    );
-
     window.AppState.draft = null;
     window.AppState.searchOpenSlug = null;
     window.AppState.screen.client = "myCalendar";
@@ -11022,20 +11275,48 @@
     showToast("Zapytanie wysłane — czekaj na propozycje terminów.");
   }
 
-  // Usługodawca proponuje kilka terminów w dniach wskazanych przez klienta
+  // Usługodawca proponuje terminy w kalendarzu (panel jak po „+”), w dniach z zapytania
   function proposeOpen(requestId) {
     const req = (window.AppState.requests || []).find((r) => r.id === requestId);
-    if (req) {
-      // Edycja wysłanych propozycji zaczyna się od tego, co klient już widzi.
-      req._proposals = (Array.isArray(req.proposals) ? req.proposals : []).map(function (c) {
-        return Object.assign({}, c);
-      });
-      req._proposeDate = null;
-    }
+    if (!req) return;
+
+    const seed = (Array.isArray(req.proposals) && req.proposals.length
+      ? req.proposals
+      : Array.isArray(req._proposals)
+        ? req._proposals
+        : []
+    ).map(function (c) {
+      return Object.assign({}, c);
+    });
+    req._proposals = seed.map(function (c) {
+      return Object.assign({}, c);
+    });
+
+    const days = normalizeRequestDays(req.days);
+    const firstDay = (days[0] && days[0].dateISO) || ensureProvCalDate();
+    const draft = defaultProvCalAddDraft();
+    draft.requestId = req.id;
+    draft.clientName = String(req.clientName || "Klient");
+    draft.serviceIds = (req.serviceIds || []).slice();
+    draft.dateISO = firstDay;
+    draft.slotId = null;
+    draft.proposals = seed;
+    draft.clientDetailsOpen = false;
+
+    window.AppState.provCalReplyRequestId = req.id;
+    window.AppState.provCalReplyShowAll = false;
+    window.AppState.provCalAddOpen = true;
+    window.AppState.provCalAddDraft = draft;
+    window.AppState.provCalDate = firstDay;
+    window.AppState.provCalPickerMonth = String(firstDay).slice(0, 7);
+    window.AppState.provCalSelection = null;
     window.AppState.params.provider = { requestId: requestId };
-    window.AppState.screen.provider = "propose";
+    window.AppState.screen.provider = "calendar";
+    setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
+    closeProvCalViewCloud();
     saveState();
     renderAll();
+    hapticTap(16);
   }
 
   function proposeDate(requestId, dateISO) {
@@ -11098,7 +11379,11 @@
     const req = (window.AppState.requests || []).find((r) => r.id === requestId);
     const p = myProvider();
     if (!req || !p) return;
-    const chosen = requestProposalDraft(req);
+
+    const draft = window.AppState.provCalAddDraft;
+    const fromPanel =
+      draft && draft.requestId === req.id && Array.isArray(draft.proposals) ? draft.proposals : null;
+    const chosen = fromPanel && fromPanel.length ? fromPanel : requestProposalDraft(req);
     if (!chosen.length) return;
 
     req.proposals = chosen.map(function (c) {
@@ -11125,6 +11410,9 @@
       `${req.providerName}: ${req.proposals.length} ${proposalCountLabel(req.proposals.length)} do wyboru.`
     );
 
+    window.AppState.provCalAddOpen = false;
+    window.AppState.provCalAddDraft = null;
+    clearProvCalReplyMode();
     window.AppState.screen.provider = "requests";
     window.AppState.screen.client = "myCalendar";
     saveState();
@@ -12104,6 +12392,14 @@
       case "confirm-prov-cal-add":
         event.preventDefault();
         confirmProvCalAdd();
+        break;
+      case "toggle-prov-cal-reply-show-all":
+        event.preventDefault();
+        toggleProvCalReplyShowAll();
+        break;
+      case "reply-propose-remove":
+        event.preventDefault();
+        removeReplyProposalSlot(d.slot);
         break;
       case "propose-open": proposeOpen(d.requestId); break;
       case "propose-date": proposeDate(d.requestId, d.date); break;
