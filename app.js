@@ -2796,7 +2796,7 @@
     }).join("");
 
     return `
-      <div class="search-filters${open ? " search-filters--open" : ""}" id="search-filters-panel" data-role="search-filters"
+      <div class="search-filters${open ? " search-filters--open" : ""}" data-role="search-filters"
         aria-hidden="${open ? "false" : "true"}"${open ? "" : " inert"}>
         <div class="search-filters__inner">
           ${subRow}
@@ -2814,19 +2814,41 @@
       </div>`;
   }
 
-  function applySearchFiltersOpen(open) {
-    const panel = document.querySelector('[data-role="search-filters"]');
-    const btn = document.querySelector('[data-action="toggle-search-filters"]');
-    if (!panel || !btn) {
+  function applySearchFiltersOpen(open, trigger) {
+    const clickedWrap = trigger && trigger.closest(".filters-wrap");
+    const wraps = clickedWrap
+      ? [clickedWrap].concat(
+          Array.from(document.querySelectorAll(".filters-wrap")).filter(function (wrap) {
+            return wrap !== clickedWrap;
+          })
+        )
+      : Array.from(document.querySelectorAll(".filters-wrap"));
+    if (!wraps.length) {
       renderAll();
       return;
     }
-    panel.classList.toggle("search-filters--open", !!open);
-    panel.setAttribute("aria-hidden", open ? "false" : "true");
-    if (open) panel.removeAttribute("inert");
-    else panel.setAttribute("inert", "");
-    btn.classList.toggle("filter-toggle--open", !!open);
-    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    wraps.forEach(function (wrap) {
+      const panel = wrap.querySelector('[data-role="search-filters"]');
+      const btn = wrap.querySelector('[data-action="toggle-search-filters"]');
+      if (!panel || !btn) return;
+      panel.classList.toggle("search-filters--open", !!open);
+      panel.setAttribute("aria-hidden", open ? "false" : "true");
+      if (open) panel.removeAttribute("inert");
+      else panel.setAttribute("inert", "");
+      btn.classList.toggle("filter-toggle--open", !!open);
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+  }
+
+  function syncSearchFilterControlIds() {
+    document.querySelectorAll(".filters-wrap").forEach(function (wrap, index) {
+      const panel = wrap.querySelector('[data-role="search-filters"]');
+      const btn = wrap.querySelector('[data-action="toggle-search-filters"]');
+      if (!panel || !btn) return;
+      const panelId = "search-filters-panel-" + (index + 1);
+      panel.id = panelId;
+      btn.setAttribute("aria-controls", panelId);
+    });
   }
 
   function renderSearch() {
@@ -2866,7 +2888,7 @@
               </div>
               <button type="button" class="filter-toggle${filtersOpen ? " filter-toggle--open" : ""}${filtersOn ? " filter-toggle--active" : ""}"
                 data-action="toggle-search-filters" aria-label="Filtry" title="Filtry"
-                aria-expanded="${filtersOpen ? "true" : "false"}" aria-controls="search-filters-panel">
+                aria-expanded="${filtersOpen ? "true" : "false"}">
                 <span class="filter-toggle__icon" aria-hidden="true"></span>
               </button>
             </div>
@@ -8943,9 +8965,9 @@
                       <circle cx="12" cy="10" r="3" />
                     </svg>
                   </span>
+                  <span class="avail-edit__loc-dot ${locTone}${hasLoc ? "" : " is-hidden"}" data-role="avail-loc-tone-dot"${hasLoc ? "" : " hidden"}></span>
                 </span>
                 <span class="avail-edit__loc-content">
-                  <span class="avail-edit__loc-dot ${locTone}${hasLoc ? "" : " is-hidden"}" data-role="avail-loc-tone-dot"${hasLoc ? "" : " hidden"}></span>
                   <span class="avail-loc-pick__label${hasLoc ? "" : " avail-loc-pick__label--placeholder"}" data-role="avail-loc-label">${escapeHtml(locLabel)}</span>
                 </span>
                 <span class="avail-loc-pick__chevron" aria-hidden="true"></span>
@@ -9853,6 +9875,7 @@
     const prevBottomNavTab = captureBottomNavTab();
     INSTANCES.forEach(render);
     renderFullscreen();
+    syncSearchFilterControlIds();
     syncAppMenus();
     // Po layoutcie — inaczej przy flex itemach szerokość bywa jeszcze 0.
     requestAnimationFrame(function () {
@@ -9878,7 +9901,17 @@
   }
 
   // Poziome przeciąganie myszką: filtry + karuzela wariantów (przetrwa re-render).
-  const filterDrag = { active: false, el: null, startX: 0, startScroll: 0, moved: false };
+  // Klik blokujemy tylko przez krótką chwilę po REALNYM przeciągnięciu (znacznik czasu),
+  // nigdy trwałym flagą — inaczej flaga potrafi się „zaciąć” i klik w chip przestaje działać.
+  const filterDrag = {
+    active: false,
+    el: null,
+    startX: 0,
+    startScroll: 0,
+    moved: false,
+    pointerId: null,
+    dragEndAt: 0,
+  };
 
   function dragScrollTarget(event) {
     return event.target.closest("[data-filter-scroll], .service-variant-carousel__track");
@@ -9900,12 +9933,7 @@
         filterDrag.startX = event.clientX;
         filterDrag.startScroll = el.scrollLeft;
         filterDrag.moved = false;
-        el.classList.add("filter-scroll--dragging");
-        try {
-          el.setPointerCapture(event.pointerId);
-        } catch (err) {
-          /* ignore */
-        }
+        filterDrag.pointerId = event.pointerId;
       },
       true
     );
@@ -9915,8 +9943,16 @@
       function (event) {
         if (!filterDrag.active || !filterDrag.el) return;
         const dx = event.clientX - filterDrag.startX;
-        if (Math.abs(dx) > 3) filterDrag.moved = true;
-        if (!filterDrag.moved) return;
+        if (!filterDrag.moved) {
+          if (Math.abs(dx) <= 3) return;
+          filterDrag.moved = true;
+          filterDrag.el.classList.add("filter-scroll--dragging");
+          try {
+            filterDrag.el.setPointerCapture(filterDrag.pointerId);
+          } catch (err) {
+            /* ignore */
+          }
+        }
         event.preventDefault();
         filterDrag.el.scrollLeft = filterDrag.startScroll - dx;
       },
@@ -9925,9 +9961,20 @@
 
     function endFilterDrag() {
       if (!filterDrag.active) return;
-      if (filterDrag.el) filterDrag.el.classList.remove("filter-scroll--dragging");
+      if (filterDrag.el) {
+        filterDrag.el.classList.remove("filter-scroll--dragging");
+        try {
+          filterDrag.el.releasePointerCapture(filterDrag.pointerId);
+        } catch (err) {
+          /* ignore */
+        }
+      }
+      // Zapamiętaj tylko chwilę zakończenia realnego drag — do jednorazowego zdławienia kliku.
+      if (filterDrag.moved) filterDrag.dragEndAt = Date.now();
       filterDrag.active = false;
       filterDrag.el = null;
+      filterDrag.pointerId = null;
+      filterDrag.moved = false;
     }
 
     document.addEventListener("pointerup", endFilterDrag, true);
@@ -9936,11 +9983,10 @@
     document.addEventListener(
       "click",
       function (event) {
-        if (!filterDrag.moved) return;
-        const suppress = !!event.target.closest("[data-filter-scroll], .service-variant-carousel__track");
-        filterDrag.moved = false;
-        // Tylko klik na przeciąganym torze — nie blokuj przycisku Filtry / innych akcji.
-        if (!suppress) return;
+        // Klik tuż po przeciągnięciu (≤250 ms) na tym samym torze — pomiń, to nie był wybór.
+        if (!filterDrag.dragEndAt || Date.now() - filterDrag.dragEndAt > 250) return;
+        filterDrag.dragEndAt = 0;
+        if (!event.target.closest("[data-filter-scroll], .service-variant-carousel__track")) return;
         event.preventDefault();
         event.stopPropagation();
       },
@@ -11567,7 +11613,7 @@
       case "toggle-search-filters":
         window.AppState.searchFiltersOpen = !window.AppState.searchFiltersOpen;
         saveState();
-        applySearchFiltersOpen(window.AppState.searchFiltersOpen);
+        applySearchFiltersOpen(window.AppState.searchFiltersOpen, btn);
         break;
       case "toggle-filter-date":
         {
