@@ -3120,19 +3120,41 @@ body.cancel-visit-dialog-open {
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.75' stroke-linecap='round'%3E%3Cline x1='4' y1='6' x2='20' y2='6'/%3E%3Ccircle cx='8' cy='6' r='1.75' fill='black'/%3E%3Cline x1='4' y1='12' x2='20' y2='12'/%3E%3Ccircle cx='14' cy='12' r='1.75' fill='black'/%3E%3Cline x1='4' y1='18' x2='20' y2='18'/%3E%3Ccircle cx='10' cy='18' r='1.75' fill='black'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
-/* Pokaz/ukrycie natychmiast po kliknięciu — bez animacji przejścia. */
+/* Rozwiń / zwiń — 300 ms */
 .search-filters {
-  display: none;
+  display: grid;
+  grid-template-rows: 0fr;
   margin: 0;
   padding: 0;
   border-top: 1px solid transparent;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  visibility: hidden;
+  transition:
+    grid-template-rows 300ms ease,
+    opacity 300ms ease,
+    margin 300ms ease,
+    padding 300ms ease,
+    border-color 300ms ease,
+    visibility 0s linear 300ms;
 }
 
 .search-filters--open {
-  display: block;
+  grid-template-rows: 1fr;
   margin: 0 0 0.65rem;
   padding: 0.55rem 0 0.15rem;
   border-top-color: var(--border);
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+  transition:
+    grid-template-rows 300ms ease,
+    opacity 300ms ease,
+    margin 300ms ease,
+    padding 300ms ease,
+    border-color 300ms ease,
+    visibility 0s linear 0s;
 }
 
 .search-filters__inner {
