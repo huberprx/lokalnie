@@ -5146,19 +5146,33 @@ body.service-photo-preview-open {
 .service-edit__mode-list {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
 }
 
 .service-edit__mode-toggle.settings-contact__toggle {
   align-items: center;
-  background: var(--surface);
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.service-edit__mode-toggle.settings-contact__toggle + .service-edit__mode-toggle {
+  border-top: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
 }
 
 .service-edit__locs {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0;
   margin-top: 0.15rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
 }
 
 .service-edit__loc-check {
@@ -5170,13 +5184,17 @@ body.service-photo-preview-open {
   width: 100%;
   margin: 0;
   padding: 0.55rem 0.65rem;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
+  border: none;
+  border-radius: 0;
+  background: transparent;
   color: var(--text);
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.service-edit__loc-check + .service-edit__loc-check {
+  border-top: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
 }
 
 .service-edit__loc-check:disabled {
@@ -5184,8 +5202,7 @@ body.service-photo-preview-open {
 }
 
 .service-edit__loc-check.is-on {
-  border-color: color-mix(in srgb, var(--accent-provider) 45%, var(--border));
-  background: var(--surface);
+  background: transparent;
 }
 
 .service-edit__loc-dot {
@@ -7658,7 +7675,8 @@ body.client-sheet-open {
 .prov-cal-add__service-summary.visit-card__services {
   width: 100%;
   margin: 0;
-  padding-left: 1rem;
+  padding-left: 0;
+  list-style: none;
   gap: 0.15rem;
   font-size: 0.95rem;
   font-weight: 600;
@@ -7667,8 +7685,8 @@ body.client-sheet-open {
   color: var(--text);
 }
 
-.prov-cal-add__service-summary.visit-card__services li::marker {
-  color: var(--text);
+.prov-cal-add__service-summary.visit-card__services li {
+  list-style: none;
 }
 
 .prov-cal-add__service-pick .avail-loc-pick__menu {

@@ -6199,6 +6199,12 @@
     renderAll();
   }
 
+  function provCalAddServiceDisplayName(s) {
+    if (!s) return "";
+    if (s.isDuration) return PROV_CAL_ADD_INNE_NAME + " · " + formatDuration(s.durationMin);
+    return s.name || "";
+  }
+
   function renderProvCalAddServiceSummaryHtml(selected) {
     const list = selected || [];
     if (!list.length) {
@@ -6207,63 +6213,42 @@
     return `<ul class="prov-cal-add__service-summary visit-card__services" aria-label="Wybrane usługi">
       ${list
         .map(function (s) {
-          return `<li>${escapeHtml(s.name)}</li>`;
+          return `<li>${escapeHtml(provCalAddServiceDisplayName(s))}</li>`;
         })
         .join("")}
     </ul>`;
   }
 
-  /** Pierwsza pozycja w menu: usługa „Inne” + karuzela czasów. */
-  function renderProvCalAddInneDurationBlock(draft) {
-    const ids = (draft && draft.serviceIds) || [];
-    const chips = PROV_CAL_ADD_DURATION_OPTS.map(function (s) {
-      const durLabel = formatDuration(s.durationMin);
-      const on = ids.indexOf(s.id) !== -1;
-      const selectLabel = (on ? "Odznacz" : "Zaznacz") + " " + durLabel;
-      return `<button type="button" class="prov-cal-add__dur-chip${on ? " is-selected" : ""}" role="option"
-        data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}"
-        aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
-        <span class="service-row__check-visual${on ? " is-on" : ""}" aria-hidden="true"></span>
-        <span class="prov-cal-add__dur-chip-label">${escapeHtml(durLabel)}</span>
-      </button>`;
-    }).join("");
-    return `
-      <div class="prov-cal-add__inne" role="group" aria-label="${escapeHtml(PROV_CAL_ADD_INNE_NAME)}">
-        <div class="prov-cal-add__inne-head">
-          <span class="prov-cal-add__inne-name">${escapeHtml(PROV_CAL_ADD_INNE_NAME)}</span>
-        </div>
-        <div class="prov-cal-add__dur-carousel" data-role="prov-cal-add-dur-carousel" role="listbox" aria-label="Czas trwania">
-          ${chips}
-        </div>
-      </div>`;
+  function renderProvCalAddServiceOptHtml(s, draft) {
+    const on = ((draft && draft.serviceIds) || []).indexOf(s.id) !== -1;
+    const meta = s.isDuration
+      ? formatDuration(s.durationMin)
+      : [formatDuration(s.durationMin), formatPrice(s.price)].filter(Boolean).join(" · ");
+    const selectLabel = (on ? "Odznacz" : "Zaznacz") + " " + provCalAddServiceDisplayName(s);
+    return `<button type="button" class="avail-loc-pick__opt prov-cal-add__service-opt${on ? " is-selected" : ""}" role="option"
+      data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}"
+      aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
+      <span class="prov-cal-add__service-opt-main">
+        <span class="avail-loc-pick__opt-label">${escapeHtml(s.name)}</span>
+        ${meta ? `<span class="prov-cal-add__service-opt-meta">${escapeHtml(meta)}</span>` : ""}
+      </span>
+      <span class="service-row__check-visual${on ? " is-on" : ""}" aria-hidden="true"></span>
+    </button>`;
   }
 
   function renderProvCalAddServiceSheetListHtml(p, draft) {
     const catalogServices = (p && p.services) || [];
-    return (
-      renderProvCalAddInneDurationBlock(draft) +
+    const rows =
+      catalogServices.map(function (s) {
+        return renderProvCalAddServiceOptHtml(s, draft);
+      }).join("") +
       (catalogServices.length
-        ? `<div class="prov-cal-add__service-sep" role="separator" aria-hidden="true"></div>
-          <div class="service-sheet__list" data-role="prov-cal-add-service-menu" role="listbox" aria-multiselectable="true">` +
-          catalogServices
-            .map(function (s) {
-              const on = (draft.serviceIds || []).indexOf(s.id) !== -1;
-              const meta = [formatDuration(s.durationMin), formatPrice(s.price)].filter(Boolean).join(" · ");
-              const selectLabel = (on ? "Odznacz" : "Zaznacz") + " " + s.name;
-              return `<button type="button" class="avail-loc-pick__opt prov-cal-add__service-opt${on ? " is-selected" : ""}" role="option"
-                data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}"
-                aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
-                <span class="prov-cal-add__service-opt-main">
-                  <span class="avail-loc-pick__opt-label">${escapeHtml(s.name)}</span>
-                  ${meta ? `<span class="prov-cal-add__service-opt-meta">${escapeHtml(meta)}</span>` : ""}
-                </span>
-                <span class="service-row__check-visual${on ? " is-on" : ""}" aria-hidden="true"></span>
-              </button>`;
-            })
-            .join("") +
-          `</div>`
-        : "")
-    );
+        ? `<div class="prov-cal-add__service-sep" role="separator" aria-hidden="true"></div>`
+        : "") +
+      PROV_CAL_ADD_DURATION_OPTS.map(function (s) {
+        return renderProvCalAddServiceOptHtml(s, draft);
+      }).join("");
+    return `<div class="service-sheet__list" data-role="prov-cal-add-service-menu" role="listbox" aria-multiselectable="true">${rows}</div>`;
   }
 
   function renderProvCalAddServiceSheetHtml(p, draft) {
@@ -6388,7 +6373,7 @@
       pickBtn.classList.toggle("prov-cal-add__service-btn--filled", hasSvc);
       const names = selected
         .map(function (s) {
-          return s.name;
+          return provCalAddServiceDisplayName(s);
         })
         .join(", ");
       pickBtn.setAttribute("aria-label", hasSvc ? "Wybrane usługi: " + names : "Wybierz usługi");
@@ -6718,7 +6703,7 @@
       : "Wybrane usługi: " +
         selected
           .map(function (s) {
-            return s.name;
+            return provCalAddServiceDisplayName(s);
           })
           .join(", ");
     const servicePickOpen = !!draft.servicePickOpen;
@@ -7263,7 +7248,6 @@
     return `
       <div class="service-edit__field" data-field="locations">
         <span class="service-edit__label">Miejsce wykonywania</span>
-        <p class="service-edit__hint">Zaznacz wszystkie miejsca albo tylko te, w których ta usługa jest dostępna.</p>
         <div class="service-edit__locs" data-role="service-location-list" role="group" aria-label="Miejsce wykonywania usługi">
           ${checks}
         </div>
@@ -7293,8 +7277,7 @@
           <span class="service-edit__label">Opis</span>
         </label>
         <div class="service-edit__field" data-field="bookingMode">
-          <span class="service-edit__label">Rezerwacja oferty</span>
-          <p class="service-edit__hint">Widoczne u klienta jako osobna grupa w ofercie.</p>
+          <span class="service-edit__label">Typ rezerwacji oferty</span>
           <div class="service-edit__mode-list" data-role="service-booking-mode-panel">
             <div class="settings-contact__toggle service-edit__mode-toggle">
               <div class="settings__toggle-text">
@@ -8847,8 +8830,7 @@
     }
     const toneDot = pick && pick.querySelector('[data-role="avail-loc-tone-dot"]');
     if (toneDot) {
-      toneDot.className =
-        "avail-edit__loc-dot avail-edit__loc-dot--lead " + tone + (locationId ? "" : " is-hidden");
+      toneDot.className = "avail-edit__loc-dot " + tone + (locationId ? "" : " is-hidden");
       toneDot.hidden = !locationId;
     }
     const times = row.querySelector('[data-role="avail-edit-times"]');
@@ -8955,9 +8937,15 @@
               <button type="button" class="avail-loc-pick__btn" data-action="toggle-avail-loc"
                 aria-haspopup="listbox" aria-expanded="false" aria-label="Wybierz lokalizację">
                 <span class="avail-edit__loc-lead" aria-hidden="true">
-                  <span class="avail-edit__loc-dot avail-edit__loc-dot--lead ${locTone}${hasLoc ? "" : " is-hidden"}" data-role="avail-loc-tone-dot"${hasLoc ? "" : " hidden"}></span>
+                  <span class="avail-edit__loc-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+                      <circle cx="12" cy="10" r="3" />
+                    </svg>
+                  </span>
                 </span>
                 <span class="avail-edit__loc-content">
+                  <span class="avail-edit__loc-dot ${locTone}${hasLoc ? "" : " is-hidden"}" data-role="avail-loc-tone-dot"${hasLoc ? "" : " hidden"}></span>
                   <span class="avail-loc-pick__label${hasLoc ? "" : " avail-loc-pick__label--placeholder"}" data-role="avail-loc-label">${escapeHtml(locLabel)}</span>
                 </span>
                 <span class="avail-loc-pick__chevron" aria-hidden="true"></span>
