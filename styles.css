@@ -6960,10 +6960,6 @@ body.service-photo-preview-open {
   --accent-client-soft: var(--accent-provider-soft);
 }
 
-.prov-cal-add--reply .prov-cal-add__sheet {
-  max-height: min(86%, 34rem);
-}
-
 /* Wjazd tylko przy pierwszym otwarciu — nie przy zmianie dnia / slotu. */
 .prov-cal-add--enter .prov-cal-add__sheet {
   animation: prov-cal-add-up 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -7336,7 +7332,7 @@ body.service-photo-preview-open {
 .prov-cal-add--minimized .prov-cal-add__show-all,
 .prov-cal-add--minimized .booking__label-row,
 .prov-cal-add--minimized .date-strip,
-.prov-cal-add--minimized .prov-cal-add__part-chip,
+.prov-cal-add--minimized .prov-cal-add__part-note,
 .prov-cal-add--minimized .prov-cal-add__schedule > .booking__label,
 .prov-cal-add--minimized .prov-cal-add__schedule > .empty-note,
 .prov-cal-add--minimized .proposal-list--panel {
@@ -7368,11 +7364,6 @@ body.service-photo-preview-open {
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
-}
-
-.prov-cal-add--reply .prov-cal-add__body {
-  gap: 0.55rem;
-  padding-top: 0.05rem;
 }
 
 .prov-cal-add__field {
@@ -8601,10 +8592,6 @@ body.client-sheet-open {
   min-width: 0;
 }
 
-.prov-cal-add--reply .prov-cal-add__schedule {
-  gap: 0.35rem;
-}
-
 .prov-cal-add .time-list--horizontal {
   display: flex;
   flex-direction: row;
@@ -8615,10 +8602,6 @@ body.client-sheet-open {
   -webkit-overflow-scrolling: touch;
   padding: 0.1rem 0 0.25rem;
   scrollbar-width: none;
-}
-
-.prov-cal-add--reply .time-list--horizontal {
-  padding: 0 0 0.15rem;
 }
 
 .prov-cal-add .time-list--horizontal::-webkit-scrollbar {
@@ -14485,40 +14468,23 @@ body.prov-cal-resizing * {
   transform: translateX(0.9rem);
 }
 
-.prov-cal-add__times-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  min-height: 1.4rem;
-}
-
-.prov-cal-add__times-head .booking__label {
-  margin: 0;
-}
-
-.prov-cal-add__part-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.2rem;
-  margin: 0;
-  padding: 0.2rem 0.5rem;
-  border-radius: 999px;
+.prov-cal-add__part-note {
+  margin: 0.45rem 0 0.15rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 10px;
   background: var(--warning-soft);
   border: 1px solid rgba(245, 181, 68, 0.3);
   color: var(--warning);
-  font-size: 0.7rem;
-  line-height: 1.25;
-  white-space: nowrap;
-  flex: 0 0 auto;
+  font-size: 0.76rem;
+  line-height: 1.4;
 }
 
-.prov-cal-add__part-chip strong {
+.prov-cal-add__part-note strong {
   font-weight: 700;
   color: inherit;
 }
 
-.prov-cal-add__part-chip--outside {
+.prov-cal-add__part-note--outside {
   background: rgba(139, 146, 168, 0.12);
   border-color: rgba(139, 146, 168, 0.28);
   color: var(--text-muted);

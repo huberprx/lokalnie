@@ -4223,7 +4223,6 @@
       { tab: "calendar", label: "Kalendarz", icon: "calendar" },
       { tab: "services", label: "Usługi", icon: "services" },
       { tab: "availability", label: "Dostępność", icon: "slots" },
-      { tab: "settings", label: "Ustawienia", icon: "settings" },
     ];
     return `
       <nav class="bottom-nav bottom-nav--provider bottom-nav--with-back" aria-label="Menu usługodawcy">
@@ -7903,11 +7902,11 @@
 
     const partNote =
       isReply && inRequestDay
-        ? `<span class="prov-cal-add__part-chip" data-part="${escapeHtml(dayPart)}" title="Preferencja klienta">Prosi: <strong>${escapeHtml(
+        ? `<p class="prov-cal-add__part-note" data-part="${escapeHtml(dayPart)}">Klient prosi: <strong>${escapeHtml(
             DAY_PART_LABEL[dayPart]
-          )}</strong></span>`
+          )}</strong></p>`
         : isReply && !inRequestDay
-          ? `<span class="prov-cal-add__part-chip prov-cal-add__part-chip--outside" title="Dzień poza zapytaniem klienta">Poza zapytaniem</span>`
+          ? `<p class="prov-cal-add__part-note prov-cal-add__part-note--outside">Dzień poza zapytaniem klienta.</p>`
           : "";
 
     const chosenList =
@@ -8041,13 +8040,11 @@
                 <span class="booking__month" data-role="prov-cal-add-month">${escapeHtml(monthLabelFromISO(activeDate || stripDates[0] || allAvailDates[0]))}</span>
               </div>
               <div class="date-strip date-strip--booking" data-role="prov-cal-add-date-strip">${dateStrip}</div>
+              ${partNote}
 
-              <div class="prov-cal-add__times-head" data-role="prov-cal-add-times-head"${hasSvc && activeDate ? "" : " hidden"}>
-                <h3 class="booking__label booking__label--caps" data-role="prov-cal-add-times-label">${
-                  isReply ? "Godziny do zaproponowania" : "Wolne terminy"
-                }</h3>
-                ${partNote}
-              </div>
+              <h3 class="booking__label booking__label--caps" data-role="prov-cal-add-times-label"${hasSvc && activeDate ? "" : " hidden"}>${
+                isReply ? "Godziny do zaproponowania" : "Wolne terminy"
+              }</h3>
               <div class="time-list time-list--horizontal" data-role="prov-cal-add-time-list"${hasSvc && activeDate ? "" : " hidden"}>${timeList}</div>
               ${
                 isReply && draft.proposals.length
@@ -8187,10 +8184,8 @@
     const addOpen = !!window.AppState.provCalAddOpen;
     const replyReq = replyRequest();
     const isReply = !!(addOpen && replyReq);
-    const selectedD = new Date(selected + "T12:00:00");
-    const monthLabel = isNaN(selectedD.getTime())
-      ? "Miesiąc"
-      : MONTHS_NOM[selectedD.getMonth()] || "Miesiąc";
+    // Etykieta śledzi miesiąc pickera (swipe w panelu), nie tylko wybraną datę tygodnia.
+    const monthLabel = monthLabelFromISO(ensureProvCalPickerMonth() + "-01") || "Miesiąc";
     return `
       <div class="app-screen app-screen--provider app-screen--prov-cal${addOpen ? " app-screen--prov-cal-add-open" : ""}${
         isReply ? " app-screen--prov-cal-reply" : ""
@@ -9347,8 +9342,8 @@
           class="gcal-month__day${outside ? " gcal-month__day--outside" : ""}${isToday ? " gcal-month__day--today" : ""}${hasAvail ? " gcal-month__day--busy" : ""}${inWeek ? " gcal-month__day--week" : ""}${red ? " gcal-month__day--red" : ""}"
           data-action="avail-jump-date" data-date="${escapeHtml(dateISO)}" data-grid-row="${cellRow}"
           aria-label="${day}${outside ? ", inny miesiąc" : ""}${hasAvail ? ", dostępność" : ""}${inWeek ? ", wybrany tydzień" : ""}">
-          <span class="gcal-month__day-num">${day}</span>
           <span class="gcal-month__day-dots" aria-hidden="true">${dotsHtml}</span>
+          <span class="gcal-month__day-num">${day}</span>
         </button>`;
     }
     return `
@@ -11372,6 +11367,14 @@
     closeProviderCardMenu();
     const prevBottomNavTab = captureBottomNavTab();
     const prevScreens = lastRenderedScreens;
+    // Zachowaj scroll osi czasu — inaczej każdy klik (np. w godzinę przy panelu „+”)
+    // wraca do linii „teraz” / pierwszej wizyty i podgląd skacze w górę.
+    const prevProvScrolls = Array.prototype.map.call(
+      document.querySelectorAll('[data-role="prov-cal-body"]'),
+      function (b) {
+        return b.scrollTop;
+      }
+    );
     INSTANCES.forEach(render);
     renderFullscreen();
     lastRenderedScreens = {
@@ -11391,15 +11394,25 @@
     requestAnimationFrame(function () {
       const availGrid = document.querySelector('[data-role="avail-week-grid"]');
       if (availGrid) initAvailStripScroll(availGrid);
-      const body = document.querySelector('[data-role="prov-cal-body"]');
-      if (body && !window.AppState.provCalMonthOpen) {
-        const nowEl = body.querySelector(".gcal__now");
-        const firstEvent = body.querySelector(".gcal__event");
-        const target = nowEl || firstEvent;
-        if (target) {
-          body.scrollTop = Math.max(0, target.offsetTop - 48);
+      const bodies = document.querySelectorAll('[data-role="prov-cal-body"]');
+      bodies.forEach(function (body, i) {
+        if (!body || window.AppState.provCalMonthOpen) return;
+        // Ukryta instancja (0px) — pomijamy, żeby nie wymuszać scroll-behavior smooth
+        // z html { scroll-behavior:smooth } i nie zjeżdżać widocznego podglądu.
+        if (!(body.scrollHeight - body.clientHeight > 0)) return;
+        const prev = prevProvScrolls[i];
+        const prevWasScrolled = typeof prev === "number" && prev > 0;
+        if (prevWasScrolled) {
+          body.scrollTop = prev;
+        } else {
+          const nowEl = body.querySelector(".gcal__now");
+          const firstEvent = body.querySelector(".gcal__event");
+          const target = nowEl || firstEvent;
+          if (target) {
+            body.scrollTop = Math.max(0, target.offsetTop - 48);
+          }
         }
-      }
+      });
       refreshProvCalTimeLabels();
       // Drugi frame — po layoutcie siatki miesiąca (inaczej pasek pada na top:0).
       requestAnimationFrame(animateAvailWeekHighlight);
