@@ -94,6 +94,8 @@
       /** Filtry statusów wizyt w Mój kalendarz: confirmed|cancelled|rejected (puste = wszystkie). */
       myCalStatusFilters: [],
       provCalDate: null,
+      /** Pierwszy widoczny dzień okna (2–6 dni); przy 7 = poniedziałek tygodnia. */
+      provCalWindowStart: null,
       provCalHourH: 60,
       provCalView: "week",
       /** Ile kolumn dni widać (1–7); zoom poziomy. Domyślnie pełny tydzień. */
@@ -1970,6 +1972,8 @@
             })
           : base.myCalStatusFilters,
         provCalDate: typeof stored.provCalDate === "string" ? stored.provCalDate : base.provCalDate,
+        provCalWindowStart:
+          typeof stored.provCalWindowStart === "string" ? stored.provCalWindowStart : base.provCalWindowStart,
         provCalHourH:
           typeof stored.provCalHourH === "number" && stored.provCalHourH > 0
             ? clampProvCalHourH(stored.provCalHourH)
@@ -4405,15 +4409,83 @@
     return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
   }
 
-  /** Okno N dni: przy 7 = tydzień pon–ndz; inaczej wyśrodkowane na wybranej dacie. */
+  /** Domyślny start okna: 7 = poniedziałek, 1 = data, 2–6 = wyśrodkowane na dacie. */
+  function defaultProvCalWindowStart(selectedISO, count) {
+    const n = clampProvCalVisibleDays(count);
+    const sel = selectedISO || ensureProvCalDate();
+    if (n === 7) return mondayISOFrom(sel);
+    if (n === 1) return sel;
+    return isoAddDays(sel, -Math.floor((n - 1) / 2));
+  }
+
+  function ensureProvCalWindowStart() {
+    const n = ensureProvCalVisibleDays();
+    const selected = ensureProvCalDate();
+    let start = window.AppState.provCalWindowStart;
+    if (!start || !/^\d{4}-\d{2}-\d{2}$/.test(String(start))) {
+      start = defaultProvCalWindowStart(selected, n);
+    }
+    if (n === 7) start = mondayISOFrom(start);
+    else if (n === 1) start = selected;
+    window.AppState.provCalWindowStart = start;
+    return start;
+  }
+
+  /** Lista dni w aktualnym oknie (nie zależy od klikniętego zaznaczenia dla 2–6). */
   function provCalVisibleDayList(selectedISO, count) {
     const n = clampProvCalVisibleDays(count);
-    if (n === 7) return availWeekDays(mondayISOFrom(selectedISO));
-    const before = Math.floor((n - 1) / 2);
-    const start = isoAddDays(selectedISO, -before);
+    const selected = selectedISO || ensureProvCalDate();
+    let start;
+    if (n === 7) {
+      start = mondayISOFrom(ensureProvCalWindowStart() || selected);
+    } else if (n === 1) {
+      start = selected;
+    } else {
+      start = ensureProvCalWindowStart();
+    }
+    window.AppState.provCalWindowStart = start;
     const out = [];
     for (let i = 0; i < n; i++) out.push(isoAddDays(start, i));
     return out;
+  }
+
+  function provCalWindowContainsDate(dateISO, count) {
+    if (!dateISO) return false;
+    const days = provCalVisibleDayList(ensureProvCalDate(), count != null ? count : ensureProvCalVisibleDays());
+    return days.indexOf(dateISO) !== -1;
+  }
+
+  /** Przesuń okno tak, by data była widoczna (miesiąc / Dzisiaj / skok spoza okna). */
+  function moveProvCalWindowToInclude(dateISO) {
+    if (!dateISO) return;
+    const n = ensureProvCalVisibleDays();
+    if (n === 7) {
+      window.AppState.provCalWindowStart = mondayISOFrom(dateISO);
+      return;
+    }
+    if (n === 1) {
+      window.AppState.provCalWindowStart = dateISO;
+      return;
+    }
+    if (provCalWindowContainsDate(dateISO, n)) return;
+    window.AppState.provCalWindowStart = defaultProvCalWindowStart(dateISO, n);
+  }
+
+  /** Przesuń okno o delta dni (swipe / strzałki); zaznaczenie idzie razem. */
+  function shiftProvCalWindow(deltaDays) {
+    const n = ensureProvCalVisibleDays();
+    const delta = Number(deltaDays) || 0;
+    if (!delta) return;
+    if (n === 7) {
+      const start = mondayISOFrom(ensureProvCalWindowStart());
+      window.AppState.provCalWindowStart = mondayISOFrom(isoAddDays(start, delta));
+      return;
+    }
+    if (n === 1) {
+      window.AppState.provCalWindowStart = isoAddDays(ensureProvCalDate(), delta);
+      return;
+    }
+    window.AppState.provCalWindowStart = isoAddDays(ensureProvCalWindowStart(), delta);
   }
 
   /** Zoom poziomy: ile kolumn dni (1–7). */
@@ -4424,6 +4496,10 @@
     let changed = n !== prev || !!opts.force;
     window.AppState.provCalVisibleDays = n;
     window.AppState.provCalView = n <= 1 ? "day" : "week";
+    // Przy zmianie liczby kolumn — wyśrodkuj okno na zaznaczonej dacie.
+    if (changed) {
+      window.AppState.provCalWindowStart = defaultProvCalWindowStart(ensureProvCalDate(), n);
+    }
     if (opts.closeMonth !== false && window.AppState.provCalMonthOpen) {
       window.AppState.provCalMonthOpen = false;
       changed = true;
@@ -4447,6 +4523,13 @@
     // Zachowaj zoom poziomy (liczbę dni), chyba że wymuszono widok dnia.
     if (opts.forceDay) applyProvCalVisibleDays(1, { render: false, persist: false, closeMonth: false });
     else ensureProvCalVisibleDays();
+    // keepWindow: swipe już przesunął okno; inaczej — klik w widocznym dniu nie rusza okna,
+    // skok spoza okna (miesiąc / Dzisiaj) dociąga okno do daty.
+    if (!opts.keepWindow) {
+      if (opts.forceDay || opts.jumpWindow || !provCalWindowContainsDate(dateISO)) {
+        moveProvCalWindowToInclude(dateISO);
+      }
+    }
     if (!opts.keepSelection) window.AppState.provCalSelection = null;
     // Panel „+” otwarty — synchronizuj dzień (pełny i zwinięty widok).
     if (window.AppState.provCalAddOpen && window.AppState.provCalAddDraft) {
@@ -4456,11 +4539,14 @@
     if (opts.render !== false) renderAll();
   }
 
-  /** ±1 dzień w kalendarzu usługodawcy (gest swipe / nawigacja). */
+  /** ±N dni w kalendarzu usługodawcy (gest swipe / nawigacja) — przesuwa okno i zaznaczenie. */
   function shiftProvCalDate(deltaDays, opts) {
-    const cur = ensureProvCalDate();
-    const iso = isoAddDays(cur, deltaDays);
-    pickProvCalDate(iso, Object.assign({ keepView: true }, opts || {}));
+    opts = opts || {};
+    const delta = Number(deltaDays) || 0;
+    if (!delta) return;
+    shiftProvCalWindow(delta);
+    const iso = isoAddDays(ensureProvCalDate(), delta);
+    pickProvCalDate(iso, Object.assign({ keepView: true, keepWindow: true }, opts));
     hapticTap(12);
   }
 
@@ -4709,9 +4795,11 @@
     const startX = readProvCalTranslateX(outgoing);
     const width = Math.max(body.clientWidth, outgoing.offsetWidth, 280);
 
+    shiftProvCalWindow(deltaDays);
     const nextISO = isoAddDays(ensureProvCalDate(), deltaDays);
     window.AppState.provCalDate = nextISO;
     window.AppState.provCalPickerMonth = nextISO.slice(0, 7);
+    if (ensureProvCalVisibleDays() === 1) window.AppState.provCalWindowStart = nextISO;
     if (!opts.keepSelection) window.AppState.provCalSelection = null;
     saveState();
     hapticTap(12);
@@ -7154,6 +7242,7 @@
     window.AppState.provCalAddDraft = draft;
     window.AppState.provCalDate = draft.dateISO;
     window.AppState.provCalPickerMonth = draft.dateISO.slice(0, 7);
+    moveProvCalWindowToInclude(draft.dateISO);
     window.AppState.provCalSelection = normalizeProvCalSelection({
       kind: "booking",
       bookingId: bk.id,
@@ -7557,6 +7646,7 @@
     if (!draft.requestId) draft.slotId = null;
     window.AppState.provCalDate = draft.dateISO;
     window.AppState.provCalPickerMonth = draft.dateISO.slice(0, 7);
+    moveProvCalWindowToInclude(draft.dateISO);
     saveState();
     renderAll();
   }
@@ -7786,6 +7876,7 @@
     }
     window.AppState.provCalDate = booking.dateISO;
     window.AppState.provCalPickerMonth = booking.dateISO.slice(0, 7);
+    moveProvCalWindowToInclude(booking.dateISO);
     window.AppState.provCalSelection = normalizeProvCalSelection({
       kind: "booking",
       bookingId: booking.id,
@@ -7973,7 +8064,7 @@
           )}</h3>`
       : `<h3 class="prov-cal-add__title" id="prov-cal-add-title">${escapeHtml(title)}</h3>`;
 
-    const minimized = !!window.AppState.provCalAddMinimized;
+    window.AppState.provCalAddMinimized = false;
     const requestsListHtml = showRequestsList ? renderProvCalAddRequestsList() : "";
     const formBodyHtml = showRequestsList
       ? ""
@@ -8028,14 +8119,6 @@
               }
             </div>`;
 
-    const collapseBtn = minimized
-      ? `<button type="button" class="prov-cal-add__collapse is-minimized" data-action="expand-prov-cal-add" aria-label="Rozwiń panel" title="Rozwiń">
-            <span class="prov-cal-add__collapse-icon" aria-hidden="true"></span>
-          </button>`
-      : `<button type="button" class="prov-cal-add__collapse" data-action="minimize-prov-cal-add" aria-label="Zmniejsz panel" title="Zmniejsz">
-            <span class="prov-cal-add__collapse-icon" aria-hidden="true"></span>
-          </button>`;
-
     const footHtml = showRequestsList
       ? ""
       : `<div class="prov-cal-add__foot booking-confirm-bar">
@@ -8064,12 +8147,10 @@
     return `
       <div class="prov-cal-add${isReply ? " prov-cal-add--reply" : ""}${
         showRequestsList ? " prov-cal-add--requests" : ""
-      }${showTabs ? " prov-cal-add--tabs" : ""}${minimized ? " prov-cal-add--minimized" : ""}${enterCls}" data-role="prov-cal-add">
+      }${showTabs ? " prov-cal-add--tabs" : ""}${enterCls}" data-role="prov-cal-add">
         <div class="prov-cal-add__sheet" role="dialog" aria-modal="false" aria-labelledby="prov-cal-add-title">
-          <header class="prov-cal-add__head${showTabs ? " prov-cal-add__head--tabs" : ""}${
-            minimized && !showTabs ? " prov-cal-add__head--mini" : ""
-          }">
-            ${collapseBtn}
+          <header class="prov-cal-add__head${showTabs ? " prov-cal-add__head--tabs" : ""}">
+            <span class="prov-cal-add__head-spacer" aria-hidden="true"></span>
             ${headCenter}
             <span class="prov-cal-add__head-spacer" aria-hidden="true"></span>
           </header>
@@ -12178,6 +12259,7 @@
     window.AppState.provCalAddDraft = draft;
     window.AppState.provCalDate = firstDay;
     window.AppState.provCalPickerMonth = String(firstDay).slice(0, 7);
+    moveProvCalWindowToInclude(firstDay);
     window.AppState.provCalSelection = null;
     window.AppState.params.provider = { requestId: requestId };
     window.AppState.screen.provider = "calendar";
@@ -14319,7 +14401,8 @@
       const toMin = Number(drag.el.getAttribute("data-to-min"));
       if (!(toMin > fromMin)) return;
 
-      const days = provCalVisibleDayList(ensureProvCalDate(), ensureProvCalVisibleDays());
+      const nVisible = ensureProvCalVisibleDays();
+      const days = provCalVisibleDayList(ensureProvCalDate(), nVisible);
       if (!days.length) return;
       const edgeDate = dir < 0 ? days[0] : days[days.length - 1];
       // Przesuń okno o 1 dzień za skraj — jak GCal: kafelek zostaje pod palcem na nowej krawędzi.
@@ -14328,7 +14411,13 @@
       const body = document.querySelector('[data-role="prov-cal-body"]');
       const scrollTop = body ? body.scrollTop : 0;
       // Bez haptic (shiftProvCalDate) — przy trzymaniu na krawędzi byłby spam.
-      pickProvCalDate(advanceTo, { keepSelection: true, render: false });
+      if (nVisible === 7) {
+        // Tydzień pon–ndz: skok do tygodnia zawierającego dzień za skrajem.
+        window.AppState.provCalWindowStart = mondayISOFrom(advanceTo);
+      } else {
+        shiftProvCalWindow(dir);
+      }
+      pickProvCalDate(advanceTo, { keepSelection: true, keepWindow: true, render: false });
 
       const newDays = provCalVisibleDayList(ensureProvCalDate(), ensureProvCalVisibleDays());
       if (!newDays.length) return;
@@ -14954,9 +15043,11 @@
       if (body) body.classList.remove("prov-cal-body--day-swipe", "prov-cal-body--animating-days");
       clearSwipeState();
       if (deltaDays) {
+        shiftProvCalWindow(deltaDays);
         const nextISO = isoAddDays(ensureProvCalDate(), deltaDays);
         window.AppState.provCalDate = nextISO;
         window.AppState.provCalPickerMonth = nextISO.slice(0, 7);
+        if (ensureProvCalVisibleDays() === 1) window.AppState.provCalWindowStart = nextISO;
         window.AppState.provCalSelection = null;
         saveState();
         hapticTap(12);

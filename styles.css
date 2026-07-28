@@ -6989,7 +6989,6 @@ body.service-photo-preview-open {
   border-bottom: 1px solid var(--border);
 }
 
-.prov-cal-add__head--tabs .prov-cal-add__collapse,
 .prov-cal-add__head--tabs .prov-cal-add__head-spacer {
   align-self: center;
   margin-bottom: 0.35rem;
