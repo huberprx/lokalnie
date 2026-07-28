@@ -7866,18 +7866,6 @@
         return c.id;
       })
     );
-    const badgeCounts = {};
-    draft.proposals.forEach(function (c) {
-      if (!c || !c.dateISO) return;
-      badgeCounts[c.dateISO] = (badgeCounts[c.dateISO] || 0) + 1;
-    });
-    const dateStrip = hasSvc
-      ? renderDateStripHtml(stripDates.length ? stripDates : allAvailDates, activeDate, {
-          action: "prov-cal-add-date",
-          highlightDates: isReply ? requestDaySet : null,
-          badgeCounts: isReply ? badgeCounts : null,
-        })
-      : `<p class="empty-note">Najpierw wybierz usługę.</p>`;
     const timeList = !hasSvc
       ? ""
       : slots.length
@@ -7901,13 +7889,16 @@
           }</p>`;
 
     const partNote =
-      isReply && inRequestDay
-        ? `<p class="prov-cal-add__part-note" data-part="${escapeHtml(dayPart)}">Klient prosi: <strong>${escapeHtml(
+      isReply && !inRequestDay
+        ? `<p class="prov-cal-add__part-note prov-cal-add__part-note--outside">Dzień poza zapytaniem klienta.</p>`
+        : "";
+    const timesLabelHtml = !isReply
+      ? "Wolne terminy"
+      : inRequestDay
+        ? `Godziny <span class="booking__label-part" data-part="${escapeHtml(dayPart)}">(${escapeHtml(
             DAY_PART_LABEL[dayPart]
-          )}</strong></p>`
-        : isReply && !inRequestDay
-          ? `<p class="prov-cal-add__part-note prov-cal-add__part-note--outside">Dzień poza zapytaniem klienta.</p>`
-          : "";
+          )})</span>`
+        : "Godziny";
 
     const chosenList =
       isReply && draft.proposals.length
@@ -8024,27 +8015,8 @@
             </div>
 
             <div class="booking__schedule prov-cal-add__schedule">
-              <div class="booking__label-row">
-                <div class="booking__label-row__start">
-                  ${
-                    isReply
-                      ? `<button type="button" class="prov-cal-add__show-all${showAll ? " is-on" : ""}" data-action="toggle-prov-cal-reply-show-all" aria-pressed="${
-                          showAll ? "true" : "false"
-                        }" aria-label="Pokaż cały kalendarz" title="Pokaż cały kalendarz">
-                          <span class="avail-edit__switch" aria-hidden="true"></span>
-                        </button>`
-                      : ""
-                  }
-                  <h3 class="booking__label booking__label--caps">${isReply ? "Dni z zapytania" : "Wybierz datę"}</h3>
-                </div>
-                <span class="booking__month" data-role="prov-cal-add-month">${escapeHtml(monthLabelFromISO(activeDate || stripDates[0] || allAvailDates[0]))}</span>
-              </div>
-              <div class="date-strip date-strip--booking" data-role="prov-cal-add-date-strip">${dateStrip}</div>
               ${partNote}
-
-              <h3 class="booking__label booking__label--caps" data-role="prov-cal-add-times-label"${hasSvc && activeDate ? "" : " hidden"}>${
-                isReply ? "Godziny do zaproponowania" : "Wolne terminy"
-              }</h3>
+              <h3 class="booking__label booking__label--caps" data-role="prov-cal-add-times-label"${hasSvc && activeDate ? "" : " hidden"}>${timesLabelHtml}</h3>
               <div class="time-list time-list--horizontal" data-role="prov-cal-add-time-list"${hasSvc && activeDate ? "" : " hidden"}>${timeList}</div>
               ${
                 isReply && draft.proposals.length
@@ -11390,7 +11362,7 @@
       finishProvCalAddTabAnim();
       if (prevScreens) playScreenEnterAnim(prevScreens);
     });
-    document.querySelectorAll('[data-role="booking-date-strip"], [data-role="prov-cal-add-date-strip"]').forEach(updateBookingMonthLabel);
+    document.querySelectorAll('[data-role="booking-date-strip"]').forEach(updateBookingMonthLabel);
     requestAnimationFrame(function () {
       const availGrid = document.querySelector('[data-role="avail-week-grid"]');
       if (availGrid) initAvailStripScroll(availGrid);

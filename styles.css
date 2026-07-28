@@ -5950,21 +5950,6 @@ body.service-photo-preview-open {
   margin-bottom: 0.35rem;
 }
 
-.prov-cal-add__schedule .booking__label-row {
-  align-items: center;
-}
-
-.prov-cal-add__schedule .booking__label-row__start {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  min-width: 0;
-}
-
-.prov-cal-add__schedule .booking__label-row .booking__label {
-  margin-bottom: 0;
-}
-
 .booking__month {
   font-size: 0.9rem;
   font-weight: 650;
@@ -5978,6 +5963,13 @@ body.service-photo-preview-open {
   text-transform: none;
   letter-spacing: 0;
   color: var(--accent-client);
+}
+
+.booking__label-part {
+  font-weight: 650;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--warning);
 }
 
 /* Mobile booking: usługi rosną z wysokością ekranu; daty/godziny tuż nad menu */
@@ -7329,9 +7321,6 @@ body.service-photo-preview-open {
 }
 
 /* Zwinięty: tylko klient, usługa i karuzela godzin. */
-.prov-cal-add--minimized .prov-cal-add__show-all,
-.prov-cal-add--minimized .booking__label-row,
-.prov-cal-add--minimized .date-strip,
 .prov-cal-add--minimized .prov-cal-add__part-note,
 .prov-cal-add--minimized .prov-cal-add__schedule > .booking__label,
 .prov-cal-add--minimized .prov-cal-add__schedule > .empty-note,
@@ -14416,56 +14405,6 @@ body.prov-cal-resizing * {
 
 .prov-cal-add--reply .request-card__days {
   margin: 0 0 0.55rem;
-}
-
-.prov-cal-add__show-all {
-  appearance: none;
-  -webkit-appearance: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: auto;
-  margin: 0;
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.prov-cal-add__show-all .avail-edit__switch {
-  pointer-events: none;
-  flex: 0 0 auto;
-  position: relative;
-  width: 2.1rem;
-  height: 1.2rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-muted) 28%, transparent);
-  transition: background 0.15s ease;
-}
-
-.prov-cal-add__show-all .avail-edit__switch::after {
-  content: "";
-  position: absolute;
-  top: 0.12rem;
-  left: 0.12rem;
-  width: 0.96rem;
-  height: 0.96rem;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
-  transition: transform 0.15s ease;
-}
-
-.prov-cal-add__show-all.is-on .avail-edit__switch {
-  background: var(--accent-provider);
-}
-
-.prov-cal-add__show-all.is-on .avail-edit__switch::after {
-  transform: translateX(0.9rem);
 }
 
 .prov-cal-add__part-note {
