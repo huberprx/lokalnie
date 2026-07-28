@@ -4668,6 +4668,7 @@
     saveState();
     renderAll();
     hapticTap(12);
+    updateProvCalAddSelectionLive();
   }
 
   function applyProvCalFreeDraftLayout(el, fromMin, toMin) {
@@ -7401,6 +7402,118 @@
     renderAll();
   }
 
+  function syncProvCalAddDraftFromSelection() {
+    if (!window.AppState.provCalAddOpen) return false;
+    const draft = window.AppState.provCalAddDraft;
+    const sel = window.AppState.provCalSelection;
+    if (!draft || !sel || sel.kind !== "free" || !sel.dateISO || replyRequestId()) return false;
+    const fromMin = Number(sel.fromMin);
+    const toMin = Number(sel.toMin);
+    if (!Number.isFinite(fromMin) || !Number.isFinite(toMin) || !(toMin > fromMin)) return false;
+    const durSvc = durationServiceForMinutes(Math.max(5, toMin - fromMin));
+    const p = myProvider();
+    const duration = Math.max(5, toMin - fromMin);
+    const slots = computeSlots(p, sel.dateISO, duration, {});
+    let nextSlotId = null;
+    for (let i = 0; i < slots.length; i++) {
+      const slotId = slots[i].id;
+      const slotStartMatch = slotId.match(/slot-\d{4}-\d{2}-\d{2}-(\d+)-/);
+      if (slotStartMatch) {
+        const slotStart = Number(slotStartMatch[1]);
+        const slotEnd = slotStart + duration;
+        if (fromMin >= slotStart && fromMin < slotEnd) {
+          nextSlotId = slotId;
+          break;
+        }
+      }
+    }
+    const changed =
+      draft.dateISO !== sel.dateISO || draft.slotId !== nextSlotId || draft.serviceIds.join(",") !== durSvc.id;
+    draft.dateISO = sel.dateISO;
+    draft.serviceIds = [durSvc.id];
+    draft.slotId = nextSlotId;
+    return changed;
+  }
+
+  function updateProvCalAddTimeList() {
+    if (!window.AppState.provCalAddOpen || !window.AppState.provCalAddDraft) return;
+    const draft = window.AppState.provCalAddDraft;
+    if (draft.requestId) return;
+    const p = myProvider();
+    const realIds = (draft.serviceIds || []).filter(function (id) {
+      return !isProvCalAddDurationId(id);
+    });
+    const duration = provCalAddServiceTotals(provCalAddSelectedServices(p, draft)).duration || 30;
+    const slots = computeSlots(p, draft.dateISO, duration, {});
+    const listEl = document.querySelector('[data-role="prov-cal-add-time-list"]');
+    if (!listEl) return;
+    const hasSvc = (draft.serviceIds || []).length > 0;
+    if (!hasSvc || !draft.dateISO) {
+      listEl.innerHTML = "";
+      listEl.setAttribute("hidden", "");
+    } else if (!slots.length) {
+      listEl.innerHTML = `<p class="empty-note">Brak wolnych godzin tego dnia.</p>`;
+      listEl.removeAttribute("hidden");
+    } else {
+      listEl.innerHTML = slots
+        .map(function (s) {
+          const on = draft.slotId === s.id;
+          return `<button type="button" class="time-row time-row--chip${on ? " time-row--selected" : ""}" data-action="prov-cal-add-slot" data-slot="${escapeHtml(s.id)}" aria-label="Wybierz ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${on ? "true" : "false"}">
+            <span class="time-row__info">
+              <span class="time-row__range">${escapeHtml(s.from)}→${escapeHtml(s.to)}</span>
+              ${renderTimeSlotPlace(p, s)}
+            </span>
+          </button>`;
+        })
+        .join("");
+      listEl.removeAttribute("hidden");
+    }
+    const labelEl = document.querySelector('[data-role="prov-cal-add-times-label"]');
+    if (labelEl) {
+      if (hasSvc && draft.dateISO) labelEl.removeAttribute("hidden");
+      else labelEl.setAttribute("hidden", "");
+    }
+    updateProvCalAddSummaryLive();
+  }
+
+  function updateProvCalAddSummaryLive() {
+    if (!window.AppState.provCalAddOpen || !window.AppState.provCalAddDraft) return;
+    const draft = window.AppState.provCalAddDraft;
+    if (draft.requestId) return;
+    const p = myProvider();
+    const selected = provCalAddSelectedServices(p, draft);
+    const totals = provCalAddServiceTotals(selected);
+    const hasSvc = selected.length > 0;
+    const summary = document.querySelector(".prov-cal-add__foot .bottom-nav__summary");
+    if (summary) {
+      summary.classList.toggle("bottom-nav__summary--empty", !hasSvc);
+      const dur = summary.querySelector(".bottom-nav__summary-dur");
+      const price = summary.querySelector(".bottom-nav__summary-price");
+      if (dur) dur.textContent = !hasSvc ? "—" : formatDuration(totals.duration || 0);
+      if (price) {
+        price.textContent = !hasSvc
+          ? "—"
+          : totals.onlyDuration
+            ? "—"
+            : totals.hasNullPrice
+              ? "wycena indyw."
+              : formatPrice(totals.price);
+      }
+    }
+    const cta = document.querySelector('[data-role="prov-cal-add-cta"]');
+    if (cta) {
+      cta.disabled = !(hasSvc && !!draft.slotId);
+      cta.textContent = "Zapisz";
+    }
+  }
+
+  function updateProvCalAddSelectionLive() {
+    if (!window.AppState.provCalAddOpen || !window.AppState.provCalAddDraft) return false;
+    if (!syncProvCalAddDraftFromSelection()) return false;
+    updateProvCalAddTimeList();
+    return true;
+  }
+
   function toggleProvCalAddService(serviceId) {
     if (!serviceId) return;
     captureProvCalAddClientName();
@@ -7930,10 +8043,10 @@
               <div class="date-strip date-strip--booking" data-role="prov-cal-add-date-strip">${dateStrip}</div>
               ${partNote}
 
-              <h3 class="booking__label booking__label--caps"${hasSvc && activeDate ? "" : " hidden"}>${
+              <h3 class="booking__label booking__label--caps" data-role="prov-cal-add-times-label"${hasSvc && activeDate ? "" : " hidden"}>${
                 isReply ? "Godziny do zaproponowania" : "Wolne terminy"
               }</h3>
-              <div class="time-list time-list--horizontal"${hasSvc && activeDate ? "" : " hidden"}>${timeList}</div>
+              <div class="time-list time-list--horizontal" data-role="prov-cal-add-time-list"${hasSvc && activeDate ? "" : " hidden"}>${timeList}</div>
               ${
                 isReply && draft.proposals.length
                   ? `<h3 class="booking__label booking__label--caps">Do wysłania (${draft.proposals.length})</h3>${chosenList}`
@@ -13846,6 +13959,7 @@
           fromMin: fromMin,
           toMin: toMin,
         });
+        updateProvCalAddSelectionLive();
       },
       { capture: true, passive: false }
     );
@@ -14137,6 +14251,7 @@
           fromMin: fromMin,
           toMin: toMin,
         });
+        updateProvCalAddSelectionLive();
         return;
       }
       if (drag.bookingId) moveBookingTimes(drag.bookingId, fromMin, toMin, dateISO);
