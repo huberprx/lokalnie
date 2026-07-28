@@ -9405,6 +9405,13 @@ body.client-sheet-open {
   color: var(--cal-selected-fg);
 }
 
+/* Usługodawca: zaznaczona data kolorem akcentu */
+.app-screen--provider .gcal-week__dayhead--sel .gcal-week__num {
+  background: var(--accent-provider);
+  color: #fff;
+  box-shadow: none;
+}
+
 .gcal-week__timeline {
   grid-template-columns: 3.1rem 1fr;
 }
@@ -9433,6 +9440,15 @@ body.client-sheet-open {
 
 .gcal-week__col--today {
   background: color-mix(in srgb, var(--accent-provider) 4%, transparent);
+}
+
+/* Zaznaczona kolumna dnia — lekki tint akcentu */
+.gcal-week__col--sel {
+  background: color-mix(in srgb, var(--accent-provider) 9%, transparent);
+}
+
+.gcal-week__col--sel.gcal-week__col--request {
+  background: color-mix(in srgb, var(--accent-provider) 11%, transparent);
 }
 
 .gcal-week__track {
@@ -14378,8 +14394,8 @@ body.prov-cal-resizing * {
 }
 
 /* ---- Kalendarz: odpowiedź na zapytanie o termin ---- */
-.gcal-week__dayhead--request .gcal-week__num {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-provider) 55%, transparent);
+.gcal-week__dayhead--request:not(.gcal-week__dayhead--sel) .gcal-week__num {
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent-provider) 50%, transparent);
 }
 
 .gcal-week__dayhead--dim,
@@ -14387,8 +14403,8 @@ body.prov-cal-resizing * {
   opacity: 0.34;
 }
 
-.gcal-week__col--request {
-  background: color-mix(in srgb, var(--accent-provider) 5%, transparent);
+.gcal-week__col--request:not(.gcal-week__col--sel) {
+  background: color-mix(in srgb, var(--accent-provider) 4%, transparent);
 }
 
 .gcal-month__day--request:not(.gcal-month__day--on) .gcal-month__day-num {
