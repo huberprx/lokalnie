@@ -105,6 +105,8 @@
       provCalSelection: null,
       /** Panel „+” → nowy termin z kalendarza usługodawcy. */
       provCalAddOpen: false,
+      /** Panel „+” zwinięty (tylko pasek) — draft zostaje. */
+      provCalAddMinimized: false,
       provCalAddDraft: null,
       /** Zakładka panelu „+”: "new" | "requests". */
       provCalAddTab: "new",
@@ -1955,6 +1957,7 @@
         provCalSearchOpen: !!stored.provCalSearchOpen,
         provCalSearchQ: typeof stored.provCalSearchQ === "string" ? stored.provCalSearchQ : base.provCalSearchQ,
         provCalAddOpen: false,
+        provCalAddMinimized: false,
         provCalAddDraft: null,
         provCalAddTab: "new",
         provCalReplyRequestId: null,
@@ -6865,6 +6868,7 @@
     }
     window.AppState.provCalAddTab = next;
     window.AppState.provCalAddOpen = true;
+    window.AppState.provCalAddMinimized = false;
     if (!window.AppState.provCalAddDraft) {
       window.AppState.provCalAddDraft = defaultProvCalAddDraft();
     }
@@ -6883,6 +6887,7 @@
     window.AppState.provCalAddTab = "requests";
     window.AppState.provCalAddDraft = defaultProvCalAddDraft();
     window.AppState.provCalAddOpen = true;
+    window.AppState.provCalAddMinimized = false;
     window.AppState.screen.provider = "calendar";
     setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
     closeProvCalViewCloud();
@@ -6906,6 +6911,7 @@
     }
     window.AppState.provCalAddTab = "new";
     window.AppState.provCalAddOpen = true;
+    window.AppState.provCalAddMinimized = false;
     window.AppState.provCalAddDraft = draft;
     setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
     closeProvCalViewCloud();
@@ -6915,6 +6921,25 @@
       const input = document.querySelector('[data-role="prov-cal-add-client"]');
       if (input) input.focus();
     });
+  }
+
+  function minimizeProvCalAdd() {
+    if (!window.AppState.provCalAddOpen) return;
+    captureProvCalAddClientName();
+    setProvCalAddClientPickOpen(false);
+    setProvCalAddServicePickOpen(false);
+    window.AppState.provCalAddMinimized = true;
+    saveState();
+    renderAll();
+    hapticTap(12);
+  }
+
+  function expandProvCalAdd() {
+    if (!window.AppState.provCalAddOpen) return;
+    window.AppState.provCalAddMinimized = false;
+    saveState();
+    renderAll();
+    hapticTap(12);
   }
 
   function openProvCalEdit(bookingId) {
@@ -6938,6 +6963,7 @@
     draft.slotId = provCalAddSlotIdForBooking(bk);
     window.AppState.provCalAddTab = "new";
     window.AppState.provCalAddOpen = true;
+    window.AppState.provCalAddMinimized = false;
     window.AppState.provCalAddDraft = draft;
     window.AppState.provCalDate = draft.dateISO;
     window.AppState.provCalPickerMonth = draft.dateISO.slice(0, 7);
@@ -6957,6 +6983,7 @@
 
   function closeProvCalAdd() {
     window.AppState.provCalAddOpen = false;
+    window.AppState.provCalAddMinimized = false;
     window.AppState.provCalAddDraft = null;
     window.AppState.provCalAddTab = "new";
     clearProvCalReplyMode();
@@ -7656,6 +7683,7 @@
           )}</h3>`
       : `<h3 class="prov-cal-add__title" id="prov-cal-add-title">${escapeHtml(title)}</h3>`;
 
+    const minimized = !!window.AppState.provCalAddMinimized;
     const requestsListHtml = showRequestsList ? renderProvCalAddRequestsList() : "";
     const formBodyHtml = showRequestsList
       ? ""
@@ -7728,18 +7756,31 @@
               }
             </div>`;
 
+    const collapseBtn = minimized
+      ? `<button type="button" class="prov-cal-add__collapse is-minimized" data-action="expand-prov-cal-add" aria-label="Rozwiń panel" title="Rozwiń">
+            <span class="prov-cal-add__collapse-icon" aria-hidden="true"></span>
+          </button>`
+      : `<button type="button" class="prov-cal-add__collapse" data-action="minimize-prov-cal-add" aria-label="Zmniejsz panel" title="Zmniejsz">
+            <span class="prov-cal-add__collapse-icon" aria-hidden="true"></span>
+          </button>`;
+
     return `
       <div class="prov-cal-add${isReply ? " prov-cal-add--reply" : ""}${
         showRequestsList ? " prov-cal-add--requests" : ""
-      }${showTabs ? " prov-cal-add--tabs" : ""}" data-role="prov-cal-add">
-        <button type="button" class="prov-cal-add__backdrop" data-action="close-prov-cal-add" aria-label="Zamknij"></button>
-        <div class="prov-cal-add__sheet" role="dialog" aria-modal="true" aria-labelledby="prov-cal-add-title">
+      }${showTabs ? " prov-cal-add--tabs" : ""}${minimized ? " prov-cal-add--minimized" : ""}" data-role="prov-cal-add">
+        <button type="button" class="prov-cal-add__backdrop" data-action="${
+          minimized ? "expand-prov-cal-add" : "close-prov-cal-add"
+        }" aria-label="${minimized ? "Rozwiń panel" : "Zamknij"}"></button>
+        <div class="prov-cal-add__sheet" role="dialog" aria-modal="${minimized ? "false" : "true"}" aria-labelledby="prov-cal-add-title">
           <header class="prov-cal-add__head${showTabs ? " prov-cal-add__head--tabs" : ""}">
-            <button type="button" class="prov-cal-add__close" data-action="close-prov-cal-add" aria-label="Zamknij">×</button>
-            ${headCenter}
             <span class="prov-cal-add__head-spacer" aria-hidden="true"></span>
+            ${headCenter}
+            ${collapseBtn}
           </header>
-          <div class="prov-cal-add__body">
+          ${
+            minimized
+              ? ""
+              : `<div class="prov-cal-add__body">
             ${requestsListHtml}
             ${formBodyHtml}
           </div>
@@ -7761,7 +7802,11 @@
             <button type="button" class="bottom-nav__book" data-role="prov-cal-add-cta" data-action="${saveAction}"${saveAttrs}${
                 canSave ? "" : " disabled"
               }>${escapeHtml(saveLabel)}</button>
+            <button type="button" class="bottom-nav__clear" data-action="close-prov-cal-add" aria-label="Zamknij">
+              <span class="bottom-nav__icon bottom-nav__icon--close" aria-hidden="true"></span>
+            </button>
           </div>`
+          }`
           }
         </div>
       </div>`;
@@ -7778,7 +7823,6 @@
       return r.status === "proposed";
     });
     function row(r) {
-      const isProposed = r.status === "proposed";
       const days = normalizeRequestDays(r.days);
       const dayHint = days.length
         ? days
@@ -7788,23 +7832,20 @@
             })
             .join(", ") + (days.length > 2 ? " +" + (days.length - 2) : "")
         : "Bez wskazanych dni";
+      const services = (r.serviceNames || []).filter(Boolean);
+      const servicesLabel = services.length ? services.join(", ") : "Usługa";
       return `
-        <button type="button" class="prov-cal-add__req" data-action="propose-open" data-request-id="${escapeHtml(r.id)}">
-          <span class="prov-cal-add__req-avatar" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="8.2" r="3.4" />
-              <path d="M5.2 19.2c.9-3.2 3.4-4.8 6.8-4.8s5.9 1.6 6.8 4.8" />
-            </svg>
-          </span>
-          <span class="prov-cal-add__req-main">
-            <span class="prov-cal-add__req-name">${escapeHtml(r.clientName || "Klient")}</span>
-            <span class="prov-cal-add__req-svc">${escapeHtml((r.serviceNames || []).join(", ") || "Usługa")}</span>
-            <span class="prov-cal-add__req-meta">${escapeHtml(dayHint)}</span>
-          </span>
-          <span class="status-badge" data-status="${escapeHtml(isProposed ? "proposed" : "pending")}">${escapeHtml(
-            isProposed ? "Wysłano" : "Nowa"
-          )}</span>
-        </button>`;
+        <div class="prov-cal-add__req">
+          <button type="button" class="prov-cal-add__req-body" data-action="propose-open" data-request-id="${escapeHtml(r.id)}">
+            <span class="prov-cal-add__req-main">
+              <span class="prov-cal-add__req-name">${escapeHtml(r.clientName || "Klient")}</span>
+              <span class="prov-cal-add__req-svc">${escapeHtml(servicesLabel)}</span>
+              <span class="prov-cal-add__req-meta">sugerowany termin: ${escapeHtml(dayHint)}</span>
+            </span>
+          </button>
+          <button type="button" class="prov-cal-add__req-dismiss" data-action="reject-request" data-request-id="${escapeHtml(r.id)}"
+            aria-label="Odrzuć prośbę o termin" title="Odrzuć">×</button>
+        </div>`;
     }
     if (!all.length) {
       return `<div class="prov-cal-add__requests" data-role="prov-cal-add-requests">
@@ -11804,6 +11845,7 @@
     window.AppState.provCalReplyShowAll = false;
     window.AppState.provCalAddTab = "requests";
     window.AppState.provCalAddOpen = true;
+    window.AppState.provCalAddMinimized = false;
     window.AppState.provCalAddDraft = draft;
     window.AppState.provCalDate = firstDay;
     window.AppState.provCalPickerMonth = String(firstDay).slice(0, 7);
@@ -11912,6 +11954,7 @@
     window.AppState.provCalAddTab = "requests";
     window.AppState.provCalAddDraft = defaultProvCalAddDraft();
     window.AppState.provCalAddOpen = true;
+    window.AppState.provCalAddMinimized = false;
     window.AppState.screen.provider = "calendar";
     window.AppState.screen.client = "myCalendar";
     saveState();
@@ -12010,6 +12053,33 @@
     saveState();
     renderAll();
     showToast("Poprosiliśmy o inne terminy.");
+  }
+
+  function rejectRequest(requestId) {
+    const req = (window.AppState.requests || []).find((r) => r && r.id === requestId);
+    if (!req) return;
+    req.status = "rejected";
+    req.proposals = [];
+    req.acceptedProposalId = null;
+    const bk = (window.AppState.bookings || []).find((b) => b && b.requestId === req.id);
+    if (bk) bk.status = "rejected";
+    if (replyRequestId() === req.id) {
+      window.AppState.provCalReplyRequestId = null;
+      window.AppState.provCalReplyShowAll = false;
+      const draft = window.AppState.provCalAddDraft || defaultProvCalAddDraft();
+      draft.requestId = null;
+      draft.proposals = [];
+      draft.slotId = null;
+      window.AppState.provCalAddDraft = draft;
+    }
+    pushNotification(
+      "client",
+      `${req.providerName || "Usługodawca"} odrzucił(a) prośbę o termin — ${(req.serviceNames || []).join(", ") || "usługa"}.`
+    );
+    saveState();
+    renderAll();
+    showToast("Prośba o termin odrzucona.");
+    hapticTap(16);
   }
 
   function clearNotifications(role) {
@@ -12820,6 +12890,14 @@
         event.preventDefault();
         closeProvCalAdd();
         break;
+      case "minimize-prov-cal-add":
+        event.preventDefault();
+        minimizeProvCalAdd();
+        break;
+      case "expand-prov-cal-add":
+        event.preventDefault();
+        expandProvCalAdd();
+        break;
       case "clear-prov-cal-add-client":
         event.preventDefault();
         clearProvCalAddClient();
@@ -12918,6 +12996,11 @@
         removeReplyProposalSlot(d.slot);
         break;
       case "propose-open": proposeOpen(d.requestId); break;
+      case "reject-request":
+        event.preventDefault();
+        event.stopPropagation();
+        rejectRequest(d.requestId);
+        break;
       case "propose-date": proposeDate(d.requestId, d.date); break;
       case "propose-slot": proposeSlot(d.requestId, d.slot, d.date); break;
       case "propose-remove": proposeRemove(d.requestId, d.slot); break;
