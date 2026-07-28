@@ -2252,21 +2252,24 @@
     const providerActive = activeRole === "provider";
     const hasProvider = !!(user.providerRole && user.providerRole.active);
     const provider = hasProvider ? myProvider() : null;
-    const check = `<span class="app-menu__check" aria-hidden="true"></span>`;
+    const editIcon = `<span class="app-menu__profile-edit-icon" aria-hidden="true"></span>`;
 
     const providerBlock = provider
-      ? `<button type="button" class="app-menu__profile app-menu__profile--provider${providerActive ? " app-menu__profile--active" : ""}" data-action="switch-role" data-role="provider" aria-pressed="${providerActive ? "true" : "false"}">
-           <span class="app-menu__avatar app-menu__avatar--provider">${
-             provider.avatarUrl
-               ? `<img class="app-menu__avatar-img" src="${escapeHtml(provider.avatarUrl)}" alt="" />`
-               : `<span class="app-menu__avatar-initials">${escapeHtml(provider.avatarInitials || "?")}</span>`
-           }</span>
-           <span class="app-menu__profile-text">
-             <span class="app-menu__profile-label">Usługodawca</span>
-             <span class="app-menu__profile-name">${escapeHtml(provider.name)}</span>
-           </span>
-           ${providerActive ? check : ""}
-         </button>`
+      ? `<div class="app-menu__profile app-menu__profile--provider${providerActive ? " app-menu__profile--active" : ""}">
+           <button type="button" class="app-menu__profile-main" data-action="switch-role" data-role="provider" aria-pressed="${providerActive ? "true" : "false"}">
+             <span class="app-menu__avatar app-menu__avatar--provider">${
+               provider.avatarUrl
+                 ? `<img class="app-menu__avatar-img" src="${escapeHtml(provider.avatarUrl)}" alt="" />`
+                 : `<span class="app-menu__avatar-initials">${escapeHtml(provider.avatarInitials || "?")}</span>`
+             }</span>
+             <span class="app-menu__profile-text">
+               <span class="app-menu__profile-label">Usługodawca</span>
+               <span class="app-menu__profile-name">${escapeHtml(provider.name)}</span>
+             </span>
+           </button>
+           <button type="button" class="app-menu__profile-edit" data-action="edit-provider-profile"
+             aria-label="Edytuj profil usługodawcy" title="Edytuj profil">${editIcon}</button>
+         </div>`
       : `<button type="button" class="app-menu__profile app-menu__profile--add" data-action="add-provider-profile">
            <span class="app-menu__avatar app-menu__avatar--add" aria-hidden="true">+</span>
            <span class="app-menu__profile-text">
@@ -2296,14 +2299,17 @@
 
           <div class="app-menu__profiles" role="group" aria-label="Przełącz profil">
             <p class="app-menu__profiles-label">Profile</p>
-            <button type="button" class="app-menu__profile app-menu__profile--client${clientActive ? " app-menu__profile--active" : ""}" data-action="switch-role" data-role="client" aria-pressed="${clientActive ? "true" : "false"}">
-              <span class="app-menu__avatar app-menu__avatar--client">${renderClientMenuAvatar()}</span>
-              <span class="app-menu__profile-text">
-                <span class="app-menu__profile-label">Klient</span>
-                <span class="app-menu__profile-name">${escapeHtml(cp.name || "Użytkownik")}</span>
-              </span>
-              ${clientActive ? check : ""}
-            </button>
+            <div class="app-menu__profile app-menu__profile--client${clientActive ? " app-menu__profile--active" : ""}">
+              <button type="button" class="app-menu__profile-main" data-action="switch-role" data-role="client" aria-pressed="${clientActive ? "true" : "false"}">
+                <span class="app-menu__avatar app-menu__avatar--client">${renderClientMenuAvatar()}</span>
+                <span class="app-menu__profile-text">
+                  <span class="app-menu__profile-label">Klient</span>
+                  <span class="app-menu__profile-name">${escapeHtml(cp.name || "Użytkownik")}</span>
+                </span>
+              </button>
+              <button type="button" class="app-menu__profile-edit" data-action="edit-client-profile"
+                aria-label="Edytuj profil klienta" title="Edytuj profil">${editIcon}</button>
+            </div>
             <label class="app-menu__photo-btn">
               <span class="app-menu__photo-btn-label">Zmień zdjęcie profilu klienta</span>
               <input type="file" class="app-menu__file" accept="image/*" data-action="change-client-avatar" tabindex="-1" />
@@ -12514,24 +12520,51 @@
     showSimulator();
   }
 
-  function switchRole(role) {
-    if (INSTANCES.indexOf(role) === -1) return;
+  function closeAppMenuThen(fn) {
     const wasMenuOpen = !!window.AppState.appMenuOpen;
-    window.AppState.activeRole = role;
     window.AppState.appMenuOpen = false;
     saveState();
-    updateAppHeader(role);
     syncAppMenuNavButtons(false);
     if (wasMenuOpen) {
       setAppMenuOpenClass(false);
-      // Po animacji schowania menu — przełącz widok profilu.
       setTimeout(function () {
         if (window.AppState.appMenuOpen) return;
-        renderAll();
+        fn();
       }, 380);
     } else {
-      renderAll();
+      fn();
     }
+  }
+
+  function switchRole(role) {
+    if (INSTANCES.indexOf(role) === -1) return;
+    window.AppState.activeRole = role;
+    updateAppHeader(role);
+    closeAppMenuThen(function () {
+      renderAll();
+    });
+  }
+
+  function editClientProfile() {
+    window.AppState.activeRole = "client";
+    window.AppState.screen.client = "account";
+    updateAppHeader("client");
+    closeAppMenuThen(function () {
+      renderAll();
+    });
+  }
+
+  function editProviderProfile() {
+    if (!myProvider()) {
+      showToast("Brak profilu usługodawcy.");
+      return;
+    }
+    window.AppState.activeRole = "provider";
+    window.AppState.screen.provider = "settings";
+    updateAppHeader("provider");
+    closeAppMenuThen(function () {
+      renderAll();
+    });
   }
 
   function setClientAvatarFromFile(file) {
@@ -12747,6 +12780,14 @@
         showSimulator();
         break;
       case "switch-role": switchRole(d.role); break;
+      case "edit-client-profile":
+        event.preventDefault();
+        editClientProfile();
+        break;
+      case "edit-provider-profile":
+        event.preventDefault();
+        editProviderProfile();
+        break;
       case "go-screen": goScreen(d.screen); break;
       case "toggle-app-menu":
         event.preventDefault();
