@@ -7903,11 +7903,11 @@
 
     const partNote =
       isReply && inRequestDay
-        ? `<p class="prov-cal-add__part-note" data-part="${escapeHtml(dayPart)}">Klient prosi: <strong>${escapeHtml(
+        ? `<span class="prov-cal-add__part-chip" data-part="${escapeHtml(dayPart)}" title="Preferencja klienta">Prosi: <strong>${escapeHtml(
             DAY_PART_LABEL[dayPart]
-          )}</strong></p>`
+          )}</strong></span>`
         : isReply && !inRequestDay
-          ? `<p class="prov-cal-add__part-note prov-cal-add__part-note--outside">Dzień poza zapytaniem klienta.</p>`
+          ? `<span class="prov-cal-add__part-chip prov-cal-add__part-chip--outside" title="Dzień poza zapytaniem klienta">Poza zapytaniem</span>`
           : "";
 
     const chosenList =
@@ -8041,11 +8041,13 @@
                 <span class="booking__month" data-role="prov-cal-add-month">${escapeHtml(monthLabelFromISO(activeDate || stripDates[0] || allAvailDates[0]))}</span>
               </div>
               <div class="date-strip date-strip--booking" data-role="prov-cal-add-date-strip">${dateStrip}</div>
-              ${partNote}
 
-              <h3 class="booking__label booking__label--caps" data-role="prov-cal-add-times-label"${hasSvc && activeDate ? "" : " hidden"}>${
-                isReply ? "Godziny do zaproponowania" : "Wolne terminy"
-              }</h3>
+              <div class="prov-cal-add__times-head" data-role="prov-cal-add-times-head"${hasSvc && activeDate ? "" : " hidden"}>
+                <h3 class="booking__label booking__label--caps" data-role="prov-cal-add-times-label">${
+                  isReply ? "Godziny do zaproponowania" : "Wolne terminy"
+                }</h3>
+                ${partNote}
+              </div>
               <div class="time-list time-list--horizontal" data-role="prov-cal-add-time-list"${hasSvc && activeDate ? "" : " hidden"}>${timeList}</div>
               ${
                 isReply && draft.proposals.length
