@@ -499,6 +499,28 @@ a.site-nav__link:hover,
   background: var(--surface);
 }
 
+/* Płynne wejście ekranu po zmianie zakładki/ekranu (crossfade, bez transform —
+   transform łamałby position: fixed dolnej nawigacji podczas animacji). */
+@keyframes appScreenEnter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.app-screen--enter {
+  animation: appScreenEnter 0.22s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-screen--enter {
+    animation: none;
+  }
+}
+
 .app-screen--user {
   --accent: var(--user-accent);
   --accent-soft: var(--user-accent-soft);
@@ -4687,7 +4709,7 @@ body.avatar-preview-open {
 
 .service-row--booking-b .service-row__top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.55rem;
   width: 100%;
   min-width: 0;
@@ -4865,22 +4887,36 @@ span.service-variant-chip {
   cursor: default;
 }
 
-.service-row--booking-b .service-row__detail {
-  margin-top: 0.55rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--border);
+/* Opis oferty rozwija się pod nazwą — obszar rośnie/maleje (max-height). */
+.service-row--booking-b .service-row__sub-clip {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  transition: max-height 0.28s ease;
 }
 
-.service-row--booking-b .service-row__detail[hidden] {
-  display: none !important;
-}
-
-/* Pierwsza linia opisu zostaje w nagłówku; pełny tekst tylko w rozwinięciu */
-.service-row--booking-b.service-row--expanded .service-row__sub {
+.service-row--booking-b .service-row__sub-clip .service-row__sub {
   display: -webkit-box;
   -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.service-row--booking-b.service-row--expanded .service-row__sub-clip .service-row__sub {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+.service-row--booking-b .service-row__thumb,
+.service-row--booking-b .service-row__check {
+  margin-top: 0.1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .service-row--booking-b .service-row__sub-clip {
+    transition: none;
+  }
 }
 
 .service-list__add {

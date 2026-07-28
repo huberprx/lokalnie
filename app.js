@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.2";
+  const APP_VERSION = "1.0.43";
 
   const PWA = {
     registration: null,
@@ -797,9 +797,49 @@
     return updated;
   }
 
+  function animateServiceDescClip(row, expanded) {
+    const clip = row.querySelector('[data-role="service-desc-clip"]');
+    const sub = clip && clip.querySelector(".service-row__sub");
+    if (!clip || !sub) return false;
+
+    if (prefersReducedMotion()) {
+      clip.style.maxHeight = "";
+      clip.style.transition = "";
+      return false;
+    }
+
+    const from = Math.max(0, Math.round(clip.getBoundingClientRect().height));
+
+    // Zmierz docelową wysokość bez animacji.
+    clip.style.transition = "none";
+    row.classList.toggle("service-row--expanded", expanded);
+    clip.style.maxHeight = "none";
+    const to = Math.max(1, Math.ceil(clip.getBoundingClientRect().height || sub.scrollHeight));
+
+    clip.style.maxHeight = from + "px";
+    void clip.offsetHeight;
+    clip.style.transition = "";
+    clip.style.maxHeight = to + "px";
+
+    function clearInline() {
+      clip.style.maxHeight = "";
+      clip.style.transition = "";
+      clip.removeEventListener("transitionend", onEnd);
+    }
+    function onEnd(event) {
+      if (event.target !== clip || event.propertyName !== "max-height") return;
+      clearInline();
+    }
+    clip.addEventListener("transitionend", onEnd);
+    window.setTimeout(clearInline, 360);
+    return true;
+  }
+
   function applyServiceRowExpanded(serviceId, expanded) {
     document.querySelectorAll('.service-row[data-service-id="' + serviceId + '"]').forEach(function (row) {
-      row.classList.toggle("service-row--expanded", expanded);
+      if (!animateServiceDescClip(row, expanded)) {
+        row.classList.toggle("service-row--expanded", expanded);
+      }
       row.querySelectorAll('[data-action="toggle-service-desc"]').forEach(function (btn) {
         btn.setAttribute("aria-expanded", expanded ? "true" : "false");
         if (btn.classList.contains("service-row__static-main--btn")) {
@@ -3626,7 +3666,15 @@
           <button type="button" class="service-row__static-main service-row__static-main--btn"${hasDesc ? ` data-action="toggle-service-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}"` : " disabled aria-disabled=\"true\""} aria-label="${escapeHtml(hasDesc ? expandLabel : s.name)}" title="${escapeHtml(hasDesc ? expandLabel : s.name)}">
             <span class="service-row__body">
               <span class="service-row__name">${escapeHtml(s.name)}</span>
-              ${summary ? `<span class="service-row__sub">${escapeHtml(summary)}</span>` : ""}
+              ${
+                detail
+                  ? `<span class="service-row__sub-clip" data-role="service-desc-clip">
+                      <span class="service-row__sub">${escapeHtml(detail)}</span>
+                    </span>`
+                  : summary
+                    ? `<span class="service-row__sub">${escapeHtml(summary)}</span>`
+                    : ""
+              }
             </span>
             <span class="service-row__meta">
               <span class="service-row__dur">${escapeHtml(formatDuration(resolved.durationMin))}</span>
@@ -3638,13 +3686,6 @@
           </button>
         </div>
         ${renderServiceVariantCarousel(s, on ? resolved.id : null, { interactive: true })}
-        ${
-          hasDesc
-            ? `<div class="service-row__detail"${expanded ? "" : " hidden"}>
-                <p class="service-row__detail-text">${escapeHtml(detail)}</p>
-              </div>`
-            : ""
-        }
       </article>`;
   }
 
@@ -11182,17 +11223,48 @@
     el.innerHTML = renderRoleHTML(role);
   }
 
+  // Ostatnio wyrenderowane ekrany — do wykrycia zmiany ekranu i crossfade wejścia.
+  let lastRenderedScreens = null;
+
+  function playScreenEnterAnim(prev) {
+    if (prefersReducedMotion()) return;
+    const role = window.AppState.activeRole || "client";
+    const mountIds = [];
+    if (prev.client !== window.AppState.screen.client) mountIds.push("app-client");
+    if (prev.provider !== window.AppState.screen.provider) mountIds.push("app-provider");
+    if (prev.role !== role || prev[role] !== window.AppState.screen[role]) mountIds.push("app-fullscreen");
+    mountIds.forEach(function (id) {
+      const mount = document.getElementById(id);
+      const screen = mount && mount.querySelector(":scope > .app-screen");
+      if (!screen) return;
+      screen.classList.remove("app-screen--enter");
+      void screen.offsetWidth;
+      screen.classList.add("app-screen--enter");
+      screen.addEventListener("animationend", function handler() {
+        screen.classList.remove("app-screen--enter");
+        screen.removeEventListener("animationend", handler);
+      });
+    });
+  }
+
   function renderAll() {
     closeProviderCardMenu();
     const prevBottomNavTab = captureBottomNavTab();
+    const prevScreens = lastRenderedScreens;
     INSTANCES.forEach(render);
     renderFullscreen();
+    lastRenderedScreens = {
+      client: window.AppState.screen.client,
+      provider: window.AppState.screen.provider,
+      role: window.AppState.activeRole || "client",
+    };
     syncSearchFilterControlIds();
     syncAppMenus();
     // Po layoutcie — inaczej przy flex itemach szerokość bywa jeszcze 0.
     requestAnimationFrame(function () {
       syncBottomNavIndicators(prevBottomNavTab);
       finishProvCalAddTabAnim();
+      if (prevScreens) playScreenEnterAnim(prevScreens);
     });
     document.querySelectorAll('[data-role="booking-date-strip"], [data-role="prov-cal-add-date-strip"]').forEach(updateBookingMonthLabel);
     requestAnimationFrame(function () {
