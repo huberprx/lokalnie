@@ -3289,8 +3289,8 @@ body.cancel-visit-dialog-open {
 
 .category-chip {
   appearance: none;
-  border: 1px solid var(--border);
-  background: var(--surface-2);
+  border: 1px solid transparent;
+  background: #fff;
   color: var(--text-muted);
   font-family: inherit;
   font-size: 0.78rem;
@@ -3328,9 +3328,15 @@ body.cancel-visit-dialog-open {
 }
 
 .category-chip--active {
-  background: var(--accent-client-soft);
-  border-color: var(--accent-client);
-  color: var(--accent-client);
+  background: #111;
+  border-color: #111;
+  color: #fff;
+}
+
+.category-chip--active:hover {
+  color: #fff;
+  background: #111;
+  border-color: #111;
 }
 
 .subcategory-chip {
@@ -6841,6 +6847,10 @@ body.service-photo-preview-open {
 }
 
 .prov-cal-add {
+  --prov-cal-add-pad-x: 0.85rem;
+  --prov-cal-add-side: var(--bottom-nav-item-h);
+  --prov-cal-add-icon-size: var(--bottom-nav-item-h);
+  --prov-cal-add-row-gap: 0.75rem;
   position: absolute;
   inset: 0;
   /* Nad dolnym menu (nav ma z-index 120). */
@@ -6848,22 +6858,14 @@ body.service-photo-preview-open {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-}
-
-.prov-cal-add__backdrop {
-  appearance: none;
-  position: absolute;
-  inset: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: rgba(15, 23, 42, 0.34);
-  cursor: pointer;
+  /* Kalendarz w tle zostaje klikalny — tylko sheet łapie eventy. */
+  pointer-events: none;
 }
 
 .prov-cal-add__sheet {
   position: relative;
   z-index: 1;
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   max-height: min(92%, 40rem);
@@ -6872,12 +6874,21 @@ body.service-photo-preview-open {
   border-radius: 18px 18px 0 0;
   background: var(--surface);
   box-shadow: 0 -10px 36px rgba(15, 23, 42, 0.16);
-  animation: prov-cal-add-up 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
   /* Jak panel klienta, ale w akcentach usługodawcy */
   --accent: var(--accent-provider);
   --accent-soft: var(--accent-provider-soft);
   --accent-client: var(--accent-provider);
   --accent-client-soft: var(--accent-provider-soft);
+}
+
+/* Wjazd tylko przy pierwszym otwarciu — nie przy zmianie dnia / slotu. */
+.prov-cal-add--enter .prov-cal-add__sheet {
+  animation: prov-cal-add-up 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.prov-cal-add__sheet.is-height-animating {
+  animation: none !important;
+  will-change: height;
 }
 
 @keyframes prov-cal-add-up {
@@ -6896,7 +6907,7 @@ body.service-photo-preview-open {
   grid-template-columns: minmax(4.5rem, 1fr) auto minmax(4.5rem, 1fr);
   align-items: center;
   gap: 0.5rem;
-  padding: 0.85rem 0.85rem 0.55rem;
+  padding: 0.85rem var(--prov-cal-add-pad-x) 0.55rem;
   flex-shrink: 0;
 }
 
@@ -6924,6 +6935,7 @@ body.service-photo-preview-open {
 }
 
 .prov-cal-add__tabs {
+  position: relative;
   grid-column: 2;
   justify-self: center;
   display: flex;
@@ -6938,6 +6950,7 @@ body.service-photo-preview-open {
   appearance: none;
   -webkit-appearance: none;
   position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -6954,17 +6967,7 @@ body.service-photo-preview-open {
   line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
-}
-
-.prov-cal-add__tab::after {
-  content: "";
-  position: absolute;
-  left: 0.35rem;
-  right: 0.35rem;
-  bottom: 0;
-  height: 2px;
-  border-radius: 2px 2px 0 0;
-  background: transparent;
+  transition: color 0.22s ease;
 }
 
 .prov-cal-add__tab.is-active {
@@ -6972,8 +6975,47 @@ body.service-photo-preview-open {
   font-weight: 750;
 }
 
-.prov-cal-add__tab.is-active::after {
+.prov-cal-add__tab-ink {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  z-index: 0;
+  width: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
   background: var(--text);
+  transform: translateX(0);
+  transition:
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    width 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+  will-change: transform, width;
+}
+
+.prov-cal-add__body,
+.prov-cal-add__foot {
+  transition: opacity 0.24s ease, transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.prov-cal-add__body.prov-cal-add--tab-swap,
+.prov-cal-add__foot.prov-cal-add--tab-swap {
+  opacity: 0;
+  transform: translateX(var(--tab-swap-x, 12px));
+}
+
+.prov-cal-add__body.prov-cal-add--tab-enter,
+.prov-cal-add__foot.prov-cal-add--tab-enter {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prov-cal-add__tab,
+  .prov-cal-add__tab-ink,
+  .prov-cal-add__body,
+  .prov-cal-add__foot {
+    transition: none;
+  }
 }
 
 .prov-cal-add__tab-label {
@@ -7121,8 +7163,8 @@ body.service-photo-preview-open {
 .prov-cal-add__head-spacer {
   grid-column: 3;
   justify-self: end;
-  width: 2.1rem;
-  height: 2.1rem;
+  width: var(--prov-cal-add-side);
+  height: var(--prov-cal-add-side);
 }
 
 .prov-cal-add__collapse {
@@ -7131,23 +7173,25 @@ body.service-photo-preview-open {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2.1rem;
-  height: 2.1rem;
+  /* Aktywne pole kliknięcia: 44px; bez tła. */
+  width: var(--prov-cal-add-side);
+  height: var(--prov-cal-add-side);
   margin: 0;
   padding: 0;
   border: 0;
   border-radius: 999px;
-  background: var(--surface-2);
+  background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   justify-self: start;
   grid-column: 1;
   flex-shrink: 0;
-  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+  transition: color 0.15s ease, transform 0.15s ease;
 }
 
 .prov-cal-add__collapse:active {
   transform: scale(0.94);
+  color: var(--text);
 }
 
 .prov-cal-add__collapse-icon {
@@ -7164,21 +7208,14 @@ body.service-photo-preview-open {
   transform: rotate(180deg);
 }
 
-.prov-cal-add--minimized {
-  pointer-events: none;
-}
-
-.prov-cal-add--minimized .prov-cal-add__backdrop {
-  background: transparent;
-  pointer-events: none;
-  cursor: default;
-}
-
 .prov-cal-add--minimized .prov-cal-add__sheet {
-  pointer-events: auto;
   max-height: none;
   animation: none;
   box-shadow: 0 -6px 24px rgba(15, 23, 42, 0.12);
+}
+
+.prov-cal-add--minimized .prov-cal-add__head--tabs {
+  padding-top: 0.55rem;
 }
 
 .prov-cal-add--minimized .prov-cal-add__head--mini {
@@ -7194,7 +7231,7 @@ body.service-photo-preview-open {
   display: none;
 }
 
-.prov-cal-add--minimized .prov-cal-add__collapse {
+.prov-cal-add--minimized .prov-cal-add__head--mini .prov-cal-add__collapse {
   grid-column: auto;
   justify-self: start;
   margin: 0;
@@ -7213,6 +7250,7 @@ body.service-photo-preview-open {
 .prov-cal-add--minimized .date-strip,
 .prov-cal-add--minimized .prov-cal-add__part-note,
 .prov-cal-add--minimized .prov-cal-add__schedule > .booking__label,
+.prov-cal-add--minimized .prov-cal-add__schedule > .empty-note,
 .prov-cal-add--minimized .proposal-list--panel {
   display: none !important;
 }
@@ -7238,7 +7276,7 @@ body.service-photo-preview-open {
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  padding: 0.15rem 0.85rem 0.55rem;
+  padding: 0.15rem var(--prov-cal-add-pad-x) 0.55rem;
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
@@ -7262,7 +7300,7 @@ body.service-photo-preview-open {
 .prov-cal-add__client-row {
   display: flex;
   align-items: center;
-  gap: 0.7rem;
+  gap: var(--prov-cal-add-row-gap, 0.75rem);
   min-width: 0;
 }
 
@@ -7326,9 +7364,9 @@ body.service-photo-preview-open {
 .prov-cal-add__client-search {
   appearance: none;
   -webkit-appearance: none;
-  flex: 0 0 1.85rem;
-  width: 1.85rem;
-  height: 1.85rem;
+  flex: 0 0 var(--prov-cal-add-side);
+  width: var(--prov-cal-add-side);
+  height: var(--prov-cal-add-side);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -7343,10 +7381,7 @@ body.service-photo-preview-open {
 }
 
 .prov-cal-add__client-clear {
-  flex-basis: 1.55rem;
-  width: 1.55rem;
-  height: 1.55rem;
-  font-size: 1.15rem;
+  font-size: 1.25rem;
   font-weight: 500;
   line-height: 1;
   opacity: 0.7;
@@ -7366,12 +7401,7 @@ body.service-photo-preview-open {
 
 .prov-cal-add__client-row > .prov-cal-add__client-clear,
 .prov-cal-add__client-row > .prov-cal-add__client-search {
-  margin-left: -0.15rem;
-}
-
-.prov-cal-add__client-row > .prov-cal-add__client-main + .prov-cal-add__client-clear,
-.prov-cal-add__client-row > .prov-cal-add__client-main + .prov-cal-add__client-search {
-  margin-left: 0.1rem;
+  margin-left: 0;
 }
 
 /* Panel kontaktów (WhatsApp-style) — wysuwany z dołu */
@@ -8170,9 +8200,9 @@ body.client-sheet-open {
 }
 
 .prov-cal-add__client-avatar {
-  flex: 0 0 1.85rem;
-  width: 1.85rem;
-  height: 1.85rem;
+  flex: 0 0 var(--prov-cal-add-icon-size);
+  width: var(--prov-cal-add-icon-size);
+  height: var(--prov-cal-add-icon-size);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -8182,8 +8212,8 @@ body.client-sheet-open {
 }
 
 .prov-cal-add__client-avatar svg {
-  width: 1rem;
-  height: 1rem;
+  width: 1.15rem;
+  height: 1.15rem;
   display: block;
 }
 
@@ -8228,24 +8258,42 @@ body.client-sheet-open {
   width: 100%;
 }
 
-.prov-cal-add__service-pick .avail-loc-pick__btn {
-  align-items: flex-start;
-  gap: 0.7rem;
+/* Wyższa specyficzność niż .avail-loc-pick--compact (gap: 0) — ten sam układ co wiersz klienta. */
+.prov-cal-add .prov-cal-add__service-pick.avail-loc-pick--compact .avail-loc-pick__btn {
+  display: flex;
+  align-items: center;
+  gap: var(--prov-cal-add-row-gap, 0.75rem);
   min-height: 2.55rem;
+  padding: 0;
   font-size: 16px;
 }
 
-.prov-cal-add__service-pick .avail-loc-pick__btn .prov-cal-add__client-avatar,
-.prov-cal-add__service-pick .avail-loc-pick__btn .avail-loc-pick__chevron {
-  margin-top: 0.35rem;
+.prov-cal-add .prov-cal-add__service-pick.avail-loc-pick--compact .avail-loc-pick__btn .prov-cal-add__client-avatar {
+  margin-top: 0;
+  flex: 0 0 var(--prov-cal-add-icon-size);
 }
 
-.prov-cal-add__service-pick .avail-edit__loc-content {
+.prov-cal-add .prov-cal-add__service-pick.avail-loc-pick--compact .avail-loc-pick__btn .avail-loc-pick__chevron {
+  margin-top: 0;
+  margin-left: 0;
+  flex: 0 0 var(--prov-cal-add-side);
+  width: var(--prov-cal-add-side);
+  height: var(--prov-cal-add-side);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-position: center;
+  background-size: 1.05rem 1.05rem;
+  -webkit-mask-size: 1.05rem 1.05rem;
+  mask-size: 1.05rem 1.05rem;
+}
+
+.prov-cal-add .prov-cal-add__service-pick.avail-loc-pick--compact .avail-edit__loc-content {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  align-items: flex-start;
-  padding: 0.2rem 0;
+  align-items: center;
+  padding: 0.45rem 0;
 }
 
 .prov-cal-add__service-pick .avail-loc-pick__label {
@@ -8260,10 +8308,10 @@ body.client-sheet-open {
 .prov-cal-add__service-summary.visit-card__services {
   width: 100%;
   margin: 0;
-  padding-left: 0;
+  padding: 0;
   list-style: none;
   gap: 0.15rem;
-  font-size: 0.95rem;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.25;
   text-align: left;
@@ -8549,7 +8597,7 @@ body.client-sheet-open {
   gap: 0.55rem;
   width: 100%;
   margin: 0;
-  padding: 0.55rem 0.85rem calc(0.55rem + env(safe-area-inset-bottom, 0px));
+  padding: 0.55rem var(--prov-cal-add-pad-x) calc(0.55rem + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
   background: var(--surface);
   box-shadow: none;
@@ -8571,8 +8619,8 @@ body.client-sheet-open {
 }
 
 .prov-cal-add__foot .bottom-nav__clear {
-  width: var(--bottom-nav-item-h);
-  height: var(--bottom-nav-item-h);
+  width: var(--prov-cal-add-side);
+  height: var(--prov-cal-add-side);
 }
 
 .prov-cal-add__foot .bottom-nav__clear .bottom-nav__icon {

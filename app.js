@@ -4608,6 +4608,15 @@
       fromMin: fromMin,
       toMin: toMin,
     });
+    // Panel „+” otwarty — synchronizuj dzień i slot w draftcie.
+    if (window.AppState.provCalAddOpen && window.AppState.provCalAddDraft && !replyRequestId()) {
+      const draft = window.AppState.provCalAddDraft;
+      const dur = Math.max(5, toMin - fromMin);
+      const durSvc = durationServiceForMinutes(dur);
+      draft.dateISO = dateISO;
+      draft.serviceIds = [durSvc.id];
+      draft.slotId = "slot-" + dateISO + "-" + fromMin;
+    }
     // Nie zmieniaj provCalDate — inaczej okno 1/3/5 dni skacze do klikniętej kolumny.
     saveState();
     renderAll();
@@ -6856,9 +6865,79 @@
     }).length;
   }
 
+  /** Animacja przełączania zakładek panelu „+” (po re-renderze). */
+  let provCalAddTabAnim = null;
+  /** Animacja wjazdu sheetu — tylko przy pierwszym otwarciu, nie przy zmianie dnia/slotu. */
+  let provCalAddPlayEnterAnim = false;
+
+  function markProvCalAddEnterAnim() {
+    if (!window.AppState.provCalAddOpen) provCalAddPlayEnterAnim = true;
+  }
+
+  function captureProvCalAddTabInkFrom() {
+    const tabs = document.querySelector(".prov-cal-add__tabs");
+    const active = tabs && tabs.querySelector(".prov-cal-add__tab.is-active");
+    if (!tabs || !active) return null;
+    return { left: active.offsetLeft, width: active.offsetWidth };
+  }
+
+  function placeProvCalAddTabInk(from) {
+    const tabs = document.querySelector(".prov-cal-add__tabs");
+    const ink = tabs && tabs.querySelector('[data-role="prov-cal-add-tab-ink"]');
+    const active = tabs && tabs.querySelector(".prov-cal-add__tab.is-active");
+    if (!tabs || !ink || !active) return;
+    const left = active.offsetLeft;
+    const width = active.offsetWidth;
+    if (from && (from.left !== left || from.width !== width)) {
+      ink.style.transition = "none";
+      ink.style.width = from.width + "px";
+      ink.style.transform = "translateX(" + from.left + "px)";
+      void ink.offsetWidth;
+      ink.style.transition = "";
+    }
+    ink.style.width = width + "px";
+    ink.style.transform = "translateX(" + left + "px)";
+  }
+
+  function animateProvCalAddTabContent(dir) {
+    const sheet = document.querySelector(".prov-cal-add__sheet");
+    if (!sheet) return;
+    const nodes = [sheet.querySelector(".prov-cal-add__body"), sheet.querySelector(".prov-cal-add__foot")];
+    const x = (dir < 0 ? -1 : 1) * 14;
+    nodes.forEach(function (el) {
+      if (!el) return;
+      el.style.setProperty("--tab-swap-x", x + "px");
+      el.classList.remove("prov-cal-add--tab-enter");
+      el.classList.add("prov-cal-add--tab-swap");
+    });
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        nodes.forEach(function (el) {
+          if (!el) return;
+          el.classList.add("prov-cal-add--tab-enter");
+          el.classList.remove("prov-cal-add--tab-swap");
+        });
+      });
+    });
+  }
+
+  function finishProvCalAddTabAnim() {
+    const anim = provCalAddTabAnim;
+    provCalAddTabAnim = null;
+    placeProvCalAddTabInk(anim && anim.fromInk ? anim.fromInk : null);
+    if (anim && anim.animate) animateProvCalAddTabContent(anim.dir || 1);
+  }
+
   function setProvCalAddTab(tab) {
     const next = tab === "requests" ? "requests" : "new";
+    const prev =
+      replyRequestId() || window.AppState.provCalAddTab === "requests" ? "requests" : "new";
+    if (next === prev && !replyRequestId() && window.AppState.provCalAddOpen && !window.AppState.provCalAddMinimized) {
+      return;
+    }
     const wasReply = !!replyRequestId();
+    const fromInk = captureProvCalAddTabInkFrom();
+    const panelOpen = !!document.querySelector('[data-role="prov-cal-add"]');
     if (!wasReply && window.AppState.provCalAddDraft) {
       captureProvCalAddClientName();
     }
@@ -6866,11 +6945,19 @@
       clearProvCalReplyMode();
       window.AppState.provCalAddDraft = defaultProvCalAddDraft();
     }
+    markProvCalAddEnterAnim();
     window.AppState.provCalAddTab = next;
     window.AppState.provCalAddOpen = true;
     window.AppState.provCalAddMinimized = false;
     if (!window.AppState.provCalAddDraft) {
       window.AppState.provCalAddDraft = defaultProvCalAddDraft();
+    }
+    if (panelOpen && next !== prev) {
+      provCalAddTabAnim = {
+        fromInk: fromInk,
+        animate: true,
+        dir: next === "requests" ? 1 : -1,
+      };
     }
     saveState();
     renderAll();
@@ -6884,6 +6971,7 @@
 
   function openProvCalAddRequests() {
     clearProvCalReplyMode();
+    markProvCalAddEnterAnim();
     window.AppState.provCalAddTab = "requests";
     window.AppState.provCalAddDraft = defaultProvCalAddDraft();
     window.AppState.provCalAddOpen = true;
@@ -6909,6 +6997,7 @@
       window.AppState.provCalDate = sel.dateISO;
       window.AppState.provCalPickerMonth = sel.dateISO.slice(0, 7);
     }
+    markProvCalAddEnterAnim();
     window.AppState.provCalAddTab = "new";
     window.AppState.provCalAddOpen = true;
     window.AppState.provCalAddMinimized = false;
@@ -6920,6 +7009,40 @@
     requestAnimationFrame(function () {
       const input = document.querySelector('[data-role="prov-cal-add-client"]');
       if (input) input.focus();
+    });
+  }
+
+  function animateProvCalAddSheetHeight(fromH) {
+    if (!fromH || fromH < 8) return;
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    requestAnimationFrame(function () {
+      const sheet = document.querySelector(".prov-cal-add__sheet");
+      if (!sheet) return;
+      const toH = sheet.getBoundingClientRect().height;
+      if (!toH || Math.abs(toH - fromH) < 2) return;
+      let cleaned = false;
+      function cleanup(event) {
+        if (cleaned) return;
+        if (event && event.propertyName && event.propertyName !== "height") return;
+        cleaned = true;
+        sheet.classList.remove("is-height-animating");
+        sheet.style.height = "";
+        sheet.style.maxHeight = "";
+        sheet.style.overflow = "";
+        sheet.style.transition = "";
+        sheet.removeEventListener("transitionend", cleanup);
+      }
+      sheet.classList.add("is-height-animating");
+      sheet.style.animation = "none";
+      sheet.style.overflow = "hidden";
+      sheet.style.maxHeight = "none";
+      sheet.style.height = fromH + "px";
+      sheet.style.transition = "none";
+      void sheet.offsetHeight;
+      sheet.style.transition = "height 300ms cubic-bezier(0.22, 1, 0.36, 1)";
+      sheet.style.height = toH + "px";
+      sheet.addEventListener("transitionend", cleanup);
+      setTimeout(cleanup, 340);
     });
   }
 
@@ -6935,17 +7058,23 @@
     if (window.AppState.provCalAddDraft && window.AppState.provCalDate) {
       window.AppState.provCalAddDraft.dateISO = window.AppState.provCalDate;
     }
+    const sheet = document.querySelector(".prov-cal-add__sheet");
+    const fromH = sheet ? sheet.getBoundingClientRect().height : 0;
     window.AppState.provCalAddMinimized = true;
     saveState();
     renderAll();
+    animateProvCalAddSheetHeight(fromH);
     hapticTap(12);
   }
 
   function expandProvCalAdd() {
     if (!window.AppState.provCalAddOpen) return;
+    const sheet = document.querySelector(".prov-cal-add__sheet");
+    const fromH = sheet ? sheet.getBoundingClientRect().height : 0;
     window.AppState.provCalAddMinimized = false;
     saveState();
     renderAll();
+    animateProvCalAddSheetHeight(fromH);
     hapticTap(12);
   }
 
@@ -6968,6 +7097,7 @@
     draft.serviceIds = serviceIdsFromBooking(bk);
     draft.dateISO = bk.dateISO || ensureProvCalDate();
     draft.slotId = provCalAddSlotIdForBooking(bk);
+    markProvCalAddEnterAnim();
     window.AppState.provCalAddTab = "new";
     window.AppState.provCalAddOpen = true;
     window.AppState.provCalAddMinimized = false;
@@ -7620,8 +7750,8 @@
           ? `<p class="prov-cal-add__part-note prov-cal-add__part-note--outside">Dzień poza zapytaniem klienta.</p>`
           : "";
 
-    const chosenList = isReply
-      ? draft.proposals.length
+    const chosenList =
+      isReply && draft.proposals.length
         ? `<ul class="proposal-list proposal-list--panel">
             ${draft.proposals
               .map(function (c) {
@@ -7634,8 +7764,7 @@
               })
               .join("")}
           </ul>`
-        : `<p class="empty-note">Zaznacz godziny, które chcesz wysłać klientowi.</p>`
-      : "";
+        : "";
 
     const canSave = isReply ? draft.proposals.length > 0 : hasSvc && !!draft.slotId;
     const priceText = !hasSvc
@@ -7670,7 +7799,7 @@
     const showRequestsList = showTabs && activeTab === "requests" && !isReply;
     const pendingBadge = providerPendingRequestCount();
     const headCenter = showTabs
-      ? `<div class="prov-cal-add__tabs" role="tablist" aria-label="Zakładki panelu">
+      ? `<div class="prov-cal-add__tabs" role="tablist" aria-label="Zakładki panelu" data-active="${escapeHtml(activeTab)}">
             <button type="button" class="prov-cal-add__tab${activeTab === "new" ? " is-active" : ""}" role="tab"
               data-action="prov-cal-add-tab" data-tab="new" aria-selected="${activeTab === "new" ? "true" : "false"}">Nowy termin</button>
             <button type="button" class="prov-cal-add__tab${activeTab === "requests" ? " is-active" : ""}" role="tab"
@@ -7684,6 +7813,7 @@
                   : ""
               }
             </button>
+            <span class="prov-cal-add__tab-ink" data-role="prov-cal-add-tab-ink" aria-hidden="true"></span>
           </div>
           <h3 class="visually-hidden" id="prov-cal-add-title">${escapeHtml(
             activeTab === "requests" ? (isReply ? title : "Prośby o termin") : "Nowy termin"
@@ -7758,7 +7888,7 @@
               }</h3>
               <div class="time-list time-list--horizontal"${hasSvc && activeDate ? "" : " hidden"}>${timeList}</div>
               ${
-                isReply
+                isReply && draft.proposals.length
                   ? `<h3 class="booking__label booking__label--caps">Do wysłania (${draft.proposals.length})</h3>${chosenList}`
                   : ""
               }
@@ -7794,19 +7924,19 @@
             </button>
           </div>`;
 
+    const enterCls = provCalAddPlayEnterAnim ? " prov-cal-add--enter" : "";
+    provCalAddPlayEnterAnim = false;
+
     return `
       <div class="prov-cal-add${isReply ? " prov-cal-add--reply" : ""}${
         showRequestsList ? " prov-cal-add--requests" : ""
-      }${showTabs ? " prov-cal-add--tabs" : ""}${minimized ? " prov-cal-add--minimized" : ""}" data-role="prov-cal-add">
-        <button type="button" class="prov-cal-add__backdrop" data-action="${
-          minimized ? "expand-prov-cal-add" : "close-prov-cal-add"
-        }" aria-label="${minimized ? "Rozwiń panel" : "Zamknij"}"></button>
-        <div class="prov-cal-add__sheet" role="dialog" aria-modal="${minimized ? "false" : "true"}" aria-labelledby="prov-cal-add-title">
+      }${showTabs ? " prov-cal-add--tabs" : ""}${minimized ? " prov-cal-add--minimized" : ""}${enterCls}" data-role="prov-cal-add">
+        <div class="prov-cal-add__sheet" role="dialog" aria-modal="false" aria-labelledby="prov-cal-add-title">
           <header class="prov-cal-add__head${showTabs ? " prov-cal-add__head--tabs" : ""}${
-            minimized ? " prov-cal-add__head--mini" : ""
+            minimized && !showTabs ? " prov-cal-add__head--mini" : ""
           }">
             ${collapseBtn}
-            ${minimized ? `<h3 class="visually-hidden" id="prov-cal-add-title">${escapeHtml(title)}</h3>` : headCenter}
+            ${headCenter}
             <span class="prov-cal-add__head-spacer" aria-hidden="true"></span>
           </header>
           <div class="prov-cal-add__body">
@@ -11062,6 +11192,7 @@
     // Po layoutcie — inaczej przy flex itemach szerokość bywa jeszcze 0.
     requestAnimationFrame(function () {
       syncBottomNavIndicators(prevBottomNavTab);
+      finishProvCalAddTabAnim();
     });
     document.querySelectorAll('[data-role="booking-date-strip"], [data-role="prov-cal-add-date-strip"]').forEach(updateBookingMonthLabel);
     requestAnimationFrame(function () {
@@ -11859,6 +11990,7 @@
 
     window.AppState.provCalReplyRequestId = req.id;
     window.AppState.provCalReplyShowAll = false;
+    markProvCalAddEnterAnim();
     window.AppState.provCalAddTab = "requests";
     window.AppState.provCalAddOpen = true;
     window.AppState.provCalAddMinimized = false;
@@ -13411,7 +13543,7 @@
 
     function armEmptyTap(event) {
       if (event.button != null && event.button !== 0) return;
-      if (window.AppState.provCalAddOpen || window.AppState.provCalMonthOpen) return;
+      if (window.AppState.provCalMonthOpen) return;
       if (document.body.classList.contains("prov-cal-dragging")) return;
       if (document.body.classList.contains("prov-cal-pinching")) return;
       if (document.body.classList.contains("prov-cal-resizing")) return;
@@ -13481,7 +13613,7 @@
         if (window._provCalSlotIgnoreClick || window._provCalResizeIgnoreClick || window._provCalSwipeSuppressClick) {
           return;
         }
-        if (window.AppState.provCalAddOpen || window.AppState.provCalMonthOpen) return;
+        if (window.AppState.provCalMonthOpen) return;
         const track = resolveEmptyTapTrack(event.target);
         if (!track) return;
         if (track.closest(".prov-cal-body--day-swipe, .prov-cal-body--animating-days")) return;
