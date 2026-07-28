@@ -513,6 +513,62 @@
     },
   ];
 
+  /** Prośby o termin (usługi „na prośbę”) — lista w panelu „+” → Prośby o termin. */
+  const DEMO_REQUESTS = [
+    {
+      id: "rq-demo-anna",
+      providerId: "grzesiu-barber",
+      providerName: "Grzesiu Barber",
+      clientName: "Anna Kowalska",
+      clientPhone: "+48 512 345 678",
+      clientEmail: "anna.kowalska@example.com",
+      serviceIds: ["svc-gb-3"],
+      serviceNames: ["Combo: włosy + broda"],
+      days: [
+        { dateISO: "2026-07-21", part: "am" },
+        { dateISO: "2026-07-22", part: "any" },
+      ],
+      proposals: [],
+      acceptedProposalId: null,
+      status: "pending",
+    },
+    {
+      id: "rq-demo-tomasz",
+      providerId: "grzesiu-barber",
+      providerName: "Grzesiu Barber",
+      clientName: "Tomasz Nowak",
+      clientPhone: "+48 601 222 333",
+      clientEmail: "tomasz.nowak@example.com",
+      serviceIds: ["svc-gb-3"],
+      serviceNames: ["Combo: włosy + broda"],
+      days: [
+        { dateISO: "2026-07-23", part: "pm" },
+        { dateISO: "2026-07-24", part: "pm" },
+      ],
+      proposals: [],
+      acceptedProposalId: null,
+      status: "pending",
+    },
+    {
+      id: "rq-demo-magda",
+      providerId: "grzesiu-barber",
+      providerName: "Grzesiu Barber",
+      clientName: "Magda Wiśniewska",
+      clientPhone: "+48 725 880 114",
+      clientEmail: "magda.wisniewska@example.com",
+      serviceIds: ["svc-gb-3"],
+      serviceNames: ["Combo: włosy + broda"],
+      days: [
+        { dateISO: "2026-07-20", part: "any" },
+        { dateISO: "2026-07-25", part: "am" },
+        { dateISO: "2026-07-27", part: "any" },
+      ],
+      proposals: [],
+      acceptedProposalId: null,
+      status: "pending",
+    },
+  ];
+
   function todayOpenHoursLabel(weekly) {
     if (!weekly || !Object.keys(weekly).length) return "Brak grafiku";
     const dow = new Date(DEMO_TODAY_ISO + "T00:00:00").getDay();
@@ -536,5 +592,6 @@
     CURRENT_USER,
     DEMO_TODAY_ISO,
     DEMO_BOOKINGS,
+    DEMO_REQUESTS,
   };
 })();

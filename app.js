@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.0";
+  const APP_VERSION = "1.0.2";
 
   const PWA = {
     registration: null,
@@ -65,7 +65,14 @@
       bookings: (data().DEMO_BOOKINGS || []).map(function (b) {
         return Object.assign({}, b);
       }),
-      requests: [],
+      requests: (data().DEMO_REQUESTS || []).map(function (r) {
+        return Object.assign({}, r, {
+          days: Array.isArray(r.days) ? r.days.map(function (d) { return Object.assign({}, d); }) : [],
+          proposals: Array.isArray(r.proposals) ? r.proposals.map(function (p) { return Object.assign({}, p); }) : [],
+          serviceIds: Array.isArray(r.serviceIds) ? r.serviceIds.slice() : [],
+          serviceNames: Array.isArray(r.serviceNames) ? r.serviceNames.slice() : [],
+        });
+      }),
       notifications: [],
       simView: { client: "mobile", provider: "mobile" },
       loggedIn: false,
@@ -99,6 +106,8 @@
       /** Panel „+” → nowy termin z kalendarza usługodawcy. */
       provCalAddOpen: false,
       provCalAddDraft: null,
+      /** Zakładka panelu „+”: "new" | "requests". */
+      provCalAddTab: "new",
       /** Odpowiedź na zapytanie o termin w kalendarzu (panel „+” w trybie propozycji). */
       provCalReplyRequestId: null,
       /** false = fokusienie na dniach klienta; true = pełny kontekst kalendarza. */
@@ -1947,6 +1956,7 @@
         provCalSearchQ: typeof stored.provCalSearchQ === "string" ? stored.provCalSearchQ : base.provCalSearchQ,
         provCalAddOpen: false,
         provCalAddDraft: null,
+        provCalAddTab: "new",
         provCalReplyRequestId: null,
         provCalReplyShowAll: false,
         dashShowFreeSlots: stored.dashShowFreeSlots === true,
@@ -2001,6 +2011,34 @@
         // Uzupełnij brakujące dane kontaktu z demo (bez nadpisywania edycji użytkownika).
         ["clientPhone", "clientEmail", "clientAddress"].forEach(function (key) {
           if (!String(cur[key] || "").trim() && String(b[key] || "").trim()) cur[key] = b[key];
+        });
+      });
+    }
+
+    // Dopnij brakujące prośby o termin z demo (+ uzupełnij telefon / e-mail).
+    const demoRequests = data().DEMO_REQUESTS || [];
+    if (demoRequests.length) {
+      if (!Array.isArray(window.AppState.requests)) window.AppState.requests = [];
+      const existingReq = Object.create(null);
+      window.AppState.requests.forEach(function (r) {
+        if (r && r.id) existingReq[r.id] = r;
+      });
+      demoRequests.forEach(function (r) {
+        if (!r || !r.id) return;
+        const cur = existingReq[r.id];
+        if (!cur) {
+          window.AppState.requests.push(
+            Object.assign({}, r, {
+              days: Array.isArray(r.days) ? r.days.map(function (d) { return Object.assign({}, d); }) : [],
+              proposals: Array.isArray(r.proposals) ? r.proposals.map(function (p) { return Object.assign({}, p); }) : [],
+              serviceIds: Array.isArray(r.serviceIds) ? r.serviceIds.slice() : [],
+              serviceNames: Array.isArray(r.serviceNames) ? r.serviceNames.slice() : [],
+            })
+          );
+          return;
+        }
+        ["clientPhone", "clientEmail", "clientAddress"].forEach(function (key) {
+          if (!String(cur[key] || "").trim() && String(r[key] || "").trim()) cur[key] = r[key];
         });
       });
     }
@@ -4178,7 +4216,7 @@
           </header>
           <div class="stat-row" role="region" aria-label="Statystyki">
             <div class="stat-card"><span class="stat-card__num">${upcoming.length}</span><span class="stat-card__lbl">Nadchodzące wizyty</span></div>
-            <button type="button" class="stat-card stat-card--link${pendingCount > 0 ? " stat-card--alert" : ""}" data-action="provider-tab" data-tab="requests">
+            <button type="button" class="stat-card stat-card--link${pendingCount > 0 ? " stat-card--alert" : ""}" data-action="open-prov-cal-requests">
               <span class="stat-card__num">${pendingCount}</span><span class="stat-card__lbl">Zapytania o termin</span>
             </button>
           </div>
@@ -5736,6 +5774,10 @@
       clientSheetNewExpanded: false,
       clientSheetNewPhone: "",
       clientSheetNewEmail: "",
+      /** Panel szczegółów kontaktu (wysuwany z prawej) — imię klienta lub "". */
+      clientSheetDetailName: "",
+      /** Osobne wyszukiwanie w sheetcie (tryb Prośby nie nadpisuje wybranego klienta). */
+      clientSheetSearchQ: "",
       expandedServiceIds: [],
     };
   }
@@ -5755,6 +5797,8 @@
       if (typeof cur.clientSheetNewExpanded !== "boolean") cur.clientSheetNewExpanded = false;
       if (typeof cur.clientSheetNewPhone !== "string") cur.clientSheetNewPhone = "";
       if (typeof cur.clientSheetNewEmail !== "string") cur.clientSheetNewEmail = "";
+      if (typeof cur.clientSheetDetailName !== "string") cur.clientSheetDetailName = "";
+      if (typeof cur.clientSheetSearchQ !== "string") cur.clientSheetSearchQ = "";
       if (cur.bookingId == null) cur.bookingId = null;
       if (typeof cur.clientPhone !== "string") cur.clientPhone = "";
       if (typeof cur.clientEmail !== "string") cur.clientEmail = "";
@@ -5834,6 +5878,70 @@
       window.AppState.providerClients[providerId] = [];
     }
     return window.AppState.providerClients[providerId];
+  }
+
+  /** Zakładka / tryb odpowiedzi: kontakty = tylko osoby z prośbą o termin. */
+  function isProvCalAddRequestsContactsMode() {
+    if (!window.AppState.provCalAddOpen) return false;
+    if (replyRequestId()) return true;
+    return window.AppState.provCalAddTab === "requests";
+  }
+
+  /** Klienci z otwartymi prośbami (pending / proposed) — do listy kontaktów w zakładce Prośby. */
+  function collectProviderRequestClients(providerId) {
+    const seen = Object.create(null);
+    const list = [];
+    (window.AppState.requests || []).forEach(function (r) {
+      if (!r || r.providerId !== providerId) return;
+      if (r.status !== "pending" && r.status !== "proposed") return;
+      const n = String(r.clientName || "").trim();
+      if (!n) return;
+      const key = n.toLocaleLowerCase("pl");
+      if (seen[key]) {
+        // Preferuj nowszą / pending nad proposed przy duplikacie imienia.
+        if (seen[key].requestStatus === "pending" || r.status !== "pending") return;
+      }
+      const saved = findCollectedProviderClientByName(providerId, n);
+      const entry = {
+        id: r.id,
+        name: n,
+        phone: String(r.clientPhone || (saved && saved.phone) || "").trim(),
+        email: String(r.clientEmail || (saved && saved.email) || "").trim(),
+        address: String(r.clientAddress || (saved && saved.address) || "").trim(),
+        requestId: r.id,
+        requestStatus: r.status,
+        serviceLabel: (r.serviceNames || []).filter(Boolean).join(", "),
+      };
+      if (seen[key]) {
+        const idx = list.indexOf(seen[key]);
+        if (idx !== -1) list.splice(idx, 1);
+      }
+      seen[key] = entry;
+      list.push(entry);
+    });
+    list.sort(function (a, b) {
+      return a.name.localeCompare(b.name, "pl", { sensitivity: "base" });
+    });
+    return list;
+  }
+
+  function findOpenRequestForClientName(providerId, name) {
+    const key = String(name || "").trim().toLocaleLowerCase("pl");
+    if (!key) return null;
+    const open = (window.AppState.requests || []).filter(function (r) {
+      return (
+        r &&
+        r.providerId === providerId &&
+        (r.status === "pending" || r.status === "proposed") &&
+        String(r.clientName || "").trim().toLocaleLowerCase("pl") === key
+      );
+    });
+    if (!open.length) return null;
+    open.sort(function (a, b) {
+      if (a.status === b.status) return 0;
+      return a.status === "pending" ? -1 : 1;
+    });
+    return open[0];
   }
 
   /** Unikalni klienci usługodawcy (zapisani + z wizyt/próśb). */
@@ -6014,14 +6122,60 @@
     if (email) draft.clientSheetNewEmail = String(email.value || "");
   }
 
+  function renderClientSheetContactRowHtml(c, opts) {
+    opts = opts || {};
+    const requestsMode = !!opts.requestsMode;
+    const selected = !!opts.selected;
+    const sub = requestsMode
+      ? c.serviceLabel || (c.requestStatus === "proposed" ? "Wysłano propozycje" : "Nowa prośba")
+      : c.phone || c.email || "";
+    const reqAttr = c.requestId ? ` data-request-id="${escapeHtml(c.requestId)}"` : "";
+    return `
+      <div class="client-sheet__row${selected ? " client-sheet__row--selected" : ""}" role="option"${
+        selected ? ' aria-selected="true"' : ""
+      }>
+        <button type="button" class="client-sheet__row-main"
+          data-action="prov-cal-add-pick-client" data-name="${escapeHtml(c.name)}"${reqAttr}>
+          <span class="client-sheet__avatar" aria-hidden="true">${escapeHtml(clientContactInitials(c.name))}</span>
+          <span class="client-sheet__meta">
+            <span class="client-sheet__name">${escapeHtml(c.name)}</span>
+            ${sub ? `<span class="client-sheet__sub">${escapeHtml(sub)}</span>` : ""}
+          </span>
+        </button>
+        <button type="button" class="client-sheet__row-detail"
+          data-action="open-client-sheet-detail" data-name="${escapeHtml(c.name)}"
+          aria-label="Szczegóły kontaktu ${escapeHtml(c.name)}">
+          <span class="client-sheet__row-detail-icon" aria-hidden="true"></span>
+        </button>
+      </div>`;
+  }
+
+  function clientSheetListQuery(draft) {
+    if (isProvCalAddRequestsContactsMode()) {
+      return String((draft && draft.clientSheetSearchQ) || "").trim();
+    }
+    return String((draft && draft.clientName) || "").trim();
+  }
+
   function renderProvCalAddClientListParts(providerId, query) {
     const draft = window.AppState.provCalAddDraft;
-    const raw = String(query || "").trim();
+    const requestsMode = isProvCalAddRequestsContactsMode();
+    const raw = query != null ? String(query || "").trim() : clientSheetListQuery(draft);
     const q = raw.toLocaleLowerCase("pl");
-    const clients = collectProviderClients(providerId);
+    const clients = requestsMode
+      ? collectProviderRequestClients(providerId)
+      : collectProviderClients(providerId);
     const filtered = q
       ? clients.filter(function (c) {
-          const hay = (c.name + " " + (c.phone || "") + " " + (c.email || "")).toLocaleLowerCase("pl");
+          const hay = (
+            c.name +
+            " " +
+            (c.phone || "") +
+            " " +
+            (c.email || "") +
+            " " +
+            (c.serviceLabel || "")
+          ).toLocaleLowerCase("pl");
           return hay.indexOf(q) !== -1;
         })
       : clients;
@@ -6029,8 +6183,32 @@
       return c.name.toLocaleLowerCase("pl") === q;
     });
 
+    const selectedKey = String(
+      (draft && draft.clientName) ||
+        (replyRequest() && replyRequest().clientName) ||
+        ""
+    )
+      .trim()
+      .toLocaleLowerCase("pl");
+    let selectedClient = null;
+    if (requestsMode && selectedKey) {
+      selectedClient =
+        filtered.find(function (c) {
+          return c.name.toLocaleLowerCase("pl") === selectedKey;
+        }) ||
+        clients.find(function (c) {
+          return c.name.toLocaleLowerCase("pl") === selectedKey;
+        }) ||
+        null;
+    }
+    const others = requestsMode
+      ? filtered.filter(function (c) {
+          return !selectedClient || c.name.toLocaleLowerCase("pl") !== selectedKey;
+        })
+      : filtered;
+
     const byLetter = Object.create(null);
-    filtered.forEach(function (c) {
+    others.forEach(function (c) {
       const letter = clientContactLetter(c.name);
       if (!byLetter[letter]) byLetter[letter] = [];
       byLetter[letter].push(c);
@@ -6039,8 +6217,23 @@
       return byLetter[L] && byLetter[L].length;
     });
 
+    let pinnedHtml = "";
+    if (requestsMode && selectedClient) {
+      pinnedHtml = `
+        <div class="client-sheet__pinned" data-role="client-sheet-pinned">
+          <h4 class="client-sheet__list-label">Wybrany kontakt</h4>
+          ${renderClientSheetContactRowHtml(selectedClient, { requestsMode: true, selected: true })}
+          <div class="client-sheet__sep" role="separator" aria-hidden="true"></div>
+          ${
+            others.length || q
+              ? `<h4 class="client-sheet__list-label">Czekają na potwierdzenie</h4>`
+              : ""
+          }
+        </div>`;
+    }
+
     let listHtml = "";
-    if (raw && !exact) {
+    if (raw && !exact && !requestsMode) {
       const expanded = !!(draft && draft.clientSheetNewExpanded);
       const newPhone = draft ? String(draft.clientSheetNewPhone || "") : "";
       const newEmail = draft ? String(draft.clientSheetNewEmail || "") : "";
@@ -6079,46 +6272,169 @@
     } else if (draft) {
       draft.clientSheetNewExpanded = false;
     }
-    activeLetters.forEach(function (letter) {
-      listHtml += `<div class="client-sheet__section" data-letter="${escapeHtml(letter)}">
-        <div class="client-sheet__letter" aria-hidden="true">${escapeHtml(letter)}</div>`;
-      byLetter[letter].forEach(function (c) {
-        const sub = c.phone || c.email || "";
-        listHtml += `
-          <button type="button" class="client-sheet__row" role="option"
-            data-action="prov-cal-add-pick-client" data-name="${escapeHtml(c.name)}">
-            <span class="client-sheet__avatar" aria-hidden="true">${escapeHtml(clientContactInitials(c.name))}</span>
-            <span class="client-sheet__meta">
-              <span class="client-sheet__name">${escapeHtml(c.name)}</span>
-              ${sub ? `<span class="client-sheet__sub">${escapeHtml(sub)}</span>` : ""}
-            </span>
-          </button>`;
+
+    if (requestsMode) {
+      if (!others.length && !selectedClient) {
+        listHtml = `<p class="empty-note client-sheet__empty">Brak osób proszących o termin.</p>`;
+      } else if (!others.length && selectedClient && !q) {
+        listHtml = `<p class="empty-note client-sheet__empty">Brak innych próśb.</p>`;
+      } else {
+        others.forEach(function (c) {
+          listHtml += renderClientSheetContactRowHtml(c, { requestsMode: true, selected: false });
+        });
+      }
+    } else {
+      activeLetters.forEach(function (letter) {
+        listHtml += `<div class="client-sheet__section" data-letter="${escapeHtml(letter)}">
+          <div class="client-sheet__letter" aria-hidden="true">${escapeHtml(letter)}</div>`;
+        byLetter[letter].forEach(function (c) {
+          listHtml += renderClientSheetContactRowHtml(c, { requestsMode: false, selected: false });
+        });
+        listHtml += `</div>`;
       });
-      listHtml += `</div>`;
-    });
-    if (!listHtml) {
-      listHtml = `<p class="empty-note client-sheet__empty">Brak kontaktów. Wpisz imię, żeby dodać nowego klienta.</p>`;
+      if (!listHtml) {
+        listHtml = `<p class="empty-note client-sheet__empty">Brak kontaktów. Wpisz imię, żeby dodać nowego klienta.</p>`;
+      }
     }
 
-    const indexHtml = CLIENT_SHEET_LETTERS.map(function (letter) {
-      const on = !!byLetter[letter];
-      return `<button type="button" class="client-sheet__index-btn${on ? " is-on" : ""}"
+    const indexHtml = requestsMode
+      ? ""
+      : CLIENT_SHEET_LETTERS.map(function (letter) {
+          const on = !!byLetter[letter];
+          return `<button type="button" class="client-sheet__index-btn${on ? " is-on" : ""}"
         data-action="client-sheet-jump" data-letter="${escapeHtml(letter)}"
         ${on ? "" : " disabled tabindex=\"-1\""}
         aria-label="Przejdź do ${escapeHtml(letter)}">${escapeHtml(letter === "#" ? "#" : letter)}</button>`;
-    }).join("");
+        }).join("");
 
-    return { raw: raw, listHtml: listHtml, indexHtml: indexHtml };
+    return {
+      raw: raw,
+      pinnedHtml: pinnedHtml,
+      listHtml: listHtml,
+      indexHtml: indexHtml,
+      requestsMode: requestsMode,
+    };
+  }
+
+  function collectClientPastVisits(providerId, clientName) {
+    const key = String(clientName || "")
+      .trim()
+      .toLocaleLowerCase("pl");
+    if (!providerId || !key) return [];
+    const today = demoTodayISO();
+    return (window.AppState.bookings || [])
+      .filter(function (b) {
+        if (!b || b.providerId !== providerId) return false;
+        if (String(b.clientName || "").trim().toLocaleLowerCase("pl") !== key) return false;
+        if (b.status !== "confirmed") return false;
+        if (!b.dateISO || b.dateISO > today) return false;
+        return true;
+      })
+      .sort(function (a, b) {
+        return (b.dateISO + (b.from || "")).localeCompare(a.dateISO + (a.from || ""));
+      });
+  }
+
+  function resolveClientSheetContact(providerId, name) {
+    const n = String(name || "").trim();
+    if (!n) return null;
+    const saved = findCollectedProviderClientByName(providerId, n);
+    const fromReq = (window.AppState.requests || []).find(function (r) {
+      return (
+        r &&
+        r.providerId === providerId &&
+        String(r.clientName || "").trim().toLocaleLowerCase("pl") === n.toLocaleLowerCase("pl")
+      );
+    });
+    return {
+      name: n,
+      phone: String((saved && saved.phone) || (fromReq && fromReq.clientPhone) || "").trim(),
+      email: String((saved && saved.email) || (fromReq && fromReq.clientEmail) || "").trim(),
+      address: String((saved && saved.address) || (fromReq && fromReq.clientAddress) || "").trim(),
+    };
+  }
+
+  function renderClientSheetDetailHtml(providerId, name) {
+    const contact = resolveClientSheetContact(providerId, name);
+    if (!contact) return "";
+    const visits = collectClientPastVisits(providerId, contact.name);
+    const visitsHtml = visits.length
+      ? `<ul class="client-sheet__visits">
+          ${visits
+            .map(function (b) {
+              const when = escapeHtml(
+                formatDayWithDow(b.dateISO) + (b.from ? " · " + b.from + (b.to ? "–" + b.to : "") : "")
+              );
+              const svc = escapeHtml((b.serviceNames || []).filter(Boolean).join(", ") || "Wizyta");
+              return `<li class="client-sheet__visit">
+                <span class="client-sheet__visit-when">${when}</span>
+                <span class="client-sheet__visit-svc">${svc}</span>
+              </li>`;
+            })
+            .join("")}
+        </ul>`
+      : `<p class="empty-note client-sheet__empty">Brak odbytych wizyt.</p>`;
+    return `
+      <div class="client-sheet__detail" data-role="client-sheet-detail" role="dialog" aria-modal="true" aria-label="Szczegóły kontaktu">
+        <header class="client-sheet__detail-head">
+          <button type="button" class="client-sheet__detail-back" data-action="close-client-sheet-detail" aria-label="Wróć do kontaktów">
+            <span class="client-sheet__detail-back-icon" aria-hidden="true"></span>
+          </button>
+          <h3 class="client-sheet__detail-title">Kontakt</h3>
+          <span class="client-sheet__detail-spacer" aria-hidden="true"></span>
+        </header>
+        <div class="client-sheet__detail-body">
+          <div class="client-sheet__detail-card">
+            <div class="client-sheet__detail-identity">
+              <span class="client-sheet__avatar client-sheet__avatar--lg" aria-hidden="true">${escapeHtml(
+                clientContactInitials(contact.name)
+              )}</span>
+              <span class="client-sheet__detail-name">${escapeHtml(contact.name)}</span>
+            </div>
+            <div class="client-sheet__detail-sep" role="separator" aria-hidden="true"></div>
+            <div class="client-sheet__detail-fields">
+              <div class="client-sheet__detail-field">
+                <span class="client-sheet__detail-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.1-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.6a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.5-1.2a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.6.7A2 2 0 0 1 22 16.9z" />
+                  </svg>
+                </span>
+                <span class="client-sheet__detail-line${contact.phone ? "" : " client-sheet__detail-line--muted"}">${escapeHtml(
+                  contact.phone || "Brak telefonu"
+                )}</span>
+              </div>
+              <div class="client-sheet__detail-field">
+                <span class="client-sheet__detail-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="5" width="18" height="14" rx="2" />
+                    <path d="m3 7 9 6 9-6" />
+                  </svg>
+                </span>
+                <span class="client-sheet__detail-line${contact.email ? "" : " client-sheet__detail-line--muted"}">${escapeHtml(
+                  contact.email || "Brak e-maila"
+                )}</span>
+              </div>
+            </div>
+          </div>
+          <h4 class="client-sheet__detail-section">Odbyte wizyty</h4>
+          ${visitsHtml}
+        </div>
+      </div>`;
   }
 
   function renderProvCalAddClientMenuHtml(providerId, query) {
-    const parts = renderProvCalAddClientListParts(providerId, query);
+    const draft = window.AppState.provCalAddDraft;
+    const parts = renderProvCalAddClientListParts(providerId, query != null ? query : clientSheetListQuery(draft));
+    const requestsMode = !!parts.requestsMode;
+    const sheetTitle = requestsMode ? "Prośby o termin" : "Kontakty";
+    const detailName = draft ? String(draft.clientSheetDetailName || "").trim() : "";
+    const detailHtml = detailName ? renderClientSheetDetailHtml(providerId, detailName) : "";
     return `
       <button type="button" class="client-sheet__backdrop" data-action="close-prov-cal-add-client-pick" aria-label="Zamknij kontakty"></button>
-      <div class="client-sheet__panel" role="dialog" aria-modal="true" aria-label="Kontakty">
+      <div class="client-sheet__panel" role="dialog" aria-modal="true" aria-label="${escapeHtml(sheetTitle)}">
         <div class="client-sheet__grab" aria-hidden="true"></div>
         <header class="client-sheet__head">
-          <h3 class="client-sheet__title">Kontakty</h3>
+          <h3 class="client-sheet__title">${escapeHtml(sheetTitle)}</h3>
           <button type="button" class="client-sheet__close" data-action="close-prov-cal-add-client-pick" aria-label="Zamknij">
             <span aria-hidden="true">×</span>
           </button>
@@ -6126,12 +6442,18 @@
         <div class="client-sheet__search">
           <span class="client-sheet__search-icon" aria-hidden="true"></span>
           <input type="search" class="client-sheet__search-input" data-role="prov-cal-add-client-sheet-search"
-            value="${escapeHtml(parts.raw)}" placeholder="Szukaj" autocomplete="off" spellcheck="false" />
+            value="${escapeHtml(parts.raw)}" placeholder="${requestsMode ? "Szukaj wśród próśb" : "Szukaj"}" autocomplete="off" spellcheck="false" />
         </div>
-        <div class="client-sheet__body">
+        <div class="client-sheet__body${requestsMode ? " client-sheet__body--requests" : ""}">
+          ${parts.pinnedHtml || ""}
           <div class="client-sheet__list" data-role="client-sheet-list" role="listbox">${parts.listHtml}</div>
-          <nav class="client-sheet__index" data-role="client-sheet-index" aria-label="Alfabet">${parts.indexHtml}</nav>
+          ${
+            parts.indexHtml
+              ? `<nav class="client-sheet__index" data-role="client-sheet-index" aria-label="Alfabet">${parts.indexHtml}</nav>`
+              : `<nav class="client-sheet__index" data-role="client-sheet-index" hidden aria-hidden="true"></nav>`
+          }
         </div>
+        ${detailHtml}
       </div>`;
   }
 
@@ -6176,10 +6498,19 @@
     }
   }
 
+  function syncClientSheetDetailClass(menu) {
+    const draft = window.AppState.provCalAddDraft;
+    const open = !!(draft && String(draft.clientSheetDetailName || "").trim());
+    if (menu) menu.classList.toggle("client-sheet--detail", open);
+  }
+
   function setProvCalAddClientPickOpen(open, opts) {
     opts = opts || {};
     const draft = window.AppState.provCalAddDraft;
-    if (draft) draft.clientPickOpen = !!open;
+    if (draft) {
+      draft.clientPickOpen = !!open;
+      if (!open) draft.clientSheetDetailName = "";
+    }
     const pick = document.querySelector('[data-role="prov-cal-add-client-pick"]');
     const menu = ensureProvCalAddClientMenuEl();
     const input = document.querySelector('[data-role="prov-cal-add-client"]');
@@ -6188,20 +6519,21 @@
     clearClientSheetArmTimer();
     if (!open) {
       menu.hidden = true;
-      menu.classList.remove("is-open", "client-sheet--arming");
+      menu.classList.remove("is-open", "client-sheet--arming", "client-sheet--detail");
       menu.innerHTML = "";
       document.body.classList.remove("client-sheet-open");
       return;
     }
     menu.hidden = false;
     menu.classList.add("is-open", "client-sheet--arming");
+    syncClientSheetDetailClass(menu);
     document.body.classList.add("client-sheet-open");
     // Blokuj backdrop na czas domknięcia gestu otwarcia (żeby ten sam klik go nie zamknął).
     window._clientSheetArmTimer = setTimeout(function () {
       menu.classList.remove("client-sheet--arming");
       window._clientSheetArmTimer = null;
     }, 420);
-    if (opts.focusSearch !== false) {
+    if (opts.focusSearch !== false && !(draft && draft.clientSheetDetailName)) {
       window._clientSheetFocusTimer = setTimeout(function () {
         window._clientSheetFocusTimer = null;
         focusClientSheetSearch(menu);
@@ -6220,33 +6552,81 @@
       setProvCalAddClientPickOpen(false);
       return;
     }
+    const detailOpen = !!String(draft.clientSheetDetailName || "").trim();
     const list = menu.querySelector('[data-role="client-sheet-list"]');
     const index = menu.querySelector('[data-role="client-sheet-index"]');
     const search = menu.querySelector('[data-role="prov-cal-add-client-sheet-search"]');
     captureClientSheetNewDetails();
-    const parts = renderProvCalAddClientListParts(p.id, draft.clientName || "");
-    // Aktualizuj listę bez niszczenia inputu wyszukiwania (zachowaj fokus i kursor).
-    if (list && index && search && menu.classList.contains("is-open")) {
-      const scrollTop = list.scrollTop;
-      list.innerHTML = parts.listHtml;
-      index.innerHTML = parts.indexHtml;
-      if (document.activeElement !== search && String(search.value || "") !== String(draft.clientName || "")) {
-        search.value = draft.clientName || "";
+    const listQuery = clientSheetListQuery(draft);
+    // Przy otwartych szczegółach / trybie próśb przebuduj cały sheet (pinned + lista).
+    if (
+      detailOpen ||
+      isProvCalAddRequestsContactsMode() ||
+      !list ||
+      !index ||
+      !search ||
+      !menu.classList.contains("is-open")
+    ) {
+      const keepSearch = document.activeElement === search ? String(search.value || "") : null;
+      menu.innerHTML = renderProvCalAddClientMenuHtml(p.id, listQuery);
+      setProvCalAddClientPickOpen(true, { focusSearch: !detailOpen && opts.focusSearch !== false });
+      if (keepSearch != null) {
+        const again = menu.querySelector('[data-role="prov-cal-add-client-sheet-search"]');
+        if (again) {
+          again.value = keepSearch;
+          try {
+            again.focus({ preventScroll: true });
+            const len = again.value.length;
+            again.setSelectionRange(len, len);
+          } catch (err) {
+            again.focus();
+          }
+        }
       }
-      list.scrollTop = scrollTop;
-      const pick = document.querySelector('[data-role="prov-cal-add-client-pick"]');
-      const input = document.querySelector('[data-role="prov-cal-add-client"]');
-      if (pick) pick.classList.add("is-open");
-      if (input) input.setAttribute("aria-expanded", "true");
       return;
     }
-    menu.innerHTML = renderProvCalAddClientMenuHtml(p.id, draft.clientName || "");
-    setProvCalAddClientPickOpen(true, { focusSearch: opts.focusSearch !== false });
+    const parts = renderProvCalAddClientListParts(p.id, listQuery);
+    // Aktualizuj listę bez niszczenia inputu wyszukiwania (zachowaj fokus i kursor).
+    const scrollTop = list.scrollTop;
+    list.innerHTML = parts.listHtml;
+    index.innerHTML = parts.indexHtml;
+    index.hidden = !parts.indexHtml;
+    if (document.activeElement !== search && String(search.value || "") !== listQuery) {
+      search.value = listQuery;
+    }
+    list.scrollTop = scrollTop;
+    const pick = document.querySelector('[data-role="prov-cal-add-client-pick"]');
+    const input = document.querySelector('[data-role="prov-cal-add-client"]');
+    if (pick) pick.classList.add("is-open");
+    if (input) input.setAttribute("aria-expanded", "true");
+    syncClientSheetDetailClass(menu);
+  }
+
+  function openClientSheetDetail(name) {
+    const draft = ensureProvCalAddDraft();
+    const n = String(name || "").trim();
+    if (!n) return;
+    draft.clientPickOpen = true;
+    draft.clientSheetDetailName = n;
+    saveState();
+    refreshProvCalAddClientMenu({ focusSearch: false });
+    hapticTap(12);
+  }
+
+  function closeClientSheetDetail() {
+    const draft = ensureProvCalAddDraft();
+    draft.clientSheetDetailName = "";
+    saveState();
+    refreshProvCalAddClientMenu({ focusSearch: false });
   }
 
   function closeProvCalAddClientPick() {
     const draft = window.AppState.provCalAddDraft;
-    if (draft) draft.clientPickOpen = false;
+    if (draft) {
+      draft.clientPickOpen = false;
+      draft.clientSheetDetailName = "";
+      draft.clientSheetSearchQ = "";
+    }
     setProvCalAddClientPickOpen(false);
     saveState();
   }
@@ -6259,6 +6639,22 @@
     if (!n) {
       showToast("Wybierz klienta.");
       return;
+    }
+    // W zakładce Prośby wybór kontaktu = otwarcie prośby tej osoby.
+    if (isProvCalAddRequestsContactsMode() && !options.addNew && p) {
+      const req =
+        (options.requestId &&
+          (window.AppState.requests || []).find(function (r) {
+            return r && r.id === options.requestId;
+          })) ||
+        findOpenRequestForClientName(p.id, n);
+      if (req) {
+        window._clientSheetPickLockUntil = Date.now() + 500;
+        clearClientSheetArmTimer();
+        setProvCalAddClientPickOpen(false);
+        proposeOpen(req.id);
+        return;
+      }
     }
     captureClientSheetNewDetails();
     let client = null;
@@ -6284,9 +6680,7 @@
     draft.clientSheetNewPhone = "";
     draft.clientSheetNewEmail = "";
     applyClientContactsToDraft(draft, client || {});
-    if (draft.clientPhone || draft.clientEmail || draft.clientAddress) {
-      draft.clientDetailsOpen = true;
-    }
+    draft.clientDetailsOpen = false;
     // Nie otwieraj sheetu ponownie przez focusin/click po wyborze.
     window._clientSheetPickLockUntil = Date.now() + 500;
     clearClientSheetArmTimer();
@@ -6337,28 +6731,6 @@
     refreshProvCalAddClientMenu({ focusSearch: false });
   }
 
-  function toggleProvCalAddClientDetails() {
-    captureProvCalAddClientName();
-    const draft = ensureProvCalAddDraft();
-    draft.clientDetailsOpen = !draft.clientDetailsOpen;
-    draft.clientPickOpen = false;
-    setProvCalAddClientPickOpen(false);
-    saveState();
-    renderAll();
-    if (draft.clientDetailsOpen) {
-      requestAnimationFrame(function () {
-        const phone = document.querySelector('[data-role="prov-cal-add-phone"]');
-        if (phone) {
-          try {
-            phone.focus({ preventScroll: true });
-          } catch (err) {
-            phone.focus();
-          }
-        }
-      });
-    }
-  }
-
   function clearProvCalAddClient() {
     captureProvCalAddClientName();
     const draft = ensureProvCalAddDraft();
@@ -6383,6 +6755,7 @@
   function focusProvCalAddClientSearch() {
     const draft = ensureProvCalAddDraft();
     draft.clientPickOpen = true;
+    draft.clientSheetSearchQ = "";
     draft.servicePickOpen = false;
     closeAvailPickMenus();
     setProvCalAddServicePickOpen(false);
@@ -6404,7 +6777,7 @@
     </button>`;
   }
 
-  /** Lupa ↔ × — tylko jedna ikona naraz (przed chevronem rozwijania). */
+  /** Lupa ↔ × — tylko jedna ikona naraz. */
   function patchProvCalAddClientClearBtn() {
     const draft = window.AppState.provCalAddDraft;
     const row = document.querySelector('[data-role="prov-cal-add-client-pick"] > .prov-cal-add__client-row');
@@ -6412,14 +6785,13 @@
     const has = !!String(draft.clientName || "").trim();
     const clear = row.querySelector('[data-action="clear-prov-cal-add-client"]');
     const search = row.querySelector('[data-action="focus-prov-cal-add-client-search"]');
-    const expand = row.querySelector('[data-action="toggle-prov-cal-add-client-details"]');
     if (has) {
       if (search) search.remove();
       if (!clear) {
         const host = document.createElement("div");
         host.innerHTML = renderProvCalAddClientTrailingActionHtml(true);
         const btn = host.firstElementChild;
-        if (btn) row.insertBefore(btn, expand || null);
+        if (btn) row.appendChild(btn);
       }
     } else {
       if (clear) clear.remove();
@@ -6427,7 +6799,7 @@
         const host = document.createElement("div");
         host.innerHTML = renderProvCalAddClientTrailingActionHtml(false);
         const btn = host.firstElementChild;
-        if (btn) row.insertBefore(btn, expand || null);
+        if (btn) row.appendChild(btn);
       }
     }
   }
@@ -6475,6 +6847,50 @@
     if (emailInput) draft.clientEmail = String(emailInput.value || "").trim();
   }
 
+  function providerPendingRequestCount() {
+    return (window.AppState.requests || []).filter(function (r) {
+      return r && r.providerId === MY_PROVIDER_ID && r.status === "pending";
+    }).length;
+  }
+
+  function setProvCalAddTab(tab) {
+    const next = tab === "requests" ? "requests" : "new";
+    const wasReply = !!replyRequestId();
+    if (!wasReply && window.AppState.provCalAddDraft) {
+      captureProvCalAddClientName();
+    }
+    if (wasReply) {
+      clearProvCalReplyMode();
+      window.AppState.provCalAddDraft = defaultProvCalAddDraft();
+    }
+    window.AppState.provCalAddTab = next;
+    window.AppState.provCalAddOpen = true;
+    if (!window.AppState.provCalAddDraft) {
+      window.AppState.provCalAddDraft = defaultProvCalAddDraft();
+    }
+    saveState();
+    renderAll();
+    if (next === "new") {
+      requestAnimationFrame(function () {
+        const input = document.querySelector('[data-role="prov-cal-add-client"]');
+        if (input) input.focus();
+      });
+    }
+  }
+
+  function openProvCalAddRequests() {
+    clearProvCalReplyMode();
+    window.AppState.provCalAddTab = "requests";
+    window.AppState.provCalAddDraft = defaultProvCalAddDraft();
+    window.AppState.provCalAddOpen = true;
+    window.AppState.screen.provider = "calendar";
+    setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
+    closeProvCalViewCloud();
+    saveState();
+    renderAll();
+    hapticTap(16);
+  }
+
   function openProvCalAdd() {
     clearProvCalReplyMode();
     const draft = defaultProvCalAddDraft();
@@ -6488,6 +6904,7 @@
       window.AppState.provCalDate = sel.dateISO;
       window.AppState.provCalPickerMonth = sel.dateISO.slice(0, 7);
     }
+    window.AppState.provCalAddTab = "new";
     window.AppState.provCalAddOpen = true;
     window.AppState.provCalAddDraft = draft;
     setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
@@ -6505,6 +6922,7 @@
       return b && b.id === bookingId;
     });
     if (!bk) return;
+    clearProvCalReplyMode();
     const draft = defaultProvCalAddDraft();
     draft.bookingId = bk.id;
     draft.clientName = String(bk.clientName || "");
@@ -6514,10 +6932,11 @@
       const saved = p ? findCollectedProviderClientByName(p.id, draft.clientName) : null;
       if (saved) applyClientContactsToDraft(draft, saved);
     }
-    draft.clientDetailsOpen = !!(draft.clientPhone || draft.clientEmail || draft.clientAddress);
+    draft.clientDetailsOpen = false;
     draft.serviceIds = serviceIdsFromBooking(bk);
     draft.dateISO = bk.dateISO || ensureProvCalDate();
     draft.slotId = provCalAddSlotIdForBooking(bk);
+    window.AppState.provCalAddTab = "new";
     window.AppState.provCalAddOpen = true;
     window.AppState.provCalAddDraft = draft;
     window.AppState.provCalDate = draft.dateISO;
@@ -6537,9 +6956,9 @@
   }
 
   function closeProvCalAdd() {
-    const wasReply = !!replyRequestId();
     window.AppState.provCalAddOpen = false;
     window.AppState.provCalAddDraft = null;
+    window.AppState.provCalAddTab = "new";
     clearProvCalReplyMode();
     setProvCalAddClientPickOpen(false);
     setProvCalAddServicePickOpen(false);
@@ -6547,7 +6966,6 @@
     if (orphanClient) orphanClient.remove();
     const orphanService = document.getElementById("prov-cal-add-service-sheet");
     if (orphanService) orphanService.remove();
-    if (wasReply) window.AppState.screen.provider = "requests";
     saveState();
     renderAll();
   }
@@ -6749,8 +7167,17 @@
       }
     }
 
-    const saveBtn = document.querySelector(".prov-cal-add__save");
-    if (saveBtn) saveBtn.disabled = !(hasSvc && !!draft.slotId);
+    const cta = document.querySelector('[data-role="prov-cal-add-cta"]');
+    if (cta) {
+      if (draft.requestId) {
+        const n = (draft.proposals || []).length;
+        cta.disabled = n < 1;
+        cta.textContent = ("Wyślij " + (n || "") + " " + proposalCountLabel(n)).replace(/\s+/g, " ").trim();
+      } else {
+        cta.disabled = !(hasSvc && !!draft.slotId);
+        cta.textContent = "Zapisz";
+      }
+    }
   }
 
   function flushProvCalAddServiceSchedule() {
@@ -7196,9 +7623,7 @@
           .join(", ");
     const servicePickOpen = !!draft.servicePickOpen;
     const clientPickOpen = !!draft.clientPickOpen;
-    const clientDetailsOpen = !!draft.clientDetailsOpen;
     const hasClientName = !!String(draft.clientName || "").trim();
-    const clientPhonePreview = String(draft.clientPhone || "").trim();
 
     const title = isReply ? "Zaproponuj terminy" : isEdit ? "Edytuj termin" : "Nowy termin";
     const saveAction = isReply ? "propose-confirm" : "confirm-prov-cal-add";
@@ -7206,29 +7631,38 @@
       ? `Wyślij ${draft.proposals.length || ""} ${proposalCountLabel(draft.proposals.length)}`.replace(/\s+/g, " ").trim()
       : "Zapisz";
     const saveAttrs = isReply ? ` data-request-id="${escapeHtml(replyReq.id)}"` : "";
+    const showTabs = !isEdit;
+    const activeTab = isReply || window.AppState.provCalAddTab === "requests" ? "requests" : "new";
+    const showRequestsList = showTabs && activeTab === "requests" && !isReply;
+    const pendingBadge = providerPendingRequestCount();
+    const headCenter = showTabs
+      ? `<div class="prov-cal-add__tabs" role="tablist" aria-label="Zakładki panelu">
+            <button type="button" class="prov-cal-add__tab${activeTab === "new" ? " is-active" : ""}" role="tab"
+              data-action="prov-cal-add-tab" data-tab="new" aria-selected="${activeTab === "new" ? "true" : "false"}">Nowy termin</button>
+            <button type="button" class="prov-cal-add__tab${activeTab === "requests" ? " is-active" : ""}" role="tab"
+              data-action="prov-cal-add-tab" data-tab="requests" aria-selected="${activeTab === "requests" ? "true" : "false"}">
+              <span class="prov-cal-add__tab-label">Prośby o termin</span>
+              ${
+                pendingBadge > 0
+                  ? `<span class="prov-cal-add__tab-badge" aria-label="${pendingBadge} ${
+                      pendingBadge === 1 ? "prośba" : pendingBadge < 5 ? "prośby" : "próśb"
+                    }">${pendingBadge}</span>`
+                  : ""
+              }
+            </button>
+          </div>
+          <h3 class="visually-hidden" id="prov-cal-add-title">${escapeHtml(
+            activeTab === "requests" ? (isReply ? title : "Prośby o termin") : "Nowy termin"
+          )}</h3>`
+      : `<h3 class="prov-cal-add__title" id="prov-cal-add-title">${escapeHtml(title)}</h3>`;
 
-    return `
-      <div class="prov-cal-add${isReply ? " prov-cal-add--reply" : ""}" data-role="prov-cal-add">
-        <button type="button" class="prov-cal-add__backdrop" data-action="close-prov-cal-add" aria-label="Zamknij"></button>
-        <div class="prov-cal-add__sheet" role="dialog" aria-modal="true" aria-labelledby="prov-cal-add-title">
-          <header class="prov-cal-add__head">
-            <button type="button" class="prov-cal-add__close" data-action="close-prov-cal-add" aria-label="Zamknij">×</button>
-            <h3 class="prov-cal-add__title" id="prov-cal-add-title">${escapeHtml(title)}</h3>
-            <button type="button" class="prov-cal-add__save" data-action="${saveAction}"${saveAttrs}${canSave ? "" : " disabled"}>${escapeHtml(saveLabel)}</button>
-          </header>
-          <div class="prov-cal-add__body">
-            ${
-              isReply
-                ? `<button type="button" class="prov-cal-add__show-all${showAll ? " is-on" : ""}" data-action="toggle-prov-cal-reply-show-all" aria-pressed="${
-                    showAll ? "true" : "false"
-                  }">
-                    <span class="avail-edit__switch" aria-hidden="true"></span>
-                    <span>Pokaż cały kalendarz</span>
-                  </button>
-                  ${renderRequestDayBadges(requestDays)}`
-                : ""
-            }
-            <div class="prov-cal-add__field prov-cal-add__client-pick${clientPickOpen ? " is-open" : ""}${clientDetailsOpen ? " is-details-open" : ""}${clientPhonePreview ? " has-phone" : ""}" data-role="prov-cal-add-client-pick" aria-label="Klient">
+    const requestsListHtml = showRequestsList ? renderProvCalAddRequestsList() : "";
+    const formBodyHtml = showRequestsList
+      ? ""
+      : `
+            <div class="prov-cal-add__field prov-cal-add__client-pick${
+              clientPickOpen ? " is-open" : ""
+            }" data-role="prov-cal-add-client-pick" aria-label="Klient">
               <span class="prov-cal-add__client-row">
                 <span class="prov-cal-add__client-avatar" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -7242,44 +7676,9 @@
                     autocomplete="off" spellcheck="false" readonly inputmode="none"
                     aria-autocomplete="list" aria-haspopup="dialog"
                     aria-expanded="${clientPickOpen ? "true" : "false"}" aria-controls="prov-cal-add-client-menu" />
-                  ${
-                    clientPhonePreview
-                      ? `<span class="prov-cal-add__client-phone" data-role="prov-cal-add-client-phone">${escapeHtml(clientPhonePreview)}</span>`
-                      : ""
-                  }
                 </span>
                 ${renderProvCalAddClientTrailingActionHtml(hasClientName)}
-                <button type="button" class="prov-cal-add__client-expand${clientDetailsOpen ? " is-open" : ""}"
-                  data-action="toggle-prov-cal-add-client-details"
-                  aria-expanded="${clientDetailsOpen ? "true" : "false"}"
-                  aria-controls="prov-cal-add-client-contacts"
-                  aria-label="${clientDetailsOpen ? "Ukryj dane kontaktowe" : "Pokaż dane kontaktowe"}">
-                  <span class="prov-cal-add__client-expand-icon" aria-hidden="true"></span>
-                </button>
               </span>
-              <div class="prov-cal-add__client-contacts" id="prov-cal-add-client-contacts"${clientDetailsOpen ? "" : ' aria-hidden="true"'}>
-                <div class="prov-cal-add__client-contacts-inner">
-                  <span class="prov-cal-add__client-row">
-                    <span class="prov-cal-add__client-avatar" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.1-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.6a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.5-1.2a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.6.7A2 2 0 0 1 22 16.9z" />
-                      </svg>
-                    </span>
-                    <input type="tel" class="prov-cal-add__input prov-cal-add__input--contact" data-role="prov-cal-add-phone"
-                      value="${escapeHtml(draft.clientPhone || "")}" placeholder="Telefon" autocomplete="tel" inputmode="tel" tabindex="${clientDetailsOpen ? "0" : "-1"}" />
-                  </span>
-                  <span class="prov-cal-add__client-row">
-                    <span class="prov-cal-add__client-avatar" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="3" y="5" width="18" height="14" rx="2" />
-                        <path d="m3 7 9 6 9-6" />
-                      </svg>
-                    </span>
-                    <input type="email" class="prov-cal-add__input prov-cal-add__input--contact" data-role="prov-cal-add-email"
-                      value="${escapeHtml(draft.clientEmail || "")}" placeholder="E-mail" autocomplete="email" inputmode="email" tabindex="${clientDetailsOpen ? "0" : "-1"}" />
-                  </span>
-                </div>
-              </div>
             </div>
 
             <div class="prov-cal-add__field" aria-label="Usługa">
@@ -7301,6 +7700,16 @@
             </div>
 
             <div class="booking__schedule prov-cal-add__schedule">
+              ${
+                isReply
+                  ? `<button type="button" class="prov-cal-add__show-all${showAll ? " is-on" : ""}" data-action="toggle-prov-cal-reply-show-all" aria-pressed="${
+                      showAll ? "true" : "false"
+                    }">
+                      <span class="avail-edit__switch" aria-hidden="true"></span>
+                      <span>Pokaż cały kalendarz</span>
+                    </button>`
+                  : ""
+              }
               <div class="booking__label-row">
                 <h3 class="booking__label booking__label--caps">${isReply ? "Dni z zapytania" : "Wybierz datę"}</h3>
                 <span class="booking__month" data-role="prov-cal-add-month">${escapeHtml(monthLabelFromISO(activeDate || stripDates[0] || allAvailDates[0]))}</span>
@@ -7317,9 +7726,27 @@
                   ? `<h3 class="booking__label booking__label--caps">Do wysłania (${draft.proposals.length})</h3>${chosenList}`
                   : ""
               }
-            </div>
+            </div>`;
+
+    return `
+      <div class="prov-cal-add${isReply ? " prov-cal-add--reply" : ""}${
+        showRequestsList ? " prov-cal-add--requests" : ""
+      }${showTabs ? " prov-cal-add--tabs" : ""}" data-role="prov-cal-add">
+        <button type="button" class="prov-cal-add__backdrop" data-action="close-prov-cal-add" aria-label="Zamknij"></button>
+        <div class="prov-cal-add__sheet" role="dialog" aria-modal="true" aria-labelledby="prov-cal-add-title">
+          <header class="prov-cal-add__head${showTabs ? " prov-cal-add__head--tabs" : ""}">
+            <button type="button" class="prov-cal-add__close" data-action="close-prov-cal-add" aria-label="Zamknij">×</button>
+            ${headCenter}
+            <span class="prov-cal-add__head-spacer" aria-hidden="true"></span>
+          </header>
+          <div class="prov-cal-add__body">
+            ${requestsListHtml}
+            ${formBodyHtml}
           </div>
-          <div class="prov-cal-add__foot booking-confirm-bar">
+          ${
+            showRequestsList
+              ? ""
+              : `<div class="prov-cal-add__foot booking-confirm-bar">
             <div class="bottom-nav__summary${hasSvc ? "" : " bottom-nav__summary--empty"}">
               <span class="bottom-nav__summary-label">${isReply ? "Wybrane:" : "Suma:"}</span>
               <div class="bottom-nav__summary-meta">
@@ -7331,9 +7758,73 @@
                 ${isReply ? "" : `<span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>`}
               </div>
             </div>
-          </div>
+            <button type="button" class="bottom-nav__book" data-role="prov-cal-add-cta" data-action="${saveAction}"${saveAttrs}${
+                canSave ? "" : " disabled"
+              }>${escapeHtml(saveLabel)}</button>
+          </div>`
+          }
         </div>
       </div>`;
+  }
+
+  function renderProvCalAddRequestsList() {
+    const all = (window.AppState.requests || []).filter(function (r) {
+      return r && r.providerId === MY_PROVIDER_ID && (r.status === "pending" || r.status === "proposed");
+    });
+    const pending = all.filter(function (r) {
+      return r.status === "pending";
+    });
+    const proposed = all.filter(function (r) {
+      return r.status === "proposed";
+    });
+    function row(r) {
+      const isProposed = r.status === "proposed";
+      const days = normalizeRequestDays(r.days);
+      const dayHint = days.length
+        ? days
+            .slice(0, 2)
+            .map(function (d) {
+              return formatDayWithDow(d.dateISO);
+            })
+            .join(", ") + (days.length > 2 ? " +" + (days.length - 2) : "")
+        : "Bez wskazanych dni";
+      return `
+        <button type="button" class="prov-cal-add__req" data-action="propose-open" data-request-id="${escapeHtml(r.id)}">
+          <span class="prov-cal-add__req-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="8.2" r="3.4" />
+              <path d="M5.2 19.2c.9-3.2 3.4-4.8 6.8-4.8s5.9 1.6 6.8 4.8" />
+            </svg>
+          </span>
+          <span class="prov-cal-add__req-main">
+            <span class="prov-cal-add__req-name">${escapeHtml(r.clientName || "Klient")}</span>
+            <span class="prov-cal-add__req-svc">${escapeHtml((r.serviceNames || []).join(", ") || "Usługa")}</span>
+            <span class="prov-cal-add__req-meta">${escapeHtml(dayHint)}</span>
+          </span>
+          <span class="status-badge" data-status="${escapeHtml(isProposed ? "proposed" : "pending")}">${escapeHtml(
+            isProposed ? "Wysłano" : "Nowa"
+          )}</span>
+        </button>`;
+    }
+    if (!all.length) {
+      return `<div class="prov-cal-add__requests" data-role="prov-cal-add-requests">
+        <p class="empty-note">Brak próśb o termin.</p>
+      </div>`;
+    }
+    return `<div class="prov-cal-add__requests" data-role="prov-cal-add-requests" aria-label="Osoby proszące o termin">
+      ${
+        pending.length
+          ? `<h4 class="prov-cal-add__requests-label">Nowe prośby</h4>
+             <div class="prov-cal-add__req-list">${pending.map(row).join("")}</div>`
+          : ""
+      }
+      ${
+        proposed.length
+          ? `<h4 class="prov-cal-add__requests-label">Czekają na wybór klienta</h4>
+             <div class="prov-cal-add__req-list">${proposed.map(row).join("")}</div>`
+          : ""
+      }
+    </div>`;
   }
 
   function renderProviderCalendar() {
@@ -7591,7 +8082,7 @@
       <div class="app-screen app-screen--provider">
         <div class="app-scroll">
           <div class="topbar">
-            <button type="button" class="topbar__back" data-action="provider-tab" data-tab="requests" aria-label="Wróć">‹</button>
+            <button type="button" class="topbar__back" data-action="open-prov-cal-requests" aria-label="Wróć">‹</button>
             <span class="topbar__title">Zaproponuj terminy</span><span class="topbar__spacer"></span>
           </div>
           <div class="booking">
@@ -11297,6 +11788,12 @@
     const draft = defaultProvCalAddDraft();
     draft.requestId = req.id;
     draft.clientName = String(req.clientName || "Klient");
+    applyClientContactsToDraft(draft, req);
+    if (!draft.clientPhone && !draft.clientEmail && !draft.clientAddress) {
+      const p = myProvider();
+      const saved = p ? findCollectedProviderClientByName(p.id, draft.clientName) : null;
+      if (saved) applyClientContactsToDraft(draft, saved);
+    }
     draft.serviceIds = (req.serviceIds || []).slice();
     draft.dateISO = firstDay;
     draft.slotId = null;
@@ -11305,6 +11802,7 @@
 
     window.AppState.provCalReplyRequestId = req.id;
     window.AppState.provCalReplyShowAll = false;
+    window.AppState.provCalAddTab = "requests";
     window.AppState.provCalAddOpen = true;
     window.AppState.provCalAddDraft = draft;
     window.AppState.provCalDate = firstDay;
@@ -11410,10 +11908,11 @@
       `${req.providerName}: ${req.proposals.length} ${proposalCountLabel(req.proposals.length)} do wyboru.`
     );
 
-    window.AppState.provCalAddOpen = false;
-    window.AppState.provCalAddDraft = null;
     clearProvCalReplyMode();
-    window.AppState.screen.provider = "requests";
+    window.AppState.provCalAddTab = "requests";
+    window.AppState.provCalAddDraft = defaultProvCalAddDraft();
+    window.AppState.provCalAddOpen = true;
+    window.AppState.screen.provider = "calendar";
     window.AppState.screen.client = "myCalendar";
     saveState();
     renderAll();
@@ -12213,7 +12712,8 @@
         else if (d.tab === "calendar") {
           ensureProvCalDate();
           navigate("provider", "calendar", {});
-        } else navigate("provider", d.tab, {});
+        } else if (d.tab === "requests") openProvCalAddRequests();
+        else navigate("provider", d.tab, {});
         break;
       case "service-location-toggle":
         event.preventDefault();
@@ -12308,13 +12808,17 @@
         event.preventDefault();
         openProvCalAdd();
         break;
+      case "open-prov-cal-requests":
+        event.preventDefault();
+        openProvCalAddRequests();
+        break;
+      case "prov-cal-add-tab":
+        event.preventDefault();
+        setProvCalAddTab(d.tab);
+        break;
       case "close-prov-cal-add":
         event.preventDefault();
         closeProvCalAdd();
-        break;
-      case "toggle-prov-cal-add-client-details":
-        event.preventDefault();
-        toggleProvCalAddClientDetails();
         break;
       case "clear-prov-cal-add-client":
         event.preventDefault();
@@ -12366,7 +12870,19 @@
         break;
       case "prov-cal-add-pick-client":
         event.preventDefault();
-        pickProvCalAddClient(d.name || btn.getAttribute("data-name") || "");
+        pickProvCalAddClient(d.name || btn.getAttribute("data-name") || "", {
+          requestId: d.requestId || btn.getAttribute("data-request-id") || "",
+        });
+        break;
+      case "open-client-sheet-detail":
+        event.preventDefault();
+        event.stopPropagation();
+        openClientSheetDetail(d.name || btn.getAttribute("data-name") || "");
+        break;
+      case "close-client-sheet-detail":
+        event.preventDefault();
+        event.stopPropagation();
+        closeClientSheetDetail();
         break;
       case "prov-cal-add-new-client":
         event.preventDefault();
@@ -12545,12 +13061,17 @@
     if (sheetSearch) {
       const draft = ensureProvCalAddDraft();
       captureClientSheetNewDetails();
-      draft.clientName = String(sheetSearch.value || "");
+      const q = String(sheetSearch.value || "");
       draft.clientPickOpen = true;
-      const formInput = document.querySelector('[data-role="prov-cal-add-client"]');
-      if (formInput) formInput.value = draft.clientName;
+      if (isProvCalAddRequestsContactsMode()) {
+        draft.clientSheetSearchQ = q;
+      } else {
+        draft.clientName = q;
+        const formInput = document.querySelector('[data-role="prov-cal-add-client"]');
+        if (formInput) formInput.value = draft.clientName;
+        patchProvCalAddClientClearBtn();
+      }
       refreshProvCalAddClientMenu({ focusSearch: false });
-      patchProvCalAddClientClearBtn();
       saveState();
       return;
     }

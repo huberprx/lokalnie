@@ -1,5 +1,5 @@
 /* Lokalnie PWA — przy publikacji podbij CACHE (zgodnie z APP_VERSION w app.js). */
-const CACHE = "lokalnie-shell-v1.0.5";
+const CACHE = "lokalnie-shell-v1.0.22";
 const SHELL = [
   "./",
   "./index.html",
@@ -18,6 +18,8 @@ self.addEventListener("install", function (event) {
   event.waitUntil(
     caches.open(CACHE).then(function (cache) {
       return cache.addAll(SHELL);
+    }).then(function () {
+      return self.skipWaiting();
     })
   );
 });
@@ -80,12 +82,17 @@ function staleWhileRevalidate(request) {
   });
 }
 
+function isCodeAsset(url) {
+  return /\.(?:js|css|webmanifest)$/i.test(url.pathname);
+}
+
 self.addEventListener("fetch", function (event) {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
 
-  if (event.request.mode === "navigate") {
+  // HTML + JS/CSS: najpierw sieć, żeby podgląd/dev nie trzymał starego UI.
+  if (event.request.mode === "navigate" || isCodeAsset(url)) {
     event.respondWith(networkFirst(event.request));
     return;
   }
