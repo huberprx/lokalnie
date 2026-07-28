@@ -5865,6 +5865,21 @@ body.service-photo-preview-open {
   margin-bottom: 0.35rem;
 }
 
+.prov-cal-add__schedule .booking__label-row {
+  align-items: center;
+}
+
+.prov-cal-add__schedule .booking__label-row__start {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.prov-cal-add__schedule .booking__label-row .booking__label {
+  margin-bottom: 0;
+}
+
 .booking__month {
   font-size: 0.9rem;
   font-weight: 650;
@@ -7104,8 +7119,8 @@ body.service-photo-preview-open {
 }
 
 .prov-cal-add__head-spacer {
-  grid-column: 1;
-  justify-self: start;
+  grid-column: 3;
+  justify-self: end;
   width: 2.1rem;
   height: 2.1rem;
 }
@@ -7125,8 +7140,8 @@ body.service-photo-preview-open {
   background: var(--surface-2);
   color: var(--text-muted);
   cursor: pointer;
-  justify-self: end;
-  grid-column: 3;
+  justify-self: start;
+  grid-column: 1;
   flex-shrink: 0;
   transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
 }
@@ -7166,13 +7181,54 @@ body.service-photo-preview-open {
   box-shadow: 0 -6px 24px rgba(15, 23, 42, 0.12);
 }
 
-.prov-cal-add--minimized .prov-cal-add__head {
-  padding-bottom: calc(0.55rem + env(safe-area-inset-bottom, 0px));
+.prov-cal-add--minimized .prov-cal-add__head--mini {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 0;
+  padding: 0.45rem 0.75rem 0.2rem;
+  border-bottom: none;
 }
 
-.prov-cal-add--minimized .prov-cal-add__head--tabs {
-  border-bottom: none;
-  padding-bottom: calc(0.45rem + env(safe-area-inset-bottom, 0px));
+.prov-cal-add--minimized .prov-cal-add__head--mini .prov-cal-add__head-spacer {
+  display: none;
+}
+
+.prov-cal-add--minimized .prov-cal-add__collapse {
+  grid-column: auto;
+  justify-self: start;
+  margin: 0;
+}
+
+.prov-cal-add--minimized .prov-cal-add__body {
+  flex: 0 0 auto;
+  overflow: hidden;
+  padding-top: 0.15rem;
+  padding-bottom: 0.35rem;
+}
+
+/* Zwinięty: tylko klient, usługa i karuzela godzin. */
+.prov-cal-add--minimized .prov-cal-add__show-all,
+.prov-cal-add--minimized .booking__label-row,
+.prov-cal-add--minimized .date-strip,
+.prov-cal-add--minimized .prov-cal-add__part-note,
+.prov-cal-add--minimized .prov-cal-add__schedule > .booking__label,
+.prov-cal-add--minimized .proposal-list--panel {
+  display: none !important;
+}
+
+.prov-cal-add--minimized .prov-cal-add__schedule {
+  margin-top: 0.15rem;
+  gap: 0.35rem;
+}
+
+.prov-cal-add--minimized .time-list--horizontal:not([hidden]) {
+  margin: 0;
+}
+
+.prov-cal-add--minimized .prov-cal-add__foot {
+  padding-top: 0.4rem;
+  padding-bottom: calc(0.4rem + env(safe-area-inset-bottom, 0px));
 }
 
 .prov-cal-add__body {
@@ -8512,6 +8568,16 @@ body.client-sheet-open {
 
 .prov-cal-add__foot .bottom-nav__book:disabled {
   opacity: 0.45;
+}
+
+.prov-cal-add__foot .bottom-nav__clear {
+  width: var(--bottom-nav-item-h);
+  height: var(--bottom-nav-item-h);
+}
+
+.prov-cal-add__foot .bottom-nav__clear .bottom-nav__icon {
+  width: 1.15rem;
+  height: 1.15rem;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -14223,20 +14289,18 @@ body.prov-cal-resizing * {
 .prov-cal-add__show-all {
   appearance: none;
   -webkit-appearance: none;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  width: 100%;
-  margin: 0 0 0.55rem;
-  padding: 0.45rem 0.55rem;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-2);
-  color: var(--text);
+  justify-content: center;
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
   font: inherit;
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-align: left;
   cursor: pointer;
 }
 

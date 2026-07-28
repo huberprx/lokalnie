@@ -4402,8 +4402,8 @@
     if (opts.forceDay) applyProvCalVisibleDays(1, { render: false, persist: false, closeMonth: false });
     else ensureProvCalVisibleDays();
     if (!opts.keepSelection) window.AppState.provCalSelection = null;
-    // Tryb odpowiedzi na zapytanie — synchronizuj dzień w panelu „+”.
-    if (window.AppState.provCalAddOpen && window.AppState.provCalAddDraft && window.AppState.provCalAddDraft.requestId) {
+    // Panel „+” otwarty — synchronizuj dzień (pełny i zwinięty widok).
+    if (window.AppState.provCalAddOpen && window.AppState.provCalAddDraft) {
       window.AppState.provCalAddDraft.dateISO = dateISO;
     }
     saveState();
@@ -6928,6 +6928,13 @@
     captureProvCalAddClientName();
     setProvCalAddClientPickOpen(false);
     setProvCalAddServicePickOpen(false);
+    // Zwinięty widok = formularz (klient / usługa / godziny), nie lista próśb.
+    if (!replyRequestId() && window.AppState.provCalAddTab === "requests") {
+      window.AppState.provCalAddTab = "new";
+    }
+    if (window.AppState.provCalAddDraft && window.AppState.provCalDate) {
+      window.AppState.provCalAddDraft.dateISO = window.AppState.provCalDate;
+    }
     window.AppState.provCalAddMinimized = true;
     saveState();
     renderAll();
@@ -7728,18 +7735,19 @@
             </div>
 
             <div class="booking__schedule prov-cal-add__schedule">
-              ${
-                isReply
-                  ? `<button type="button" class="prov-cal-add__show-all${showAll ? " is-on" : ""}" data-action="toggle-prov-cal-reply-show-all" aria-pressed="${
-                      showAll ? "true" : "false"
-                    }">
-                      <span class="avail-edit__switch" aria-hidden="true"></span>
-                      <span>Pokaż cały kalendarz</span>
-                    </button>`
-                  : ""
-              }
               <div class="booking__label-row">
-                <h3 class="booking__label booking__label--caps">${isReply ? "Dni z zapytania" : "Wybierz datę"}</h3>
+                <div class="booking__label-row__start">
+                  ${
+                    isReply
+                      ? `<button type="button" class="prov-cal-add__show-all${showAll ? " is-on" : ""}" data-action="toggle-prov-cal-reply-show-all" aria-pressed="${
+                          showAll ? "true" : "false"
+                        }" aria-label="Pokaż cały kalendarz" title="Pokaż cały kalendarz">
+                          <span class="avail-edit__switch" aria-hidden="true"></span>
+                        </button>`
+                      : ""
+                  }
+                  <h3 class="booking__label booking__label--caps">${isReply ? "Dni z zapytania" : "Wybierz datę"}</h3>
+                </div>
                 <span class="booking__month" data-role="prov-cal-add-month">${escapeHtml(monthLabelFromISO(activeDate || stripDates[0] || allAvailDates[0]))}</span>
               </div>
               <div class="date-strip date-strip--booking" data-role="prov-cal-add-date-strip">${dateStrip}</div>
@@ -7764,30 +7772,9 @@
             <span class="prov-cal-add__collapse-icon" aria-hidden="true"></span>
           </button>`;
 
-    return `
-      <div class="prov-cal-add${isReply ? " prov-cal-add--reply" : ""}${
-        showRequestsList ? " prov-cal-add--requests" : ""
-      }${showTabs ? " prov-cal-add--tabs" : ""}${minimized ? " prov-cal-add--minimized" : ""}" data-role="prov-cal-add">
-        <button type="button" class="prov-cal-add__backdrop" data-action="${
-          minimized ? "expand-prov-cal-add" : "close-prov-cal-add"
-        }" aria-label="${minimized ? "Rozwiń panel" : "Zamknij"}"></button>
-        <div class="prov-cal-add__sheet" role="dialog" aria-modal="${minimized ? "false" : "true"}" aria-labelledby="prov-cal-add-title">
-          <header class="prov-cal-add__head${showTabs ? " prov-cal-add__head--tabs" : ""}">
-            <span class="prov-cal-add__head-spacer" aria-hidden="true"></span>
-            ${headCenter}
-            ${collapseBtn}
-          </header>
-          ${
-            minimized
-              ? ""
-              : `<div class="prov-cal-add__body">
-            ${requestsListHtml}
-            ${formBodyHtml}
-          </div>
-          ${
-            showRequestsList
-              ? ""
-              : `<div class="prov-cal-add__foot booking-confirm-bar">
+    const footHtml = showRequestsList
+      ? ""
+      : `<div class="prov-cal-add__foot booking-confirm-bar">
             <div class="bottom-nav__summary${hasSvc ? "" : " bottom-nav__summary--empty"}">
               <span class="bottom-nav__summary-label">${isReply ? "Wybrane:" : "Suma:"}</span>
               <div class="bottom-nav__summary-meta">
@@ -7800,14 +7787,33 @@
               </div>
             </div>
             <button type="button" class="bottom-nav__book" data-role="prov-cal-add-cta" data-action="${saveAction}"${saveAttrs}${
-                canSave ? "" : " disabled"
-              }>${escapeHtml(saveLabel)}</button>
+              canSave ? "" : " disabled"
+            }>${escapeHtml(saveLabel)}</button>
             <button type="button" class="bottom-nav__clear" data-action="close-prov-cal-add" aria-label="Zamknij">
               <span class="bottom-nav__icon bottom-nav__icon--close" aria-hidden="true"></span>
             </button>
-          </div>`
-          }`
-          }
+          </div>`;
+
+    return `
+      <div class="prov-cal-add${isReply ? " prov-cal-add--reply" : ""}${
+        showRequestsList ? " prov-cal-add--requests" : ""
+      }${showTabs ? " prov-cal-add--tabs" : ""}${minimized ? " prov-cal-add--minimized" : ""}" data-role="prov-cal-add">
+        <button type="button" class="prov-cal-add__backdrop" data-action="${
+          minimized ? "expand-prov-cal-add" : "close-prov-cal-add"
+        }" aria-label="${minimized ? "Rozwiń panel" : "Zamknij"}"></button>
+        <div class="prov-cal-add__sheet" role="dialog" aria-modal="${minimized ? "false" : "true"}" aria-labelledby="prov-cal-add-title">
+          <header class="prov-cal-add__head${showTabs ? " prov-cal-add__head--tabs" : ""}${
+            minimized ? " prov-cal-add__head--mini" : ""
+          }">
+            ${collapseBtn}
+            ${minimized ? `<h3 class="visually-hidden" id="prov-cal-add-title">${escapeHtml(title)}</h3>` : headCenter}
+            <span class="prov-cal-add__head-spacer" aria-hidden="true"></span>
+          </header>
+          <div class="prov-cal-add__body">
+            ${requestsListHtml}
+            ${formBodyHtml}
+          </div>
+          ${footHtml}
         </div>
       </div>`;
   }
@@ -7822,14 +7828,24 @@
     const proposed = all.filter(function (r) {
       return r.status === "proposed";
     });
+    function formatReqSuggestedDay(d) {
+      const date = new Date(String(d.dateISO) + "T12:00:00");
+      if (isNaN(date.getTime())) return String(d.dateISO || "");
+      const dow = String(WEEKDAYS[date.getDay()] || "").toUpperCase();
+      const part =
+        normalizeDayPart(d.part) === "am"
+          ? "przed południem"
+          : normalizeDayPart(d.part) === "pm"
+            ? "popołudniu"
+            : "dowolnie";
+      return `${dow} ${date.getDate()} ${MONTHS[date.getMonth()]}, ${part}`;
+    }
     function row(r) {
       const days = normalizeRequestDays(r.days);
       const dayHint = days.length
         ? days
             .slice(0, 2)
-            .map(function (d) {
-              return formatDayWithDow(d.dateISO);
-            })
+            .map(formatReqSuggestedDay)
             .join(", ") + (days.length > 2 ? " +" + (days.length - 2) : "")
         : "Bez wskazanych dni";
       const services = (r.serviceNames || []).filter(Boolean);
@@ -7840,7 +7856,7 @@
             <span class="prov-cal-add__req-main">
               <span class="prov-cal-add__req-name">${escapeHtml(r.clientName || "Klient")}</span>
               <span class="prov-cal-add__req-svc">${escapeHtml(servicesLabel)}</span>
-              <span class="prov-cal-add__req-meta">sugerowany termin: ${escapeHtml(dayHint)}</span>
+              <span class="prov-cal-add__req-meta">${escapeHtml(dayHint)}</span>
             </span>
           </button>
           <button type="button" class="prov-cal-add__req-dismiss" data-action="reject-request" data-request-id="${escapeHtml(r.id)}"
