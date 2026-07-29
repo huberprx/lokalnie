@@ -515,8 +515,26 @@ a.site-nav__link:hover,
   animation: appScreenEnter 0.22s ease;
 }
 
+/* Wejście kalendarza z pulpitu (mobile): z prawej, potem panel edycji. */
+@keyframes appScreenEnterFromRight {
+  from {
+    transform: translateX(10%);
+    opacity: 0.5;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.app-screen--enter-from-right {
+  animation: appScreenEnterFromRight 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .app-screen--enter {
+  .app-screen--enter,
+  .app-screen--enter-from-right {
     animation: none;
   }
 }
@@ -3467,13 +3485,8 @@ body.cancel-visit-dialog-open {
   border-bottom-right-radius: 12px;
 }
 
-.provider-booking-panel--approval {
-  padding: 0.85rem 1rem 0;
-}
-
-.provider-booking-panel--approval .profile__mode {
-  margin-bottom: 0.65rem;
-}
+/* Ten sam padding kolumn co w auto — bez dodatkowego paddingu na panelu
+   (wcześniej --approval zwężał listę/kalendarz przy zmianie trybu oferty). */
 
 .provider-booking-panel__services {
   margin-bottom: 0.5rem;
@@ -11544,6 +11557,12 @@ body.prov-cal-resizing * {
   background: transparent;
 }
 
+.visit-card--provider.visit-card--free.is-selected,
+.visit-card--provider[data-status="free"].is-selected {
+  background: color-mix(in srgb, var(--text-muted) 12%, var(--surface));
+  border-radius: 12px;
+}
+
 .visit-card--free .visit-card__schedule {
   margin-bottom: 0;
 }
@@ -14352,11 +14371,16 @@ body.prov-cal-resizing * {
   flex: 0 0 auto;
 }
 
+.booking__request-days .cal--booking {
+  flex: 0 0 auto;
+}
+
 .booking__request-hint {
   margin: 0.6rem 0 0;
   font-size: 0.76rem;
   line-height: 1.45;
   color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 .request-day-list {

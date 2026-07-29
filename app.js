@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.73";
+  const APP_VERSION = "1.0.80";
 
   const PWA = {
     registration: null,
@@ -486,7 +486,22 @@
       </div>`;
   }
 
+  function restoreScrollTop(el, top) {
+    if (!el || !(top > 0)) return;
+    el.scrollTop = top;
+    requestAnimationFrame(function () {
+      el.scrollTop = top;
+    });
+  }
+
   function refreshBookingPanelElement(panel, p, ctx) {
+    const mode = draftBookingMode(p);
+    const isApproval = mode === "approval";
+    panel.setAttribute("data-booking-mode", isApproval ? "approval" : "auto");
+    panel.classList.toggle("provider-booking-panel--approval", isApproval);
+    const layout = panel.querySelector(".booking-layout");
+    if (layout) layout.classList.toggle("booking-layout--approval", isApproval);
+
     const servicesAside = panel.querySelector(".booking__services");
     if (servicesAside) {
       const head = servicesAside.querySelector(".booking__panel-head");
@@ -496,25 +511,49 @@
     }
 
     const servicesList = panel.querySelector(".booking__services-list");
-    if (servicesList) servicesList.innerHTML = ctx.services;
+    const svcScroll = servicesList ? servicesList.scrollTop : 0;
+    if (servicesList) {
+      servicesList.innerHTML = ctx.services;
+      restoreScrollTop(servicesList, svcScroll);
+    }
 
-    const mode = draftBookingMode(p);
-    // W trybie „na prośbę” te same kolumny trzymają wybór dni i pory dnia — odświeża je refreshBookingDraftUI().
-    if (mode !== "approval") {
-      const calendar = panel.querySelector(".booking__calendar");
+    const calendar = panel.querySelector(".booking__calendar");
+    const times = panel.querySelector(".booking__times");
+    if (calendar) calendar.classList.toggle("booking__request-days", isApproval);
+    if (times) times.classList.toggle("booking__request-parts", isApproval);
+    if (isApproval) {
+      if (calendar) {
+        calendar.innerHTML = `
+        <h3 class="booking__panel-label">Wybierz dni</h3>
+        ${
+          ctx.availDates.length
+            ? ctx.requestCalendarGrid
+            : `<p class="empty-note">Brak dostępnych terminów.</p>`
+        }
+        <p class="booking__request-hint">Zaznacz jeden lub kilka pasujących dni — usługodawca odeśle konkretne godziny.</p>`;
+      }
+      if (times) {
+        const partsEl = times.querySelector(".request-day-list");
+        const partsScroll = partsEl ? partsEl.scrollTop : 0;
+        times.innerHTML = `
+        <h3 class="booking__panel-label">Pora dnia</h3>
+        <div class="request-day-list" data-role="booking-request-parts">${renderRequestPartsBody(ctx)}</div>`;
+        restoreScrollTop(times.querySelector(".request-day-list"), partsScroll);
+      }
+    } else {
       if (calendar) {
         calendar.innerHTML = `
         <h3 class="booking__panel-label">Wybierz dzień</h3>
         ${ctx.availDates.length ? ctx.calendarGrid : `<p class="empty-note">Brak dostępnych terminów.</p>`}`;
       }
-
-      const times = panel.querySelector(".booking__times");
       if (times) {
+        const timesScroll = (times.querySelector(".time-list--vertical") || {}).scrollTop || 0;
         times.innerHTML = `
         <h3 class="booking__panel-label">${ctx.activeDate ? `Wolne terminy · ${escapeHtml(formatDateLong(ctx.activeDate))}` : "Wolne terminy"}</h3>
         <div class="time-list time-list--vertical">
           ${ctx.activeDate ? ctx.timeList || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>` : `<p class="empty-note">Wybierz dzień w kalendarzu.</p>`}
         </div>`;
+        restoreScrollTop(times.querySelector(".time-list--vertical"), timesScroll);
       }
     }
 
@@ -663,17 +702,22 @@
     if (mobile) {
       const scrollTop = mobile.scrollTop;
       mobile.innerHTML = html;
-      mobile.scrollTop = scrollTop;
+      restoreScrollTop(mobile, scrollTop);
     }
     const layoutList = screen.querySelector(".booking-layout .booking__services-list");
     if (layoutList) {
+      const scrollTop = layoutList.scrollTop;
       layoutList.innerHTML = html;
+      restoreScrollTop(layoutList, scrollTop);
     }
   }
 
   function clearBookingPickModeUI() {}
 
   function refreshMobileBookingScreen(screen, p, ctx) {
+    const isApproval = draftBookingMode(p) === "approval";
+    screen.setAttribute("data-booking-mode", isApproval ? "approval" : "auto");
+
     const providerWrap = screen.querySelector(".booking__provider-card");
     if (providerWrap) {
       const infoOpen = !!ctx.draft.providerInfoOpen;
@@ -696,8 +740,29 @@
 
     refreshBookingServiceLists(screen, ctx);
 
-    // Tryb „na prośbę”: zamiast paska dat i godzin jest wybór dni + pory dnia (odświeżany osobno).
-    if (draftBookingMode(p) === "approval") {
+    const split = screen.querySelector(".booking--mobile-split");
+    const schedule = split && split.querySelector(".booking__schedule, .booking__schedule--request");
+    if (split && schedule) {
+      const wantRequest = isApproval;
+      const isRequest = schedule.classList.contains("booking__schedule--request");
+      if (wantRequest !== isRequest) {
+        schedule.outerHTML = wantRequest
+          ? renderRequestSchedule(ctx)
+          : `<div class="booking__schedule" data-role="booking-mobile-schedule">
+              <div class="booking__label-row">
+                <h3 class="booking__label booking__label--caps">Wybierz datę</h3>
+                <span class="booking__month" data-role="booking-mobile-month">${escapeHtml(monthLabelFromISO(ctx.activeDate || ctx.availDates[0]))}</span>
+              </div>
+              <div class="date-strip date-strip--booking" data-role="booking-date-strip">${renderDateStripHtml(ctx.availDates, ctx.activeDate)}</div>
+              <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>Wolne terminy</h3>
+              <div class="time-list time-list--horizontal" data-role="booking-mobile-times"${ctx.activeDate ? "" : " hidden"}>${ctx.activeDate ? ctx.timeListMobile || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>` : ""}</div>
+            </div>`;
+        updateBookingBottomNav(screen, ctx.draft);
+        return;
+      }
+    }
+
+    if (isApproval) {
       updateBookingBottomNav(screen, ctx.draft);
       return;
     }
@@ -746,15 +811,13 @@
     const ctx = buildBookingContext(p);
     if (!ctx) return false;
 
-    // Zmiana trybu (auto ↔ na prośbę) przebudowuje układ ekranu — częściowe odświeżenie nie wystarczy.
     const mode = draftBookingMode(p);
-    const staleLayout = Array.prototype.some.call(
-      document.querySelectorAll("[data-booking-mode]"),
+    const appScrolls = Array.prototype.map.call(
+      document.querySelectorAll(".app-screen--client > .app-scroll, #app-fullscreen > .app-screen--client > .app-scroll"),
       function (el) {
-        return el.getAttribute("data-booking-mode") !== mode;
+        return { el: el, top: el.scrollTop };
       }
     );
-    if (staleLayout) return false;
 
     let updated = false;
 
@@ -765,10 +828,24 @@
 
     if (window.AppState.screen.client === "booking") {
       document.querySelectorAll(".app-screen--booking").forEach(function (bookingScreen) {
+        bookingScreen.setAttribute("data-booking-mode", mode === "approval" ? "approval" : "auto");
         if (clientUsesDesktopBookingLayout()) {
           const layout = bookingScreen.querySelector(".booking-layout");
           if (layout) {
+            const svcList = layout.querySelector(".booking__services-list");
+            const partsList = layout.querySelector(".request-day-list");
+            const timesList = layout.querySelector(".time-list--vertical");
+            const svcScroll = svcList ? svcList.scrollTop : 0;
+            const partsScroll = partsList ? partsList.scrollTop : 0;
+            const timesScroll = timesList ? timesList.scrollTop : 0;
             layout.outerHTML = renderBookingLayoutBlock(p, ctx);
+            const nextLayout = bookingScreen.querySelector(".booking-layout");
+            const nextSvc = nextLayout && nextLayout.querySelector(".booking__services-list");
+            const nextParts = nextLayout && nextLayout.querySelector(".request-day-list");
+            const nextTimes = nextLayout && nextLayout.querySelector(".time-list--vertical");
+            restoreScrollTop(nextSvc, svcScroll);
+            restoreScrollTop(nextParts, partsScroll);
+            restoreScrollTop(nextTimes, timesScroll);
             updated = true;
           }
         }
@@ -794,6 +871,10 @@
     document.querySelectorAll('[data-role="booking-request-parts"]').forEach(function (el) {
       el.innerHTML = renderRequestPartsBody(ctx);
       updated = true;
+    });
+
+    appScrolls.forEach(function (s) {
+      restoreScrollTop(s.el, s.top);
     });
 
     return updated;
@@ -1001,6 +1082,13 @@
       timeListMobile: renderTimeSlots(slots, draft, { mobile: true }),
       services: renderBookingServiceRows(p, draft.serviceIds || []),
       calendarGrid: renderCalendarGrid(p, activeDate, calMonth, availDates, totals),
+      requestCalendarGrid: renderCalendarGrid(p, activeDate, calMonth, availDates, totals, {
+        multiSelect: true,
+        selectedDates: (draft.requestDays || []).map(function (d) {
+          return d.dateISO;
+        }),
+        action: "request-toggle-day",
+      }),
       svcNames: draftServices(p).map((s) => s.name).join(", "),
       canConfirm: !!draft.slotId,
     };
@@ -1044,12 +1132,16 @@
       .join("");
   }
 
-  /** Kolumny „dni + pora dnia” w układzie desktop (zamiast kalendarza i godzin). */
+  /** Desktop: ten sam kalendarz miesięczny co przy auto + pora dnia (multi-select dni). */
   function renderRequestDaysSections(ctx) {
     return `
       <section class="booking__calendar booking__request-days">
         <h3 class="booking__panel-label">Wybierz dni</h3>
-        <div class="date-strip date-strip--booking" data-role="booking-request-days">${renderRequestDaysBody(ctx)}</div>
+        ${
+          ctx.availDates.length
+            ? ctx.requestCalendarGrid
+            : `<p class="empty-note">Brak dostępnych terminów.</p>`
+        }
         <p class="booking__request-hint">Zaznacz jeden lub kilka pasujących dni — usługodawca odeśle konkretne godziny.</p>
       </section>
 
@@ -1535,10 +1627,7 @@
     const fav = window.AppState.favorites.indexOf(p.slug) !== -1;
     const dist = p.address ? p.distanceKm.toFixed(1) + " km" : "Online";
     const hours = p.openHoursToday || "";
-    const metaParts = [];
-    if (hours) metaParts.push(hours);
-    if (providerHasApprovalOffers(p)) metaParts.push("także na prośbę");
-    const metaLine = metaParts.join(" · ");
+    const metaLine = hours || "";
     const addrLine = p.address ? p.address + " · " + dist : dist;
 
     const nameHtml = opts.staticMain
@@ -3850,7 +3939,11 @@
     el.innerHTML = renderServicePhotoPreview(el.dataset.serviceName || "", photos, next);
   }
 
-  function renderCalendarGrid(p, activeDate, calMonth, availDates, totals) {
+  function renderCalendarGrid(p, activeDate, calMonth, availDates, totals, opts) {
+    opts = opts || {};
+    const multi = !!opts.multiSelect;
+    const selectedSet = multi ? new Set(opts.selectedDates || []) : null;
+    const dayAction = opts.action || "pick-date";
     const availSet = new Set(availDates);
     const parts = String(calMonth || "").split("-");
     const year = Number(parts[0]) || new Date().getFullYear();
@@ -3868,13 +3961,15 @@
     for (let day = 1; day <= daysInMonth; day++) {
       const dateISO = `${year}-${pad(month)}-${pad(day)}`;
       const available = availSet.has(dateISO);
-      const selected = dateISO === activeDate;
+      const selected = multi ? selectedSet.has(dateISO) : dateISO === activeDate;
       const isToday = dateISO === todayISO;
       const red = isRedCalendarDay(dateISO);
       cells += `
         <button type="button"
           class="cal__day${selected ? " cal__day--selected" : ""}${isToday ? " cal__day--today" : ""}${red ? " cal__day--holiday" : ""}${available ? " cal__day--available" : " cal__day--disabled"}"
-          data-action="${available ? "pick-date" : ""}" data-date="${escapeHtml(dateISO)}" ${available ? "" : "disabled"}>
+          data-action="${available ? escapeHtml(dayAction) : ""}" data-date="${escapeHtml(dateISO)}"${
+            available && multi ? ` aria-pressed="${selected ? "true" : "false"}"` : ""
+          } ${available ? "" : "disabled"}>
           <span class="cal__day-num">${day}</span>
         </button>`;
     }
@@ -3884,7 +3979,7 @@
     }
 
     return `
-      <div class="cal cal--booking">
+      <div class="cal cal--booking${multi ? " cal--booking-multi" : ""}">
         <div class="cal__nav">
           <button type="button" class="cal__nav-btn" data-action="cal-prev" aria-label="Poprzedni miesiąc">‹</button>
           <span class="cal__title">${escapeHtml(MONTHS[month - 1])} ${year}</span>
@@ -7538,6 +7633,10 @@
     });
     if (!bk) return;
     clearProvCalReplyMode();
+    if (pendingProvCalEditTimer) {
+      clearTimeout(pendingProvCalEditTimer);
+      pendingProvCalEditTimer = null;
+    }
     const draft = defaultProvCalAddDraft();
     draft.bookingId = bk.id;
     draft.clientName = String(bk.clientName || "");
@@ -7551,9 +7650,7 @@
     draft.serviceIds = serviceIdsFromBooking(bk);
     draft.dateISO = bk.dateISO || ensureProvCalDate();
     draft.slotId = provCalAddSlotIdForBooking(bk);
-    markProvCalAddEnterAnim();
     window.AppState.provCalAddTab = "new";
-    window.AppState.provCalAddOpen = true;
     window.AppState.provCalAddMinimized = false;
     window.AppState.provCalAddDraft = draft;
     window.AppState.provCalDate = draft.dateISO;
@@ -7568,6 +7665,36 @@
     });
     setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
     closeProvCalViewCloud();
+
+    const desktop = usesDesktopLayout();
+    const onCalendar = window.AppState.screen.provider === "calendar";
+    // Mobile z pulpitu: najpierw wjazd kalendarza z prawej, potem panel edycji.
+    const stagedMobile = !desktop && !onCalendar;
+
+    if (stagedMobile) {
+      window.AppState.provCalAddOpen = false;
+      window.AppState.screen.provider = "calendar";
+      screenEnterAnimMode = "from-right";
+      saveState();
+      renderAll();
+      hapticTap(12);
+      const delay = prefersReducedMotion() ? 0 : 340;
+      pendingProvCalEditTimer = setTimeout(function () {
+        pendingProvCalEditTimer = null;
+        if (!window.AppState.provCalAddDraft || window.AppState.provCalAddDraft.bookingId !== bk.id) return;
+        markProvCalAddEnterAnim();
+        window.AppState.provCalAddOpen = true;
+        window.AppState.provCalAddMinimized = false;
+        saveState();
+        renderAll();
+        hapticTap(16);
+      }, delay);
+      return;
+    }
+
+    markProvCalAddEnterAnim();
+    window.AppState.provCalAddOpen = true;
+    if (!desktop) window.AppState.screen.provider = "calendar";
     saveState();
     renderAll();
     hapticTap(16);
@@ -12246,9 +12373,18 @@
 
   // Ostatnio wyrenderowane ekrany — do wykrycia zmiany ekranu i crossfade wejścia.
   let lastRenderedScreens = null;
+  /** "from-right" | null — tryb animacji wejścia ekranu (np. Pulpit → Kalendarz). */
+  let screenEnterAnimMode = null;
+  let pendingProvCalEditTimer = null;
 
   function playScreenEnterAnim(prev) {
-    if (prefersReducedMotion()) return;
+    if (prefersReducedMotion()) {
+      screenEnterAnimMode = null;
+      return;
+    }
+    const enterClass =
+      screenEnterAnimMode === "from-right" ? "app-screen--enter-from-right" : "app-screen--enter";
+    screenEnterAnimMode = null;
     const role = window.AppState.activeRole || "client";
     const mountIds = [];
     if (prev.client !== window.AppState.screen.client) mountIds.push("app-client");
@@ -12258,11 +12394,11 @@
       const mount = document.getElementById(id);
       const screen = mount && mount.querySelector(":scope > .app-screen");
       if (!screen) return;
-      screen.classList.remove("app-screen--enter");
+      screen.classList.remove("app-screen--enter", "app-screen--enter-from-right");
       void screen.offsetWidth;
-      screen.classList.add("app-screen--enter");
+      screen.classList.add(enterClass);
       screen.addEventListener("animationend", function handler() {
-        screen.classList.remove("app-screen--enter");
+        screen.classList.remove(enterClass);
         screen.removeEventListener("animationend", handler);
       });
     });
