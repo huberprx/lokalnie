@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.59";
+  const APP_VERSION = "1.0.62";
 
   const PWA = {
     registration: null,
@@ -2355,9 +2355,12 @@
   }
 
   function syncAppMenuNavButtons(open) {
-    document.querySelectorAll('[data-action="toggle-app-menu"]').forEach(function (btn) {
+    if (window.AppState.loggedIn && window.AppState.activeRole) {
+      renderAppHeaderNav(window.AppState.activeRole);
+    }
+    syncAppHeaderMenuBtn(open);
+    document.querySelectorAll('.bottom-nav [data-action="toggle-app-menu"]').forEach(function (btn) {
       btn.classList.toggle("bottom-nav__item--active", !!open);
-      btn.classList.toggle("app-header__menu-btn--open", !!open);
       btn.setAttribute("aria-expanded", open ? "true" : "false");
     });
     syncBottomNavIndicators(null);
@@ -6204,10 +6207,8 @@
     const from = timeToMin((booking && booking.from) || "00:00");
     const to = timeToMin((booking && booking.to) || "00:00");
     const dur = Math.max(0, to - from);
-    const match = PROV_CAL_ADD_DURATION_OPTS.find(function (d) {
-      return d.durationMin === dur;
-    });
-    return [match ? match.id : PROV_CAL_ADD_DEFAULT_DURATION_ID];
+    if (dur > 0) return [durationServiceForMinutes(dur).id];
+    return [PROV_CAL_ADD_DEFAULT_DURATION_ID];
   }
 
   function ensureProviderClientsList(providerId) {
@@ -7517,18 +7518,197 @@
     </button>`;
   }
 
+  function draftHasProvCalAddInne(draft) {
+    return ((draft && draft.serviceIds) || []).some(isProvCalAddDurationId);
+  }
+
+  function draftProvCalAddInneMinutes(draft) {
+    const id = ((draft && draft.serviceIds) || []).find(isProvCalAddDurationId);
+    if (!id) return 30;
+    const m = /^dur-(\d+)$/.exec(String(id));
+    if (m) return Math.max(5, Number(m[1]) || 30);
+    const s = resolveProvCalAddService(myProvider(), id);
+    return (s && s.durationMin) || 30;
+  }
+
+  /** HH:MM jako długość (minutnik) — max 12 h, krok 5 min. */
+  function durationMinToTimeValue(min) {
+    const n = Math.max(5, Math.min(12 * 60, Math.round(Number(min) / 5) * 5 || 30));
+    return minToTime(n);
+  }
+
+  function timeValueToDurationMin(hhmm) {
+    const m = timeToMin(hhmm);
+    if (!Number.isFinite(m) || m < 5) return 5;
+    return Math.min(12 * 60, Math.round(m / 5) * 5);
+  }
+
+  /** Jeden wiersz „Inne” — czas wybiera się w pickerze (godziny + minuty). */
+  function renderProvCalAddInneOptHtml(draft) {
+    const on = draftHasProvCalAddInne(draft);
+    const mins = draftProvCalAddInneMinutes(draft);
+    const meta = on ? formatDuration(mins) : "Ustaw długość";
+    const selectLabel = on
+      ? "Inne · " + formatDuration(mins) + " — zmień długość"
+      : "Zaznacz Inne i ustaw długość";
+    return `<button type="button" class="avail-loc-pick__opt prov-cal-add__service-opt prov-cal-add__inne-opt${
+      on ? " is-selected" : ""
+    }" role="option" data-action="prov-cal-add-inne" data-role="prov-cal-add-inne-opt"
+      aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
+      <span class="prov-cal-add__service-opt-main">
+        <span class="avail-loc-pick__opt-label">${escapeHtml(PROV_CAL_ADD_INNE_NAME)}</span>
+        <span class="prov-cal-add__service-opt-meta" data-role="prov-cal-add-inne-meta">${escapeHtml(meta)}</span>
+      </span>
+      <span class="service-row__check-visual${on ? " is-on" : ""}" aria-hidden="true"></span>
+    </button>`;
+  }
+
+  function renderProvCalAddInneDurationHtml(minutes) {
+    const timeVal = durationMinToTimeValue(minutes);
+    const durLabel = formatDuration(timeValueToDurationMin(timeVal));
+    return `
+      <div class="prov-cal-add__inne-duration" data-role="prov-cal-add-inne-duration">
+        <button type="button" class="client-sheet__backdrop" data-action="close-prov-cal-add-inne-duration" aria-label="Zamknij długość"></button>
+        <div class="prov-cal-add__inne-duration-panel" role="dialog" aria-modal="true" aria-label="Długość trwania">
+          <div class="client-sheet__grab" aria-hidden="true"></div>
+          <header class="client-sheet__head">
+            <h3 class="client-sheet__title">Inne — długość</h3>
+            <button type="button" class="client-sheet__done" data-action="close-prov-cal-add-inne-duration">Gotowe</button>
+          </header>
+          <div class="prov-cal-add__inne-duration-body">
+            <p class="prov-cal-add__inne-duration-label">Czas trwania</p>
+            <div class="prov-cal-add__inne-duration-field">
+              <span class="avail-edit__time-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3 2" />
+                </svg>
+              </span>
+              <span class="avail-edit__time-wrap avail-edit__time-wrap--from">
+                <input class="avail-edit__time prov-cal-add__inne-time" type="time" value="${escapeHtml(timeVal)}"
+                  step="300" data-role="prov-cal-add-inne-time"
+                  aria-label="Długość w godzinach i minutach" />
+              </span>
+            </div>
+            <p class="prov-cal-add__inne-duration-hint" data-role="prov-cal-add-inne-duration-hint">${escapeHtml(
+              durLabel
+            )} — wybierz godziny i minuty jak w minutniku</p>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function bindProvCalAddInneDurationInput(root) {
+    const input = root && root.querySelector('[data-role="prov-cal-add-inne-time"]');
+    if (!input || input._inneBound) return;
+    input._inneBound = true;
+    function apply() {
+      setProvCalAddInneDurationMinutes(timeValueToDurationMin(input.value));
+      const hint = root.querySelector('[data-role="prov-cal-add-inne-duration-hint"]');
+      if (hint) {
+        hint.textContent =
+          formatDuration(timeValueToDurationMin(input.value)) +
+          " — wybierz godziny i minuty jak w minutniku";
+      }
+    }
+    input.addEventListener("change", apply);
+    input.addEventListener("input", apply);
+  }
+
+  function openProvCalAddInneDurationPick() {
+    captureProvCalAddClientName();
+    const draft = ensureProvCalAddDraft();
+    if (!draftHasProvCalAddInne(draft)) {
+      draft.serviceIds = [PROV_CAL_ADD_DEFAULT_DURATION_ID];
+      draft.slotId = null;
+      syncProvCalSelectionFromAddDraft();
+      draft.serviceScheduleDirty = true;
+    }
+    draft.servicePickOpen = true;
+    saveState();
+    patchProvCalAddServiceUi();
+
+    const sheet = ensureProvCalAddServiceSheetEl();
+    if (sheet.hidden || !sheet.classList.contains("is-open")) {
+      setProvCalAddServicePickOpen(true);
+    }
+    let host = sheet.querySelector('[data-role="prov-cal-add-inne-duration"]');
+    if (host) host.remove();
+    sheet.insertAdjacentHTML("beforeend", renderProvCalAddInneDurationHtml(draftProvCalAddInneMinutes(draft)));
+    host = sheet.querySelector('[data-role="prov-cal-add-inne-duration"]');
+    bindProvCalAddInneDurationInput(host);
+    sheet.classList.add("has-inne-duration");
+
+    const input = host && host.querySelector('[data-role="prov-cal-add-inne-time"]');
+    if (input) {
+      requestAnimationFrame(function () {
+        try {
+          input.focus({ preventScroll: true });
+          if (typeof input.showPicker === "function") input.showPicker();
+        } catch (err) {
+          /* showPicker bywa blokowane poza gestem — pole i tak działa po tapnięciu */
+        }
+      });
+    }
+  }
+
+  function closeProvCalAddInneDurationPick() {
+    const sheet = document.getElementById("prov-cal-add-service-sheet");
+    if (!sheet) return;
+    const host = sheet.querySelector('[data-role="prov-cal-add-inne-duration"]');
+    const wasOpen = !!host;
+    if (host) host.remove();
+    sheet.classList.remove("has-inne-duration");
+    if (!wasOpen) {
+      patchProvCalAddServiceUi();
+      return;
+    }
+    // Odśwież wiersz „Inne” (meta z długością).
+    const list = sheet.querySelector('[data-role="prov-cal-add-service-menu"]');
+    const draft = window.AppState.provCalAddDraft;
+    const p = myProvider();
+    if (list && draft && p) {
+      list.outerHTML = renderProvCalAddServiceSheetListHtml(p, draft);
+    }
+    patchProvCalAddServiceUi();
+  }
+
+  function setProvCalAddInneDurationMinutes(minutes) {
+    const draft = ensureProvCalAddDraft();
+    const durSvc = durationServiceForMinutes(minutes);
+    const prev = (draft.serviceIds || []).join(",");
+    draft.serviceIds = [durSvc.id];
+    if (prev !== durSvc.id) {
+      draft.slotId = null;
+      syncProvCalSelectionFromAddDraft();
+      draft.serviceScheduleDirty = true;
+    }
+    saveState();
+    patchProvCalAddServiceUi();
+    // Meta wiersza „Inne” na liście pod spodem.
+    const meta = document.querySelector('[data-role="prov-cal-add-inne-meta"]');
+    if (meta) meta.textContent = formatDuration(durSvc.durationMin);
+    const opt = document.querySelector('[data-role="prov-cal-add-inne-opt"]');
+    if (opt) {
+      opt.classList.add("is-selected");
+      opt.setAttribute("aria-selected", "true");
+      const check = opt.querySelector(".service-row__check-visual");
+      if (check) check.classList.add("is-on");
+    }
+  }
+
   function renderProvCalAddServiceSheetListHtml(p, draft) {
     const catalogServices = (p && p.services) || [];
     const rows =
-      catalogServices.map(function (s) {
-        return renderProvCalAddServiceOptHtml(s, draft);
-      }).join("") +
+      catalogServices
+        .map(function (s) {
+          return renderProvCalAddServiceOptHtml(s, draft);
+        })
+        .join("") +
       (catalogServices.length
         ? `<div class="prov-cal-add__service-sep" role="separator" aria-hidden="true"></div>`
         : "") +
-      PROV_CAL_ADD_DURATION_OPTS.map(function (s) {
-        return renderProvCalAddServiceOptHtml(s, draft);
-      }).join("");
+      renderProvCalAddInneOptHtml(draft);
     return `<div class="service-sheet__list" data-role="prov-cal-add-service-menu" role="listbox" aria-multiselectable="true">${rows}</div>`;
   }
 
@@ -7581,7 +7761,7 @@
     clearServiceSheetArmTimer();
     if (!open) {
       sheet.hidden = true;
-      sheet.classList.remove("is-open", "client-sheet--arming");
+      sheet.classList.remove("is-open", "client-sheet--arming", "has-inne-duration");
       sheet.innerHTML = "";
       document.body.classList.remove("service-sheet-open");
       return;
@@ -7634,6 +7814,19 @@
     const ids = draft.serviceIds || [];
     const sheet = document.getElementById("prov-cal-add-service-sheet");
     const scope = sheet && !sheet.hidden ? sheet : document;
+    const summaryHtml = renderProvCalAddServiceSummaryHtml(selected);
+    const names = selected
+      .map(function (s) {
+        return provCalAddServiceDisplayName(s);
+      })
+      .join(", ");
+    const pickAria = hasSvc ? "Wybrane usługi: " + names : "Wybierz usługi";
+    const inneOn = draftHasProvCalAddInne(draft);
+    const inneMins = draftProvCalAddInneMinutes(draft);
+    const inneAria = inneOn
+      ? "Inne · " + formatDuration(inneMins) + " — zmień długość"
+      : "Zaznacz Inne i ustaw długość";
+    const inneMetaText = inneOn ? formatDuration(inneMins) : "Ustaw długość";
 
     scope.querySelectorAll('[data-action="prov-cal-add-service"]').forEach(function (opt) {
       const id = opt.getAttribute("data-service-id");
@@ -7647,21 +7840,28 @@
       if (labelText) opt.setAttribute("aria-label", (on ? "Odznacz" : "Zaznacz") + " " + labelText);
     });
 
-    const contentEl = document.querySelector('[data-role="prov-cal-add-service-pick"] [data-role="prov-cal-add-service-summary"]');
-    if (contentEl) contentEl.innerHTML = renderProvCalAddServiceSummaryHtml(selected);
-    const pickBtn = document.querySelector('[data-role="prov-cal-add-service-pick"] .avail-loc-pick__btn');
-    if (pickBtn) {
-      pickBtn.classList.toggle("prov-cal-add__service-btn--filled", hasSvc);
-      const names = selected
-        .map(function (s) {
-          return provCalAddServiceDisplayName(s);
-        })
-        .join(", ");
-      pickBtn.setAttribute("aria-label", hasSvc ? "Wybrane usługi: " + names : "Wybierz usługi");
-    }
+    // Sheet + obie powłoki UI (symulator i #page-app) — querySelector łapał tylko pierwszą.
+    scope.querySelectorAll('[data-role="prov-cal-add-inne-opt"]').forEach(function (inneOpt) {
+      inneOpt.classList.toggle("is-selected", inneOn);
+      inneOpt.setAttribute("aria-selected", inneOn ? "true" : "false");
+      inneOpt.setAttribute("aria-label", inneAria);
+      const inneCheck = inneOpt.querySelector(".service-row__check-visual");
+      if (inneCheck) inneCheck.classList.toggle("is-on", inneOn);
+      const inneMeta = inneOpt.querySelector('[data-role="prov-cal-add-inne-meta"]');
+      if (inneMeta) inneMeta.textContent = inneMetaText;
+    });
 
-    const summary = document.querySelector(".prov-cal-add__foot .bottom-nav__summary");
-    if (summary) {
+    document
+      .querySelectorAll('[data-role="prov-cal-add-service-pick"] [data-role="prov-cal-add-service-summary"]')
+      .forEach(function (contentEl) {
+        contentEl.innerHTML = summaryHtml;
+      });
+    document.querySelectorAll('[data-role="prov-cal-add-service-pick"] .avail-loc-pick__btn').forEach(function (pickBtn) {
+      pickBtn.classList.toggle("prov-cal-add__service-btn--filled", hasSvc);
+      pickBtn.setAttribute("aria-label", pickAria);
+    });
+
+    document.querySelectorAll(".prov-cal-add__foot .bottom-nav__summary").forEach(function (summary) {
       summary.classList.toggle("bottom-nav__summary--empty", !hasSvc);
       const dur = summary.querySelector(".bottom-nav__summary-dur");
       const price = summary.querySelector(".bottom-nav__summary-price");
@@ -7675,19 +7875,19 @@
               ? "wycena indyw."
               : formatPrice(totals.price);
       }
-    }
+    });
 
-    const cta = document.querySelector('[data-role="prov-cal-add-cta"]');
-    if (cta) {
-      if (draft.requestId) {
-        const n = (draft.proposals || []).length;
-        cta.disabled = n < 1;
-        cta.textContent = ("Wyślij " + (n || "") + " " + proposalCountLabel(n)).replace(/\s+/g, " ").trim();
-      } else {
-        cta.disabled = !(hasSvc && !!draft.slotId);
-        cta.textContent = "Zapisz";
-      }
+    let ctaLabel = "Zapisz";
+    let ctaDisabled = !(hasSvc && !!draft.slotId);
+    if (draft.requestId) {
+      const n = (draft.proposals || []).length;
+      ctaDisabled = n < 1;
+      ctaLabel = ("Wyślij " + (n || "") + " " + proposalCountLabel(n)).replace(/\s+/g, " ").trim();
     }
+    document.querySelectorAll('[data-role="prov-cal-add-cta"]').forEach(function (cta) {
+      cta.disabled = ctaDisabled;
+      cta.textContent = ctaLabel;
+    });
   }
 
   function flushProvCalAddServiceSchedule() {
@@ -7750,8 +7950,9 @@
     });
     if (provCalSelectionKey(sel) === provCalSelectionKey(next)) return false;
     window.AppState.provCalSelection = next;
-    const el = document.querySelector('[data-role="prov-cal-slot"][data-kind="free"]');
-    if (el) applyProvCalFreeDraftLayout(el, next.fromMin, next.toMin);
+    document.querySelectorAll('[data-role="prov-cal-slot"][data-kind="free"]').forEach(function (el) {
+      applyProvCalFreeDraftLayout(el, next.fromMin, next.toMin);
+    });
     return true;
   }
 
@@ -7763,16 +7964,23 @@
     const fromMin = Number(sel.fromMin);
     const toMin = Number(sel.toMin);
     if (!Number.isFinite(fromMin) || !Number.isFinite(toMin) || !(toMin > fromMin)) return false;
-    const durSvc = durationServiceForMinutes(Math.max(5, toMin - fromMin));
-    const p = myProvider();
+    if (!Array.isArray(draft.serviceIds)) draft.serviceIds = [];
     const duration = Math.max(5, toMin - fromMin);
-    const slots = computeSlots(p, sel.dateISO, duration, {});
+    const durSvc = durationServiceForMinutes(duration);
+    const p = myProvider();
+    // Przy „Inne” długość z siatki → dur-N; przy usługach z oferty nie nadpisuj wyboru.
+    const syncInne = draftHasProvCalAddInne(draft) || !draft.serviceIds.length;
+    const slotDuration = syncInne
+      ? duration
+      : provCalAddServiceTotals(provCalAddSelectedServices(p, draft)).duration || duration;
+    const slots = p ? computeSlots(p, sel.dateISO, Math.max(5, slotDuration), {}) : [];
     const matched = matchProvCalAddSlotForFromMin(slots, fromMin);
     const nextSlotId = matched ? matched.id : null;
+    const prevServices = draft.serviceIds.join(",");
+    if (syncInne) draft.serviceIds = [durSvc.id];
     const changed =
-      draft.dateISO !== sel.dateISO || draft.slotId !== nextSlotId || draft.serviceIds.join(",") !== durSvc.id;
+      draft.dateISO !== sel.dateISO || draft.slotId !== nextSlotId || prevServices !== draft.serviceIds.join(",");
     draft.dateISO = sel.dateISO;
-    draft.serviceIds = [durSvc.id];
     draft.slotId = nextSlotId;
     return changed;
   }
@@ -7923,8 +8131,8 @@
     const selected = provCalAddSelectedServices(p, draft);
     const totals = provCalAddServiceTotals(selected);
     const hasSvc = selected.length > 0;
-    const summary = document.querySelector(".prov-cal-add__foot .bottom-nav__summary");
-    if (summary) {
+    const ctaDisabled = !(hasSvc && !!draft.slotId);
+    document.querySelectorAll(".prov-cal-add__foot .bottom-nav__summary").forEach(function (summary) {
       summary.classList.toggle("bottom-nav__summary--empty", !hasSvc);
       const dur = summary.querySelector(".bottom-nav__summary-dur");
       const price = summary.querySelector(".bottom-nav__summary-price");
@@ -7938,12 +8146,11 @@
               ? "wycena indyw."
               : formatPrice(totals.price);
       }
-    }
-    const cta = document.querySelector('[data-role="prov-cal-add-cta"]');
-    if (cta) {
-      cta.disabled = !(hasSvc && !!draft.slotId);
+    });
+    document.querySelectorAll('[data-role="prov-cal-add-cta"]').forEach(function (cta) {
+      cta.disabled = ctaDisabled;
       cta.textContent = "Zapisz";
-    }
+    });
   }
 
   /**
@@ -7969,22 +8176,22 @@
 
   function toggleProvCalAddService(serviceId) {
     if (!serviceId) return;
+    // Stare id dur-* z listy → jeden wiersz „Inne” + minutnik.
+    if (isProvCalAddDurationId(serviceId)) {
+      openProvCalAddInneDurationPick();
+      return;
+    }
     captureProvCalAddClientName();
     const draft = ensureProvCalAddDraft();
     if (!Array.isArray(draft.serviceIds)) draft.serviceIds = [];
     const idx = draft.serviceIds.indexOf(serviceId);
-    const isDur = isProvCalAddDurationId(serviceId);
     if (idx === -1) {
-      if (isDur) {
-        // Blok czasu: tylko jedna opcja czasu naraz, bez usług z oferty.
-        draft.serviceIds = [serviceId];
-      } else {
-        // Usługa z oferty: odznacz bloki czasu, pozwól na kilka usług.
-        draft.serviceIds = draft.serviceIds.filter(function (id) {
-          return !isProvCalAddDurationId(id);
-        });
-        draft.serviceIds.push(serviceId);
-      }
+      // Usługa z oferty: odznacz blok „Inne”, pozwól na kilka usług.
+      draft.serviceIds = draft.serviceIds.filter(function (id) {
+        return !isProvCalAddDurationId(id);
+      });
+      draft.serviceIds.push(serviceId);
+      closeProvCalAddInneDurationPick();
     } else {
       draft.serviceIds.splice(idx, 1);
     }
@@ -11785,6 +11992,9 @@
 
   function renderAll() {
     closeProviderCardMenu();
+    if (window.AppState.loggedIn && window.AppState.activeRole) {
+      updateAppHeader(window.AppState.activeRole);
+    }
     const prevBottomNavTab = captureBottomNavTab();
     const prevScreens = lastRenderedScreens;
     // Zachowaj scroll osi czasu — inaczej każdy klik (np. w godzinę przy panelu „+”)
@@ -13034,11 +13244,67 @@
     }
   }
 
+  function appHeaderNavItems(activeRole) {
+    const menuOpen = !!window.AppState.appMenuOpen;
+    const role = activeRole || "client";
+    if (role === "provider") {
+      const screen = window.AppState.screen.provider;
+      return [
+        { label: "Pulpit", action: "provider-tab", tab: "dashboard", screen: "dashboard", active: !menuOpen && screen === "dashboard" },
+        { label: "Kalendarz", action: "provider-tab", tab: "calendar", screen: "calendar", active: !menuOpen && screen === "calendar" },
+        { label: "Usługi", action: "provider-tab", tab: "services", screen: "services", active: !menuOpen && screen === "services" },
+        { label: "Dostępność", action: "provider-tab", tab: "availability", screen: "availability", active: !menuOpen && screen === "availability" },
+      ];
+    }
+    const screen = window.AppState.screen.client;
+    const onHome = screen === "search" || screen === "booking" || screen === "profile";
+    return [
+      { label: "Strona główna", action: "go-screen", screen: "search", active: !menuOpen && onHome },
+      { label: "Szukaj", action: "go-screen", screen: "search", active: false },
+      { label: "Kalendarz", action: "go-screen", screen: "myCalendar", active: !menuOpen && screen === "myCalendar" },
+    ];
+  }
+
+  function renderAppHeaderNav(activeRole) {
+    const nav = document.getElementById("app-header-nav");
+    if (!nav) return;
+    const role = activeRole || "client";
+    const items = appHeaderNavItems(role);
+    nav.setAttribute("aria-label", role === "provider" ? "Menu usługodawcy" : "Menu klienta");
+    nav.innerHTML = items
+      .map(function (it) {
+        const attrs = [];
+        if (it.screen) attrs.push(`data-screen="${it.screen}"`);
+        if (it.tab) attrs.push(`data-tab="${it.tab}"`);
+        return `<button type="button" class="site-nav__link${it.active ? " site-nav__link--active" : ""}"
+          data-action="${it.action}" ${attrs.join(" ")}${
+            it.active ? ' aria-current="page"' : ""
+          }>${it.label}</button>`;
+      })
+      .join("");
+  }
+
+  function syncAppHeaderMenuBtn(open) {
+    const btn = document.getElementById("app-header-menu-btn");
+    if (!btn) return;
+    btn.classList.toggle("app-header__menu-btn--open", !!open);
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function appHeaderUserLabel(activeRole) {
+    if (activeRole === "provider") {
+      const provider = myProvider();
+      if (provider && provider.name) return provider.name;
+    }
+    const cp = ensureClientProfile();
+    const user = data().CURRENT_USER;
+    return cp.name || (user && user.name) || "";
+  }
+
   function updateAppHeader(activeRole) {
     const user = data().CURRENT_USER;
-    const cp = ensureClientProfile();
     const userEl = document.getElementById("app-header-user");
-    if (userEl) userEl.textContent = cp.name || (user && user.name) || "";
+    if (userEl) userEl.textContent = appHeaderUserLabel(activeRole);
 
     const pageApp = document.getElementById("page-app");
     if (pageApp) pageApp.dataset.activeRole = activeRole || "client";
@@ -13053,8 +13319,11 @@
       });
     }
 
+    renderAppHeaderNav(activeRole);
+    syncAppHeaderMenuBtn(!!window.AppState.appMenuOpen);
+
     const onMyCalendar = activeRole === "client" && window.AppState.screen.client === "myCalendar";
-    document.querySelectorAll('[data-action="open-my-calendar"]').forEach(function (btn) {
+    document.querySelectorAll('#page-home [data-action="open-my-calendar"]').forEach(function (btn) {
       btn.classList.toggle("site-nav__link--active", onMyCalendar);
       btn.setAttribute("aria-current", onMyCalendar ? "page" : "false");
     });
@@ -13292,6 +13561,8 @@
       const sheet = document.getElementById("prov-cal-add-service-sheet");
       if (sheet && sheet.classList.contains("client-sheet--arming")) {
         /* arming */
+      } else if (sheet && sheet.querySelector('[data-role="prov-cal-add-inne-duration"]')) {
+        closeProvCalAddInneDurationPick();
       } else {
         const addDraft = window.AppState.provCalAddDraft;
         if (addDraft && addDraft.servicePickOpen) {
@@ -13608,6 +13879,9 @@
       case "clear-notifications": clearNotifications(d.notifRole); break;
 
       case "provider-tab":
+        window.AppState.appMenuOpen = false;
+        window.AppState.activeRole = "provider";
+        updateAppHeader("provider");
         if (d.tab === "availability") openAvailability();
         else if (d.tab === "calendar") {
           ensureProvCalDate();
@@ -13786,6 +14060,15 @@
       case "prov-cal-add-service":
         event.preventDefault();
         toggleProvCalAddService(d.serviceId);
+        break;
+      case "prov-cal-add-inne":
+        event.preventDefault();
+        openProvCalAddInneDurationPick();
+        break;
+      case "close-prov-cal-add-inne-duration":
+        event.preventDefault();
+        event.stopPropagation();
+        closeProvCalAddInneDurationPick();
         break;
       case "prov-cal-add-pick-client":
         event.preventDefault();

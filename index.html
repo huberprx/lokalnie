@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=521" />
+  <link rel="stylesheet" href="styles.css?v=528" />
 </head>
 <body>
 
@@ -170,15 +170,12 @@
           <span class="logo-text">Lokalnie</span>
         </button>
 
-        <nav class="app-header__nav" aria-label="Menu aplikacji">
-          <button type="button" class="site-nav__link" data-action="open-my-calendar">Mój kalendarz</button>
-        </nav>
+        <nav class="app-header__nav" id="app-header-nav" aria-label="Menu aplikacji"></nav>
 
         <div class="app-header__right">
           <span class="app-header__user" id="app-header-user"></span>
-          <button type="button" class="app-header__menu-btn" data-action="toggle-app-menu"
+          <button type="button" class="app-header__menu-btn" id="app-header-menu-btn" data-action="toggle-app-menu"
             aria-label="Menu" aria-expanded="false" aria-controls="app-menu-panel">
-            <span class="app-header__menu-label">Menu</span>
             <span class="app-header__menu-icon" aria-hidden="true"></span>
           </button>
         </div>
@@ -191,7 +188,7 @@
   <div class="toast" id="app-toast" role="status" aria-live="polite" hidden></div>
 
   <script src="data.js?v=16"></script>
-  <script src="app.js?v=522"></script>
+  <script src="app.js?v=528"></script>
   <script src="simulator.js?v=12"></script>
   <script src="chat.js"></script>
   <script src="calendar.js"></script>

@@ -1340,6 +1340,12 @@ body:has(#page-app:not([hidden])) {
   align-items: center;
   gap: 0.15rem;
   min-width: 0;
+  flex: 1 1 auto;
+}
+
+#page-app[data-active-role="provider"] .app-header__nav .site-nav__link--active {
+  color: var(--accent-provider);
+  background: var(--accent-provider-soft);
 }
 
 /* Mobile: nawigacja w dolnym menu — bez górnego paska */
@@ -1426,18 +1432,15 @@ body:has(#page-app:not([hidden])) {
   -webkit-appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
-  font-family: inherit;
-  font-size: 0.875rem;
-  font-weight: 500;
-  line-height: 1;
-  padding: 0.55rem 0.9rem;
   border-radius: 8px;
   cursor: pointer;
-  white-space: nowrap;
   flex-shrink: 0;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
@@ -7613,8 +7616,12 @@ body.service-photo-preview-open {
   flex-direction: column;
 }
 
-.service-sheet .prov-cal-add__inne {
-  padding: 0.35rem 0.35rem 0.65rem;
+.service-sheet.has-inne-duration .service-sheet__panel {
+  pointer-events: none;
+}
+
+.service-sheet .prov-cal-add__inne-duration {
+  pointer-events: auto;
 }
 
 .service-sheet .prov-cal-add__service-opt {
@@ -8399,98 +8406,81 @@ body.client-sheet-open {
   gap: 0.55rem;
 }
 
-.prov-cal-add__inne {
+/* Minutnik długości „Inne” — ten sam input[type=time] co w dostępności (osie h/min). */
+.prov-cal-add__inne-duration {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
-  padding: 0.45rem 0.55rem 0.55rem;
+  justify-content: flex-end;
 }
 
-.prov-cal-add__inne-head {
+.prov-cal-add__inne-duration .client-sheet__backdrop {
+  position: absolute;
+  inset: 0;
+}
+
+.prov-cal-add__inne-duration-panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  max-height: min(70%, 22rem);
+  border-radius: 16px 16px 0 0;
+  background: var(--surface);
+  box-shadow: 0 -8px 28px color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.prov-cal-add__inne-duration-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.35rem 1.1rem calc(1.1rem + env(safe-area-inset-bottom, 0px));
+}
+
+.prov-cal-add__inne-duration-label {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.prov-cal-add__inne-duration-field {
   display: flex;
   align-items: center;
-  min-width: 0;
+  gap: 0.55rem;
+  min-height: 2.75rem;
+  padding: 0.15rem 0.35rem;
+  border-radius: 12px;
+  background: var(--surface-2);
 }
 
-.prov-cal-add__inne-name {
-  color: var(--text);
-  font-size: 0.95rem;
-  font-weight: 650;
-  line-height: 1.25;
-}
-
-.prov-cal-add__dur-carousel {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 0.4rem;
-  margin: 0 -0.15rem;
-  padding: 0.1rem 0.15rem 0.2rem;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-}
-
-.prov-cal-add__dur-carousel::-webkit-scrollbar {
-  display: none;
-}
-
-.prov-cal-add__dur-chip {
-  appearance: none;
-  -webkit-appearance: none;
+.prov-cal-add__inne-duration-field .avail-edit__time-icon {
   flex: 0 0 auto;
   display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
+  color: var(--text-muted);
+}
+
+.prov-cal-add__inne-duration-field .avail-edit__time-wrap {
+  flex: 1 1 auto;
+}
+
+.prov-cal-add__inne-duration-field .avail-edit__time {
+  width: 100%;
+  max-width: 8rem;
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.prov-cal-add__inne-duration-hint {
   margin: 0;
-  padding: 0.4rem 0.65rem 0.4rem 0.5rem;
-  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
-  color: var(--text);
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
-}
-
-.prov-cal-add__dur-chip .service-row__check-visual {
-  flex: 0 0 0.95rem;
-  margin: 0;
-  border: 0;
-  box-shadow: none;
-  background: transparent;
-  opacity: 0.35;
-}
-
-.prov-cal-add__dur-chip.is-selected,
-.prov-cal-add__dur-chip[aria-selected="true"] {
-  border-color: color-mix(in srgb, var(--accent-provider) 45%, var(--border));
-  background: color-mix(in srgb, var(--accent-provider) 12%, var(--surface));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-provider) 18%, transparent);
-}
-
-.prov-cal-add__dur-chip .service-row__check-visual.is-on,
-.prov-cal-add__dur-chip.is-selected .service-row__check-visual {
-  opacity: 1;
-  border: 0;
-  background: var(--accent-provider);
-  box-shadow: none;
-}
-
-.prov-cal-add__dur-chip .service-row__check-visual.is-on::after,
-.prov-cal-add__dur-chip.is-selected .service-row__check-visual::after {
-  border-left-color: #fff;
-  border-bottom-color: #fff;
-}
-
-.prov-cal-add__dur-chip:hover .service-row__check-visual {
-  opacity: 0.55;
-  border: 0;
-  box-shadow: none;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  line-height: 1.35;
 }
 
 .prov-cal-add__service-sep {
