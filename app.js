@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.63";
+  const APP_VERSION = "1.0.66";
 
   const PWA = {
     registration: null,
@@ -4275,7 +4275,7 @@
           <div class="stat-row" role="region" aria-label="Statystyki">
             <div class="stat-card"><span class="stat-card__num">${upcoming.length}</span><span class="stat-card__lbl">Nadchodzące wizyty</span></div>
             <button type="button" class="stat-card stat-card--link${pendingCount > 0 ? " stat-card--alert" : ""}" data-action="open-prov-cal-requests">
-              <span class="stat-card__num">${pendingCount}</span><span class="stat-card__lbl">Zapytania o termin</span>
+              <span class="stat-card__num">${pendingCount}</span><span class="stat-card__lbl">Prośby o termin</span>
             </button>
           </div>
           ${renderNotificationsBlock("provider", "Powiadomienia")}
@@ -4909,13 +4909,10 @@
       window.AppState.provCalDate = dateISO;
       window.AppState.provCalPickerMonth = dateISO.slice(0, 7);
     }
-    // Panel „+” otwarty — synchronizuj dzień i slot w draftcie.
+    // Panel „+” otwarty — dzień/slot; „Inne” dopasuje sync (katalog zostaje).
     if (window.AppState.provCalAddOpen && window.AppState.provCalAddDraft && !replyRequestId()) {
       const draft = window.AppState.provCalAddDraft;
-      const dur = Math.max(5, toMin - fromMin);
-      const durSvc = durationServiceForMinutes(dur);
       draft.dateISO = dateISO;
-      draft.serviceIds = [durSvc.id];
       draft.slotId = "slot-" + dateISO + "-" + fromMin;
     }
     // Przed renderem: dopasuj chip (najbliższy start) i dociągnij szkic do slotu.
@@ -7532,6 +7529,19 @@
     return ((draft && draft.serviceIds) || []).some(isProvCalAddDurationId);
   }
 
+  function draftProvCalAddCatalogIds(draft) {
+    return ((draft && draft.serviceIds) || []).filter(function (id) {
+      return !isProvCalAddDurationId(id);
+    });
+  }
+
+  function draftProvCalAddCatalogDurationMin(p, draft) {
+    return draftProvCalAddCatalogIds(draft).reduce(function (acc, id) {
+      const s = resolveProvCalAddService(p, id);
+      return acc + ((s && s.durationMin) || 0);
+    }, 0);
+  }
+
   function draftProvCalAddInneMinutes(draft) {
     const id = ((draft && draft.serviceIds) || []).find(isProvCalAddDurationId);
     if (!id) return 30;
@@ -7539,6 +7549,20 @@
     if (m) return Math.max(5, Number(m[1]) || 30);
     const s = resolveProvCalAddService(myProvider(), id);
     return (s && s.durationMin) || 30;
+  }
+
+  /** Ustaw / podmień tylko „Inne” — usługi z oferty zostają. */
+  function setProvCalAddInneMinutesOnDraft(draft, minutes) {
+    if (!draft) return;
+    const catalog = draftProvCalAddCatalogIds(draft);
+    const durSvc = durationServiceForMinutes(minutes);
+    draft.serviceIds = catalog.concat([durSvc.id]);
+  }
+
+  function clearProvCalAddInneFromDraft(draft) {
+    if (!draft) return;
+    draft.serviceIds = draftProvCalAddCatalogIds(draft);
+    if (!draft.serviceIds.length) draft.serviceIds = [PROV_CAL_ADD_DEFAULT_DURATION_ID];
   }
 
   /** HH:MM jako długość (minutnik) — max 12 h, krok 5 min. */
@@ -7603,6 +7627,11 @@
             <p class="prov-cal-add__inne-duration-hint" data-role="prov-cal-add-inne-duration-hint">${escapeHtml(
               durLabel
             )} — wybierz godziny i minuty jak w minutniku</p>
+            ${
+              draftProvCalAddCatalogIds(window.AppState.provCalAddDraft).length
+                ? `<button type="button" class="prov-cal-add__inne-clear" data-action="clear-prov-cal-add-inne">Usuń „Inne” (zostaw tylko usługi)</button>`
+                : ""
+            }
           </div>
         </div>
       </div>`;
@@ -7629,7 +7658,8 @@
     captureProvCalAddClientName();
     const draft = ensureProvCalAddDraft();
     if (!draftHasProvCalAddInne(draft)) {
-      draft.serviceIds = [PROV_CAL_ADD_DEFAULT_DURATION_ID];
+      // Dołącz „Inne” do już wybranych usług z oferty — nie kasuj ich.
+      setProvCalAddInneMinutesOnDraft(draft, PROV_CAL_ADD_DURATION_OPTS[1].durationMin || 30);
       draft.slotId = null;
       syncProvCalSelectionFromAddDraft();
       draft.serviceScheduleDirty = true;
@@ -7685,26 +7715,26 @@
 
   function setProvCalAddInneDurationMinutes(minutes) {
     const draft = ensureProvCalAddDraft();
-    const durSvc = durationServiceForMinutes(minutes);
     const prev = (draft.serviceIds || []).join(",");
-    draft.serviceIds = [durSvc.id];
-    if (prev !== durSvc.id) {
+    setProvCalAddInneMinutesOnDraft(draft, minutes);
+    const durSvc = durationServiceForMinutes(minutes);
+    if (prev !== (draft.serviceIds || []).join(",")) {
       draft.slotId = null;
       syncProvCalSelectionFromAddDraft();
       draft.serviceScheduleDirty = true;
     }
     saveState();
     patchProvCalAddServiceUi();
-    // Meta wiersza „Inne” na liście pod spodem.
-    const meta = document.querySelector('[data-role="prov-cal-add-inne-meta"]');
-    if (meta) meta.textContent = formatDuration(durSvc.durationMin);
-    const opt = document.querySelector('[data-role="prov-cal-add-inne-opt"]');
-    if (opt) {
+    // Meta wiersza „Inne” na liście pod spodem (obie powłoki UI).
+    document.querySelectorAll('[data-role="prov-cal-add-inne-meta"]').forEach(function (meta) {
+      meta.textContent = formatDuration(durSvc.durationMin);
+    });
+    document.querySelectorAll('[data-role="prov-cal-add-inne-opt"]').forEach(function (opt) {
       opt.classList.add("is-selected");
       opt.setAttribute("aria-selected", "true");
       const check = opt.querySelector(".service-row__check-visual");
       if (check) check.classList.add("is-on");
-    }
+    });
   }
 
   function renderProvCalAddServiceSheetListHtml(p, draft) {
@@ -7971,25 +8001,52 @@
     const draft = window.AppState.provCalAddDraft;
     const sel = window.AppState.provCalSelection;
     if (!draft || !sel || sel.kind !== "free" || !sel.dateISO || replyRequestId()) return false;
-    const fromMin = Number(sel.fromMin);
-    const toMin = Number(sel.toMin);
+    let fromMin = Number(sel.fromMin);
+    let toMin = Number(sel.toMin);
     if (!Number.isFinite(fromMin) || !Number.isFinite(toMin) || !(toMin > fromMin)) return false;
     if (!Array.isArray(draft.serviceIds)) draft.serviceIds = [];
-    const duration = Math.max(5, toMin - fromMin);
-    const durSvc = durationServiceForMinutes(duration);
     const p = myProvider();
-    // Przy „Inne” długość z siatki → dur-N; przy usługach z oferty nie nadpisuj wyboru.
-    const syncInne = draftHasProvCalAddInne(draft) || !draft.serviceIds.length;
-    const slotDuration = syncInne
-      ? duration
-      : provCalAddServiceTotals(provCalAddSelectedServices(p, draft)).duration || duration;
+    const catalogIds = draftProvCalAddCatalogIds(draft);
+    const catalogDur = draftProvCalAddCatalogDurationMin(p, draft);
+    let duration = Math.max(5, toMin - fromMin);
+    const prevServices = draft.serviceIds.join(",");
+
+    // Usługi z oferty = stały czas; „Inne” = elastyczna reszta (total − katalog).
+    if (catalogDur > 0) {
+      if (duration < catalogDur) {
+        // Nie skracaj poniżej sumy usług — dociągnij szkic.
+        toMin = fromMin + catalogDur;
+        duration = catalogDur;
+        const snapped = normalizeProvCalSelection({
+          kind: "free",
+          dateISO: sel.dateISO,
+          fromMin: fromMin,
+          toMin: toMin,
+        });
+        window.AppState.provCalSelection = snapped;
+        document.querySelectorAll('[data-role="prov-cal-slot"][data-kind="free"]').forEach(function (el) {
+          applyProvCalFreeDraftLayout(el, snapped.fromMin, snapped.toMin);
+        });
+        draft.serviceIds = catalogIds.slice();
+      } else if (duration > catalogDur) {
+        setProvCalAddInneMinutesOnDraft(draft, duration - catalogDur);
+      } else {
+        // Dokładnie suma katalogu — bez „Inne”.
+        draft.serviceIds = catalogIds.slice();
+      }
+    } else if (draftHasProvCalAddInne(draft) || !draft.serviceIds.length) {
+      draft.serviceIds = [durationServiceForMinutes(duration).id];
+    }
+
+    const slotDuration =
+      provCalAddServiceTotals(provCalAddSelectedServices(p, draft)).duration || duration;
     const slots = p ? computeSlots(p, sel.dateISO, Math.max(5, slotDuration), {}) : [];
     const matched = matchProvCalAddSlotForFromMin(slots, fromMin);
     const nextSlotId = matched ? matched.id : null;
-    const prevServices = draft.serviceIds.join(",");
-    if (syncInne) draft.serviceIds = [durSvc.id];
     const changed =
-      draft.dateISO !== sel.dateISO || draft.slotId !== nextSlotId || prevServices !== draft.serviceIds.join(",");
+      draft.dateISO !== sel.dateISO ||
+      draft.slotId !== nextSlotId ||
+      prevServices !== (draft.serviceIds || []).join(",");
     draft.dateISO = sel.dateISO;
     draft.slotId = nextSlotId;
     return changed;
@@ -8196,10 +8253,7 @@
     if (!Array.isArray(draft.serviceIds)) draft.serviceIds = [];
     const idx = draft.serviceIds.indexOf(serviceId);
     if (idx === -1) {
-      // Usługa z oferty: odznacz blok „Inne”, pozwól na kilka usług.
-      draft.serviceIds = draft.serviceIds.filter(function (id) {
-        return !isProvCalAddDurationId(id);
-      });
+      // Usługa z oferty: można łączyć z „Inne” (stały czas + elastyczna reszta).
       draft.serviceIds.push(serviceId);
       closeProvCalAddInneDurationPick();
     } else {
@@ -8626,25 +8680,27 @@
     const showRequestsList = showTabs && activeTab === "requests" && !isReply;
     const pendingBadge = providerPendingRequestCount();
     const headCenter = showTabs
-      ? `<div class="prov-cal-add__tabs" role="tablist" aria-label="Zakładki panelu" data-active="${escapeHtml(activeTab)}">
-            <button type="button" class="prov-cal-add__tab${activeTab === "new" ? " is-active" : ""}" role="tab"
-              data-action="prov-cal-add-tab" data-tab="new" aria-selected="${activeTab === "new" ? "true" : "false"}">Nowy termin</button>
-            <button type="button" class="prov-cal-add__tab${activeTab === "requests" ? " is-active" : ""}" role="tab"
-              data-action="prov-cal-add-tab" data-tab="requests" aria-selected="${activeTab === "requests" ? "true" : "false"}">
-              <span class="prov-cal-add__tab-label">Prośby o termin</span>
-              ${
-                pendingBadge > 0
-                  ? `<span class="prov-cal-add__tab-badge" aria-label="${pendingBadge} ${
-                      pendingBadge === 1 ? "prośba" : pendingBadge < 5 ? "prośby" : "próśb"
-                    }">${pendingBadge}</span>`
-                  : ""
-              }
-            </button>
-            <span class="prov-cal-add__tab-ink" data-role="prov-cal-add-tab-ink" aria-hidden="true"></span>
-          </div>
-          <h3 class="visually-hidden" id="prov-cal-add-title">${escapeHtml(
-            activeTab === "requests" ? (isReply ? title : "Prośby o termin") : "Nowy termin"
-          )}</h3>`
+      ? `<div class="prov-cal-add__head-main">
+            <div class="prov-cal-add__tabs" role="tablist" aria-label="Zakładki panelu" data-active="${escapeHtml(activeTab)}">
+              <button type="button" class="prov-cal-add__tab${activeTab === "new" ? " is-active" : ""}" role="tab"
+                data-action="prov-cal-add-tab" data-tab="new" aria-selected="${activeTab === "new" ? "true" : "false"}">Nowy termin</button>
+              <button type="button" class="prov-cal-add__tab${activeTab === "requests" ? " is-active" : ""}" role="tab"
+                data-action="prov-cal-add-tab" data-tab="requests" aria-selected="${activeTab === "requests" ? "true" : "false"}">
+                <span class="prov-cal-add__tab-label">Prośby o termin</span>
+                ${
+                  pendingBadge > 0
+                    ? `<span class="prov-cal-add__tab-badge" aria-label="${pendingBadge} ${
+                        pendingBadge === 1 ? "prośba" : pendingBadge < 5 ? "prośby" : "próśb"
+                      }">${pendingBadge}</span>`
+                    : ""
+                }
+              </button>
+              <span class="prov-cal-add__tab-ink" data-role="prov-cal-add-tab-ink" aria-hidden="true"></span>
+            </div>
+            <h3 class="visually-hidden" id="prov-cal-add-title">${escapeHtml(
+              activeTab === "requests" ? (isReply ? title : "Prośby o termin") : "Nowy termin"
+            )}</h3>
+          </div>`
       : `<h3 class="prov-cal-add__title" id="prov-cal-add-title">${escapeHtml(title)}</h3>`;
 
     window.AppState.provCalAddMinimized = false;
@@ -8719,10 +8775,11 @@
             <button type="button" class="bottom-nav__book" data-role="prov-cal-add-cta" data-action="${saveAction}"${saveAttrs}${
               canSave ? "" : " disabled"
             }>${escapeHtml(saveLabel)}</button>
-            <button type="button" class="bottom-nav__clear" data-action="close-prov-cal-add" aria-label="Zamknij">
-              <span class="bottom-nav__icon bottom-nav__icon--close" aria-hidden="true"></span>
-            </button>
           </div>`;
+
+    const closeBtnHtml = `<button type="button" class="prov-cal-add__close" data-action="close-prov-cal-add" aria-label="Zamknij">
+            <span class="bottom-nav__icon bottom-nav__icon--close" aria-hidden="true"></span>
+          </button>`;
 
     const enterCls = provCalAddPlayEnterAnim ? " prov-cal-add--enter" : "";
     provCalAddPlayEnterAnim = false;
@@ -8733,7 +8790,9 @@
       }${showTabs ? " prov-cal-add--tabs" : ""}${enterCls}" data-role="prov-cal-add">
         <div class="prov-cal-add__sheet" role="dialog" aria-modal="false" aria-labelledby="prov-cal-add-title">
           <header class="prov-cal-add__head${showTabs ? " prov-cal-add__head--tabs" : ""}">
+            <span class="prov-cal-add__head-spacer" aria-hidden="true"></span>
             ${headCenter}
+            ${closeBtnHtml}
           </header>
           <div class="prov-cal-add__body">
             ${requestsListHtml}
@@ -9406,20 +9465,27 @@
       </div>`;
   }
 
-  function renderServiceEditForm(s, isNew) {
+  function renderServiceEditForm(s, isNew, opts) {
+    opts = opts || {};
+    const hideBack = !!opts.hideBack;
     const p = myProvider();
     const serviceId = isNew ? "__new__" : s.id;
     const photos = getEditServicePhotos();
     const variants = normalizeEditVariants(s);
     const mode = s.bookingMode === "approval" ? "approval" : "auto";
-    return `
-      <form class="service-edit" data-service-id="${escapeHtml(serviceId)}" data-new="${isNew ? "true" : "false"}" onsubmit="return false;">
-        <header class="screen-head screen-head--with-back">
+    const head = hideBack
+      ? `<header class="screen-head">
+          <h2 class="screen-head__title">${isNew ? "Nowa usługa" : "Edytuj usługę"}</h2>
+        </header>`
+      : `<header class="screen-head screen-head--with-back">
           <button type="button" class="screen-head__back" data-action="cancel-edit-service" aria-label="Wróć">
             <span class="screen-head__back-icon" aria-hidden="true"></span>
           </button>
           <h2 class="screen-head__title">${isNew ? "Nowa usługa" : "Edytuj usługę"}</h2>
-        </header>
+        </header>`;
+    return `
+      <form class="service-edit" data-service-id="${escapeHtml(serviceId)}" data-new="${isNew ? "true" : "false"}" onsubmit="return false;">
+        ${head}
         <label class="service-edit__field service-edit__field--float">
           <input class="service-edit__input" name="name" type="text" required maxlength="80" value="${escapeHtml(s.name || "")}" placeholder=" " />
           <span class="service-edit__label">Nazwa</span>
@@ -9464,23 +9530,7 @@
       </form>`;
   }
 
-  function renderServices() {
-    const p = myProvider();
-    const editId = window.AppState.params.provider && window.AppState.params.provider.editServiceId;
-    const isNew = editId === "__new__";
-    const base = isNew ? newServiceDraft() : editId ? getProviderService(editId) : null;
-    const editing = base ? applyServiceEditDraft(base) : null;
-
-    if (editing) {
-      return `
-      <div class="app-screen app-screen--provider app-screen--service-edit">
-        <div class="app-scroll">
-          ${renderServiceEditForm(editing, isNew)}
-        </div>
-        ${providerBottomNav("services")}
-      </div>`;
-    }
-
+  function renderProviderServicesListHtml(p, editId) {
     ensureServicesBookingMode(p);
     const list = (p ? p.services : [])
       .map(function (s) {
@@ -9491,8 +9541,12 @@
         const mode = serviceBookingMode(s, p);
         const modeLabel = mode === "approval" ? "Na prośbę o termin" : "Automatyczne potwierdzenie";
         const locLabel = serviceLocationSummary(s, p);
+        const selected = editId && editId === s.id;
         return `
-      <div class="service-row service-row--static${variants.length ? " service-row--has-variants" : ""}">
+      <div class="service-row service-row--static${variants.length ? " service-row--has-variants" : ""}${
+        selected ? " is-selected" : ""
+      }" data-action="edit-service" data-service-id="${escapeHtml(s.id)}" role="button" tabindex="0"
+        aria-pressed="${selected ? "true" : "false"}" aria-label="Edytuj ${escapeHtml(s.name)}">
         <div class="service-row__top">
           ${
             thumb
@@ -9520,11 +9574,64 @@
       })
       .join("");
     return `
-      <div class="app-screen app-screen--provider">
-        <div class="app-scroll">
-          <header class="screen-head"><h2 class="screen-head__title">Usługi</h2><p class="screen-head__sub">Oferta i tryb rezerwacji widoczne dla klientów.</p></header>
+          <header class="screen-head">
+            <h2 class="screen-head__title">Usługi</h2>
+            <p class="screen-head__sub">Oferta i tryb rezerwacji widoczne dla klientów.</p>
+          </header>
           <div class="service-list">${list || `<p class="empty-note">Brak usług w ofercie.</p>`}</div>
-          <button type="button" class="btn btn--primary service-list__add" data-action="add-service">Dodaj usługę</button>
+          <button type="button" class="btn btn--primary service-list__add" data-action="add-service">Dodaj usługę</button>`;
+  }
+
+  function renderServices() {
+    const p = myProvider();
+    const editId = window.AppState.params.provider && window.AppState.params.provider.editServiceId;
+    const isNew = editId === "__new__";
+    const base = isNew ? newServiceDraft() : editId ? getProviderService(editId) : null;
+    const editing = base ? applyServiceEditDraft(base) : null;
+    const desktop = usesDesktopLayout();
+
+    // Desktop: lista (szerokość pulpitu) | edycja (pusta albo wybrana usługa).
+    if (desktop) {
+      const editPane = editing
+        ? `<div class="app-scroll app-scroll--svc-edit">${renderServiceEditForm(editing, isNew, {
+            hideBack: true,
+          })}</div>`
+        : `<div class="prov-svc__empty" data-role="prov-svc-empty">
+            <p class="prov-svc__empty-title">Edycja usługi</p>
+            <p class="prov-svc__empty-text">Wybierz usługę z listy po lewej, aby zobaczyć i zmienić jej szczegóły.</p>
+          </div>`;
+      return `
+      <div class="app-screen app-screen--provider app-screen--services app-screen--services-desktop${
+        editing ? " app-screen--services-editing" : ""
+      }">
+        <div class="prov-svc" data-role="prov-svc">
+          <aside class="prov-svc__list" data-role="prov-svc-list" aria-label="Lista usług">
+            <div class="app-scroll app-scroll--svc-side">
+              ${renderProviderServicesListHtml(p, editId)}
+            </div>
+          </aside>
+          <section class="prov-svc__edit" data-role="prov-svc-edit" aria-label="Panel edycji usługi">
+            ${editPane}
+          </section>
+        </div>
+        ${providerBottomNav("services")}
+      </div>`;
+    }
+
+    if (editing) {
+      return `
+      <div class="app-screen app-screen--provider app-screen--service-edit">
+        <div class="app-scroll">
+          ${renderServiceEditForm(editing, isNew)}
+        </div>
+        ${providerBottomNav("services")}
+      </div>`;
+    }
+
+    return `
+      <div class="app-screen app-screen--provider app-screen--services">
+        <div class="app-scroll">
+          ${renderProviderServicesListHtml(p, null)}
         </div>
         ${providerBottomNav("services")}
       </div>`;
@@ -14098,6 +14205,21 @@
       case "prov-cal-add-inne":
         event.preventDefault();
         openProvCalAddInneDurationPick();
+        break;
+      case "clear-prov-cal-add-inne":
+        event.preventDefault();
+        event.stopPropagation();
+        {
+          const draft = ensureProvCalAddDraft();
+          if (!draftProvCalAddCatalogIds(draft).length) break;
+          clearProvCalAddInneFromDraft(draft);
+          draft.slotId = null;
+          syncProvCalSelectionFromAddDraft();
+          draft.serviceScheduleDirty = true;
+          closeProvCalAddInneDurationPick();
+          saveState();
+          patchProvCalAddServiceUi();
+        }
         break;
       case "close-prov-cal-add-inne-duration":
         event.preventDefault();
