@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.50";
+  const APP_VERSION = "1.0.51";
 
   const PWA = {
     registration: null,
@@ -4590,9 +4590,11 @@
     let hours = "";
     for (let h = PROV_CAL_HOUR_START; h <= PROV_CAL_HOUR_END; h++) {
       const top = (h - PROV_CAL_HOUR_START) * hourH;
+      const label =
+        h === PROV_CAL_HOUR_START || h === PROV_CAL_HOUR_END ? "" : pad(h) + ":00";
       hours += `
         <div class="gcal__hour" style="top:${top}px" data-hour="${h}">
-          <span class="gcal__hour-label">${h === PROV_CAL_HOUR_START ? "" : pad(h) + ":00"}</span>
+          <span class="gcal__hour-label">${label}</span>
         </div>`;
     }
     return `<div class="gcal__hours" aria-hidden="true">${hours}</div>`;
@@ -5317,8 +5319,8 @@
 
   const PROV_CAL_HOUR_H_MIN = 28;
   const PROV_CAL_HOUR_H_MAX = 140;
-  const PROV_CAL_HOUR_START = 8;
-  const PROV_CAL_HOUR_END = 20;
+  const PROV_CAL_HOUR_START = 0;
+  const PROV_CAL_HOUR_END = 24;
 
   function clampProvCalHourH(h) {
     const n = Number(h);
@@ -11484,6 +11486,11 @@
           const target = nowEl || firstEvent;
           if (target) {
             body.scrollTop = Math.max(0, target.offsetTop - 48);
+          } else {
+            // Widok 24h: bez „teraz”/wizyt startuj koło 8:00, nie od północy.
+            const hourH = ensureProvCalHourH();
+            const morningY = ((8 * 60 - PROV_CAL_HOUR_START * 60) / 60) * hourH;
+            body.scrollTop = Math.max(0, morningY - 48);
           }
         }
       });
