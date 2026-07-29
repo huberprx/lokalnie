@@ -14656,6 +14656,11 @@ body.prov-cal-resizing * {
   border-radius: 12px;
 }
 
+.client-request-card .visit-card__actions {
+  margin-top: 0.55rem;
+  flex-wrap: wrap;
+}
+
 .proposal-list--pick {
   gap: 0.45rem;
 }

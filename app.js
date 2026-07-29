@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.80";
+  const APP_VERSION = "1.0.82";
 
   const PWA = {
     registration: null,
@@ -2057,7 +2057,7 @@
         myCalMonthOpen: typeof stored.myCalMonthOpen === "boolean" ? stored.myCalMonthOpen : base.myCalMonthOpen,
         myCalStatusFilters: Array.isArray(stored.myCalStatusFilters)
           ? stored.myCalStatusFilters.filter(function (s) {
-              return s === "confirmed" || s === "cancelled" || s === "rejected";
+              return s === "confirmed" || s === "pending" || s === "cancelled" || s === "rejected";
             })
           : base.myCalStatusFilters,
         provCalDate: typeof stored.provCalDate === "string" ? stored.provCalDate : base.provCalDate,
@@ -3518,7 +3518,7 @@
   }
 
   function toggleMyCalStatusFilter(status) {
-    const allowed = { confirmed: 1, cancelled: 1, rejected: 1 };
+    const allowed = { confirmed: 1, pending: 1, cancelled: 1, rejected: 1 };
     if (!allowed[status]) return;
     const cur = Array.isArray(window.AppState.myCalStatusFilters)
       ? window.AppState.myCalStatusFilters.slice()
@@ -3531,12 +3531,22 @@
     renderAll();
   }
 
+  /** Filtr „Czeka na potwierdzenie” obejmuje pending i proposed. */
+  function visitMatchesMyCalStatusFilters(b, statusFilters) {
+    if (!statusFilters || !statusFilters.length) return true;
+    return statusFilters.some(function (f) {
+      if (f === "pending") return b.status === "pending" || b.status === "proposed";
+      return b.status === f;
+    });
+  }
+
   function renderMyCalStatusFilters() {
     const active = Array.isArray(window.AppState.myCalStatusFilters)
       ? window.AppState.myCalStatusFilters
       : [];
     const chips = [
       { id: "confirmed", label: "Potwierdzone" },
+      { id: "pending", label: "Czeka na potwierdzenie" },
       { id: "cancelled", label: "Odwołane" },
       { id: "rejected", label: "Odrzucone" },
     ];
@@ -3563,6 +3573,7 @@
     const days = normalizeRequestDays(r.days);
     const proposals = Array.isArray(r.proposals) ? r.proposals : [];
     const waiting = r.status !== "proposed" || !proposals.length;
+    const cancelBtn = `<button type="button" class="btn btn--ghost btn--sm" data-action="cancel-client-request" data-request-id="${escapeHtml(r.id)}">Anuluj prośbę</button>`;
     return `
       <div class="client-request-card" data-request-id="${escapeHtml(r.id)}">
         <div class="visit-card__top">
@@ -3573,7 +3584,8 @@
         ${
           waiting
             ? `${renderRequestDayBadges(days)}
-               <p class="request-card__note">Usługodawca odeśle konkretne godziny do wyboru.</p>`
+               <p class="request-card__note">Usługodawca odeśle konkretne godziny do wyboru.</p>
+               <div class="visit-card__actions">${cancelBtn}</div>`
             : `<p class="request-card__note">Wybierz jeden termin — pozostałe propozycje przepadną.</p>
                <ul class="proposal-list proposal-list--pick">
                  ${proposals
@@ -3591,6 +3603,7 @@
                </ul>
                <div class="visit-card__actions">
                  <button type="button" class="btn btn--ghost btn--sm" data-action="decline-request-proposals" data-request-id="${escapeHtml(r.id)}">Poproś o inne terminy</button>
+                 ${cancelBtn}
                </div>`
         }
       </div>`;
@@ -3621,11 +3634,25 @@
     const statusFilters = Array.isArray(window.AppState.myCalStatusFilters)
       ? window.AppState.myCalStatusFilters
       : [];
-    const filtered = list.filter(function (b) {
-      if (b.dateISO !== selectedDate) return false;
-      if (!statusFilters.length) return true;
-      return statusFilters.indexOf(b.status) !== -1;
-    });
+    const waitingOnly =
+      statusFilters.length === 1 && statusFilters[0] === "pending";
+    // Oczekujące bez daty (prośba o termin) — przy filtrze „Czeka na potwierdzenie”.
+    const waitingUndated = waitingOnly
+      ? (window.AppState.bookings || []).filter(function (b) {
+          return (
+            b &&
+            b.side === "client" &&
+            !b.dateISO &&
+            (b.status === "pending" || b.status === "proposed")
+          );
+        })
+      : [];
+    const filtered = list
+      .filter(function (b) {
+        if (b.dateISO !== selectedDate) return false;
+        return visitMatchesMyCalStatusFilters(b, statusFilters);
+      })
+      .concat(waitingUndated);
     const listTitle = `Wizyty · ${formatDateLong(selectedDate)}`;
     const monthSide = desktop
       ? renderMyCalMonthPanel(selectedDate, visitSet, { force: true, side: true })
@@ -13474,6 +13501,30 @@
     showToast("Poprosiliśmy o inne terminy.");
   }
 
+  /** Klient wycofuje prośbę o termin (zanim zarezerwuje jedną z propozycji). */
+  function cancelClientRequest(requestId) {
+    const req = (window.AppState.requests || []).find(function (r) {
+      return r && r.id === requestId;
+    });
+    if (!req) return;
+    if (req.status !== "pending" && req.status !== "proposed") return;
+    req.status = "cancelled";
+    req.proposals = [];
+    req.acceptedProposalId = null;
+    const bk = (window.AppState.bookings || []).find(function (b) {
+      return b && b.requestId === req.id;
+    });
+    if (bk) bk.status = "cancelled";
+    pushNotification(
+      "provider",
+      `${req.clientName || "Klient"} anulował(a) prośbę o termin — ${(req.serviceNames || []).join(", ") || "usługa"}.`
+    );
+    saveState();
+    renderAll();
+    showToast("Prośba o termin anulowana.");
+    hapticTap(12);
+  }
+
   function rejectRequest(requestId) {
     const req = (window.AppState.requests || []).find((r) => r && r.id === requestId);
     if (!req) return;
@@ -14290,6 +14341,10 @@
       case "request-day-part": setRequestDayPart(d.date, d.part); break;
       case "accept-request-proposal": acceptRequestProposal(d.requestId, d.proposalId); break;
       case "decline-request-proposals": declineRequestProposals(d.requestId); break;
+      case "cancel-client-request":
+        event.preventDefault();
+        cancelClientRequest(d.requestId);
+        break;
       case "clear-notifications": clearNotifications(d.notifRole); break;
 
       case "provider-tab":
