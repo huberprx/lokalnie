@@ -27,6 +27,7 @@
     "Styczeń", "Luty", "Marzec", "Kwiecień", "Maj", "Czerwiec",
     "Lipiec", "Sierpień", "Wrzesień", "Październik", "Listopad", "Grudzień",
   ];
+  const WEEKDAYS_NOM = ["Niedziela", "Poniedziałek", "Wtorek", "Środa", "Czwartek", "Piątek", "Sobota"];
 
   const STATUS_LABEL = {
     confirmed: "Potwierdzona",
@@ -42,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.83";
+  const APP_VERSION = "1.0.86";
 
   const PWA = {
     registration: null,
@@ -131,6 +132,8 @@
       availEditDrafts: {},
       appMenuOpen: false,
       clientAvatarUrl: null,
+      /** Rozwinięta sekcja godzin/lokalizacji w panelu info karty usługodawcy. */
+      providerCardInfoExpanded: false,
       /** Profil klienta (Booksy-like): imię, telefon, e-mail, powiadomienia. */
       clientProfile: null,
     };
@@ -1492,6 +1495,18 @@
     document.body.classList.add("avatar-preview-open");
   }
 
+  function providerWeeklyHours(provider) {
+    return (data().WEEKLY_HOURS && provider && (data().WEEKLY_HOURS[provider.id] || data().WEEKLY_HOURS[provider.slug])) || {};
+  }
+
+  function providerDayAvailBlocks(provider, dateISO) {
+    if (!provider || !dateISO || !Array.isArray(provider.availability)) return [];
+    const day = provider.availability.find(function (d) {
+      return d && d.dateISO === dateISO;
+    });
+    return day && Array.isArray(day.blocks) ? day.blocks : [];
+  }
+
   function renderProviderActionItems(p, opts) {
     opts = opts || {};
     const itemClass = opts.itemClass || "provider-card-popover__item";
@@ -1535,7 +1550,7 @@
       .join("");
 
     return `
-      <button type="button" class="${itemClass}" role="${role}" data-action="open-provider-info" data-slug="${escapeHtml(p.slug)}">
+      <button type="button" class="${itemClass}" role="${role}" data-action="toggle-provider-card-info" data-slug="${escapeHtml(p.slug)}">
         <span class="${iconClass} ${iconClass}--info" aria-hidden="true"></span>
         Więcej informacji
       </button>
@@ -1553,15 +1568,107 @@
       </button>`;
   }
 
+  function renderProviderContactTiles(p) {
+    ensureProviderContact(p);
+    const phone = String(p.phone || "").replace(/\s/g, "");
+    const navAddr = providerNavAddress(p);
+    const tiles = [];
+
+    tiles.push(`<button type="button" class="provider-tile" data-action="provider-info-profile" data-slug="${escapeHtml(p.slug)}" title="Profil">
+        <span class="provider-tile__icon provider-tile__icon--profile" aria-hidden="true"></span><span class="provider-tile__label">Profil</span></button>`);
+    tiles.push(
+      phone
+        ? `<a class="provider-tile" href="tel:${escapeHtml(phone)}" title="Zadzwoń: ${escapeHtml(String(p.phone || ""))}">
+        <span class="provider-tile__icon provider-tile__icon--call" aria-hidden="true"></span><span class="provider-tile__label">Zadzwoń</span></a>`
+        : `<span class="provider-tile provider-tile--disabled" aria-disabled="true">
+        <span class="provider-tile__icon provider-tile__icon--call" aria-hidden="true"></span><span class="provider-tile__label">Zadzwoń</span></span>`
+    );
+    tiles.push(
+      navAddr
+        ? `<a class="provider-tile" href="${escapeHtml(mapsSearchUrl(navAddr))}" target="_blank" rel="noopener noreferrer" title="Nawiguj: ${escapeHtml(navAddr)}">
+        <span class="provider-tile__icon provider-tile__icon--nav" aria-hidden="true"></span><span class="provider-tile__label">Nawiguj</span></a>`
+        : `<span class="provider-tile provider-tile--disabled" aria-disabled="true">
+        <span class="provider-tile__icon provider-tile__icon--nav" aria-hidden="true"></span><span class="provider-tile__label">Nawiguj</span></span>`
+    );
+
+    providerSocialLinks(p).forEach(function (s) {
+      tiles.push(`<a class="provider-tile" href="${escapeHtml(s.href)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(s.label)}">
+        <span class="provider-tile__icon provider-tile__icon--${escapeHtml(s.key)}" aria-hidden="true"></span><span class="provider-tile__label">${escapeHtml(s.label)}</span></a>`);
+    });
+
+    return `<div class="provider-tiles" role="group" aria-label="Kontakt i linki">${tiles.join("")}</div>`;
+  }
+
+  function renderProviderHoursSection(p) {
+    const weekly = providerWeeklyHours(p);
+    const locs = Array.isArray(p.locations) ? p.locations : [];
+    const expanded = !!window.AppState.providerCardInfoExpanded;
+    const todayISO = demoTodayISO();
+    const todayDow = new Date(todayISO + "T12:00:00").getDay();
+    const order = [1, 2, 3, 4, 5, 6, 0];
+
+    const body = expanded
+      ? `<div class="provider-hours__list">${order
+          .map(function (dow) {
+            const blocks = weekly[dow] || [];
+            const dateISO = addDaysISO(todayISO, ((dow - todayDow) % 7 + 7) % 7);
+            const dayBlocks = providerDayAvailBlocks(p, dateISO);
+            const locBits = [];
+            if (locs.length > 1) {
+              const seen = Object.create(null);
+              blocks.concat(dayBlocks).forEach(function (b) {
+                const loc = b && b.locationId ? locs.find(function (l) { return l.id === b.locationId; }) : null;
+                if (loc && loc.label && !seen[loc.id]) {
+                  seen[loc.id] = true;
+                  locBits.push(`<span class="provider-hours__loc"><span class="provider-hours__loc-dot ${locationToneClass(p, loc.id)}" aria-hidden="true"></span>${escapeHtml(loc.label)}</span>`);
+                }
+              });
+            }
+            const hoursHtml = blocks.length
+              ? `<span class="provider-hours__time">${escapeHtml(blocks.map(function (b) { return b.from + "–" + b.to; }).join(" · "))}</span>`
+              : `<span class="provider-hours__closed">Zamknięte</span>`;
+            const isToday = dow === todayDow;
+            return `<div class="provider-hours__row${isToday ? " provider-hours__row--today" : ""}">
+              <span class="provider-hours__day">${escapeHtml(WEEKDAYS_NOM[dow])}${isToday ? '<span class="provider-hours__today">· dziś</span>' : ""}</span>
+              ${hoursHtml}${locBits.length ? `<span class="provider-hours__locs">${locBits.join("")}</span>` : ""}
+            </div>`;
+          })
+          .join("")}</div>`
+      : `<p class="provider-hours__today-line">${escapeHtml(p.openHoursToday || "Brak grafiku")}</p>`;
+
+    const locsSection =
+      expanded && locs.length > 1
+        ? `<div class="provider-info__locs">
+             <h4 class="provider-info__sub">Lokalizacje</h4>
+             <ul class="provider-info__locs-list">
+               ${locs
+                 .map(function (loc) {
+                   return `<li class="provider-info__loc">
+                     <span class="provider-hours__loc-dot ${locationToneClass(p, loc.id)}" aria-hidden="true"></span>
+                     <span class="provider-info__loc-label">${escapeHtml(loc.label)}</span>
+                     ${loc.address ? `<span class="provider-info__loc-addr">${escapeHtml(loc.address)}</span>` : ""}
+                   </li>`;
+                 })
+                 .join("")}
+             </ul>
+           </div>`
+        : "";
+
+    return `<div class="provider-hours">
+      <button type="button" class="provider-hours__toggle" data-action="toggle-provider-card-hours" aria-expanded="${expanded ? "true" : "false"}">
+        <span class="provider-hours__label">Godziny otwarcia</span>
+        <span class="provider-hours__chev" aria-hidden="true"></span>
+      </button>
+      ${body}
+    </div>${locsSection}`;
+  }
+
   function renderBookingProviderInfoPanel(p) {
     return `
       <div class="provider-card__info-panel" id="booking-provider-info" role="region" aria-label="Informacje o ${escapeHtml(p.name)}">
         <div class="provider-card__info-panel-actions">
-          ${renderProviderActionItems(p, {
-            itemClass: "provider-card__info-action",
-            iconClass: "provider-card-popover__item-icon",
-            role: "button",
-          })}
+          ${renderProviderContactTiles(p)}
+          ${renderProviderHoursSection(p)}
         </div>
       </div>`;
   }
@@ -1576,6 +1683,22 @@
       if (!refreshBookingDraftUI()) renderAll();
     }
     return true;
+  }
+
+  function toggleProviderCardInfo(slug) {
+    const p = getProviderBySlug(slug);
+    if (!p) return;
+    closeProviderCardMenu();
+    if (!window.AppState.draft || window.AppState.draft.slug !== p.slug) initDraftForProvider(p);
+    window.AppState.draft.providerInfoOpen = !window.AppState.draft.providerInfoOpen;
+    saveState();
+    renderAll();
+  }
+
+  function toggleProviderCardHoursExpanded() {
+    window.AppState.providerCardInfoExpanded = !window.AppState.providerCardInfoExpanded;
+    saveState();
+    renderAll();
   }
 
   function toggleBookingProviderInfo(slug) {
@@ -1634,10 +1757,17 @@
       ? `<button type="button" class="provider-card__back" data-action="close-provider" aria-label="Wróć"><span class="provider-card__back-icon" aria-hidden="true"></span></button>`
       : "";
 
-    const infoOpen = !!(opts.bookingHeader && window.AppState.draft && window.AppState.draft.providerInfoOpen);
+    const infoOpen = !!(window.AppState.draft && window.AppState.draft.providerInfoOpen);
     const favBtn = `<button type="button" class="provider-card__action provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__action-icon provider-card__fav-icon" aria-hidden="true"></span></button>`;
-    const infoBtn = `<button type="button" class="provider-card__action provider-card__info${infoOpen ? " provider-card__info--open" : ""}" data-action="toggle-booking-provider-info" data-slug="${escapeHtml(p.slug)}" aria-expanded="${infoOpen ? "true" : "false"}" aria-controls="booking-provider-info" aria-label="Informacje o ${escapeHtml(p.name)}" title="Informacje"><span class="provider-card__action-icon provider-card__info-icon" aria-hidden="true"></span></button>`;
+    const infoAction = opts.bookingHeader ? "toggle-booking-provider-info" : "toggle-provider-card-info";
+    const infoBtn = `<button type="button" class="provider-card__action provider-card__info${infoOpen ? " provider-card__info--open" : ""}" data-action="${infoAction}" data-slug="${escapeHtml(p.slug)}" aria-expanded="${infoOpen ? "true" : "false"}" aria-controls="booking-provider-info" aria-label="Informacje o ${escapeHtml(p.name)}" title="Informacje"><span class="provider-card__action-icon provider-card__info-icon" aria-hidden="true"></span></button>`;
     const menuBtn = `<button type="button" class="provider-card__action provider-card__menu" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Więcej opcji dla ${escapeHtml(p.name)}" title="Więcej opcji"><span class="provider-card__action-icon provider-card__menu-icon" aria-hidden="true"></span></button>`;
+    // Desktop + otwarta karta: ⓘ + ⋯; mobile/zamknięta: tylko ⋯ (albo ⓘ w nagłówku bookingu).
+    const menuSlotHtml = opts.bookingHeader
+      ? infoBtn
+      : isOpen
+        ? infoBtn + menuBtn
+        : menuBtn;
 
     return `
       <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}${opts.staticMain ? " provider-card--static" : ""}${opts.showBack ? " provider-card--with-back" : ""}${infoOpen ? " provider-card--info-open" : ""}">
@@ -1651,14 +1781,16 @@
         ${renderAvatarTrigger(p, "provider-card__avatar")}
         ${detailsBlock}
         <div class="provider-card__menu-slot">
-          ${opts.bookingHeader ? infoBtn : menuBtn}
+          ${menuSlotHtml}
         </div>
+        ${!opts.bookingHeader && isOpen && infoOpen ? renderBookingProviderInfoPanel(p) : ""}
       </div>`;
   }
 
   function renderProviderListItem(p, isOpen) {
+    const infoOpen = !!(isOpen && window.AppState.draft && window.AppState.draft.providerInfoOpen);
     return `
-      <div class="provider-item${isOpen ? " provider-item--open" : ""}">
+      <div class="provider-item${isOpen ? " provider-item--open" : ""}${infoOpen ? " provider-item--info-open" : ""}">
         ${renderProviderCard(p, isOpen)}
         ${isOpen ? renderInlineBookingPanel(p) : ""}
       </div>`;
@@ -12446,6 +12578,8 @@
       window.AppState.searchOpenSlug = null;
       window.AppState.screen.client = "booking";
     } else if (clientUsesDesktopBookingLayout()) {
+      // Desktop: od razu pokaż kafelki kontakt/social pod kartą.
+      window.AppState.draft.providerInfoOpen = true;
       window.AppState.searchOpenSlug = slug;
       window.AppState.screen.client =
         window.AppState.screen.client === "favorites" ? "favorites" : "search";
@@ -13842,6 +13976,23 @@
         event.preventDefault();
         event.stopPropagation();
         toggleBookingProviderInfo(d.slug);
+        break;
+      case "toggle-provider-card-info":
+        event.preventDefault();
+        event.stopPropagation();
+        toggleProviderCardInfo(d.slug);
+        break;
+      case "toggle-provider-card-hours":
+        event.preventDefault();
+        event.stopPropagation();
+        toggleProviderCardHoursExpanded();
+        break;
+      case "provider-info-profile":
+        event.preventDefault();
+        event.stopPropagation();
+        closeProviderCardMenu();
+        closeBookingProviderInfo({ render: true });
+        openProviderInfo(d.slug);
         break;
       case "close-provider-menu":
         event.preventDefault();

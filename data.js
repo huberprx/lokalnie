@@ -588,5 +588,7 @@
     DEMO_TODAY_ISO,
     DEMO_BOOKINGS,
     DEMO_REQUESTS,
+    /** Godziny otwarcia wg dnia tygodnia (0..6 = nd..sob): { providerId: { dow: [{from,to,locationId}] } } */
+    WEEKLY_HOURS: WEEKLY,
   };
 })();
