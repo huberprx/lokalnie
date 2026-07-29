@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.70";
+  const APP_VERSION = "1.0.73";
 
   const PWA = {
     registration: null,
@@ -4326,11 +4326,27 @@
     return html;
   }
 
+  function isProvCalFreeSelInRange(sel, dateISO, fromMin, toMin) {
+    return !!(
+      sel &&
+      sel.kind === "free" &&
+      sel.dateISO === dateISO &&
+      Number(sel.fromMin) < toMin &&
+      Number(sel.toMin) > fromMin
+    );
+  }
+
   function renderProviderFreeSlotCard(dateISO, from, to) {
-    const durationMin = Math.max(0, timeToMin(to) - timeToMin(from));
+    const fromMin = timeToMin(from);
+    const toMin = timeToMin(to);
+    const durationMin = Math.max(0, toMin - fromMin);
+    const selected = isProvCalFreeSelInRange(window.AppState.provCalSelection, dateISO, fromMin, toMin);
     return `
-      <div class="visit-card visit-card--provider visit-card--free" data-status="free" data-date="${escapeHtml(dateISO)}"
-        aria-label="Wolne ${escapeHtml(from)}–${escapeHtml(to)}, ${escapeHtml(formatDuration(durationMin))}">
+      <div class="visit-card visit-card--provider visit-card--free${selected ? " is-selected" : ""}" data-status="free"
+        data-date="${escapeHtml(dateISO)}" data-from-min="${fromMin}" data-to-min="${toMin}"
+        data-action="select-provider-free" role="button" tabindex="0"
+        aria-pressed="${selected ? "true" : "false"}"
+        aria-label="Pokaż w kalendarzu: wolne ${escapeHtml(from)}–${escapeHtml(to)}, ${escapeHtml(formatDuration(durationMin))}">
         <div class="visit-card__schedule">
           <time class="visit-card__range" datetime="${escapeHtml(dateISO + "T" + from)}">${escapeHtml(from)}–${escapeHtml(to)}</time>
           <span class="visit-card__duration" aria-label="Czas trwania: ${escapeHtml(formatDuration(durationMin))}">
@@ -7442,41 +7458,77 @@
     hapticTap(12);
   }
 
-  /** Klik wizyty na pulpicie — zaznacz termin w kalendarzu (bez otwierania panelu edycji). */
-  function selectProviderVisitInCalendar(bookingId) {
-    const bk = (window.AppState.bookings || []).find(function (b) {
-      return b && b.id === bookingId;
-    });
-    if (!bk || !bk.dateISO) return;
-    const next = normalizeProvCalSelection({
-      kind: "booking",
-      bookingId: bk.id,
-      dateISO: bk.dateISO,
-      fromMin: timeToMinutes(bk.from),
-      toMin: timeToMinutes(bk.to),
-    });
+  /** Klik karty na pulpicie — zaznacz przedział / wizytę w kalendarzu (bez panelu edycji). */
+  function applyProvCalSelectionFromDash(nextSel) {
+    const next = normalizeProvCalSelection(nextSel);
+    if (!next) return;
     const prevKey = provCalSelectionKey(window.AppState.provCalSelection);
     const nextKey = provCalSelectionKey(next);
     if (prevKey && prevKey === nextKey) {
       window.AppState.provCalSelection = null;
     } else {
       window.AppState.provCalSelection = next;
-      window.AppState.provCalDate = bk.dateISO;
-      window.AppState.provCalPickerMonth = bk.dateISO.slice(0, 7);
-      moveProvCalWindowToInclude(bk.dateISO);
+      if (next.dateISO) {
+        window.AppState.provCalDate = next.dateISO;
+        window.AppState.provCalPickerMonth = next.dateISO.slice(0, 7);
+        moveProvCalWindowToInclude(next.dateISO);
+      }
+    }
+    if (
+      window.AppState.provCalSelection &&
+      window.AppState.provCalSelection.kind === "free" &&
+      window.AppState.provCalAddOpen &&
+      !replyRequestId()
+    ) {
+      syncProvCalAddDraftFromSelection();
+      snapProvCalSelectionToAddSlot();
     }
     saveState();
     renderAll();
     hapticTap(window.AppState.provCalSelection ? 16 : 10);
-    if (!window.AppState.provCalSelection) return;
-    const id = String(bk.id);
+    const sel = window.AppState.provCalSelection;
+    if (!sel) return;
     requestAnimationFrame(function () {
-      document.querySelectorAll('[data-role="prov-cal-slot"][data-kind="booking"]').forEach(function (el) {
-        if (el.getAttribute("data-booking-id") !== id) return;
+      document.querySelectorAll('[data-role="prov-cal-slot"].gcal__event--selected').forEach(function (el) {
         if (typeof el.scrollIntoView === "function") {
           el.scrollIntoView({ block: "nearest", behavior: "smooth" });
         }
       });
+    });
+  }
+
+  function selectProviderVisitInCalendar(bookingId) {
+    const bk = (window.AppState.bookings || []).find(function (b) {
+      return b && b.id === bookingId;
+    });
+    if (!bk || !bk.dateISO) return;
+    applyProvCalSelectionFromDash({
+      kind: "booking",
+      bookingId: bk.id,
+      dateISO: bk.dateISO,
+      fromMin: timeToMinutes(bk.from),
+      toMin: timeToMinutes(bk.to),
+    });
+  }
+
+  function selectProviderFreeInCalendar(dateISO, fromMin, toMin) {
+    if (!dateISO) return;
+    const from = Number(fromMin);
+    const to = Number(toMin);
+    if (!(to > from)) return;
+    // Ponowny klik w tę samą lukę (także po snapie długości z panelu „+”) — odznacz.
+    if (isProvCalFreeSelInRange(window.AppState.provCalSelection, dateISO, from, to)) {
+      window.AppState.provCalSelection = null;
+      saveState();
+      renderAll();
+      hapticTap(10);
+      return;
+    }
+    applyProvCalSelectionFromDash({
+      kind: "free",
+      dateISO: dateISO,
+      fromMin: from,
+      toMin: to,
     });
   }
 
@@ -7829,6 +7881,33 @@
     return sheet;
   }
 
+  /** Desktop: przyklej sheet usług do kolumny pulpitu (szerokość + pozycja). */
+  function syncProvCalAddServiceSheetDeskBounds(sheet) {
+    if (!sheet) return;
+    const dash =
+      document.querySelector("#app-fullscreen .prov-desk__dash") ||
+      document.querySelector('.device-frame[data-view="desktop"] .prov-desk__dash') ||
+      document.querySelector(".prov-desk__dash");
+    const desk =
+      usesDesktopLayout() &&
+      dash &&
+      dash.offsetParent !== null &&
+      getComputedStyle(dash).display !== "none";
+    sheet.classList.toggle("service-sheet--desk", !!desk);
+    if (!desk) {
+      sheet.style.removeProperty("--service-sheet-left");
+      sheet.style.removeProperty("--service-sheet-top");
+      sheet.style.removeProperty("--service-sheet-width");
+      sheet.style.removeProperty("--service-sheet-height");
+      return;
+    }
+    const r = dash.getBoundingClientRect();
+    sheet.style.setProperty("--service-sheet-left", Math.round(r.left) + "px");
+    sheet.style.setProperty("--service-sheet-top", Math.round(r.top) + "px");
+    sheet.style.setProperty("--service-sheet-width", Math.round(r.width) + "px");
+    sheet.style.setProperty("--service-sheet-height", Math.round(r.height) + "px");
+  }
+
   function clearServiceSheetArmTimer() {
     if (window._serviceSheetArmTimer) {
       clearTimeout(window._serviceSheetArmTimer);
@@ -7850,8 +7929,12 @@
     clearServiceSheetArmTimer();
     if (!open) {
       sheet.hidden = true;
-      sheet.classList.remove("is-open", "client-sheet--arming", "has-inne-duration");
+      sheet.classList.remove("is-open", "client-sheet--arming", "has-inne-duration", "service-sheet--desk");
       sheet.innerHTML = "";
+      sheet.style.removeProperty("--service-sheet-left");
+      sheet.style.removeProperty("--service-sheet-top");
+      sheet.style.removeProperty("--service-sheet-width");
+      sheet.style.removeProperty("--service-sheet-height");
       document.body.classList.remove("service-sheet-open");
       return;
     }
@@ -7860,6 +7943,7 @@
     sheet.innerHTML = renderProvCalAddServiceSheetHtml(p, draft);
     sheet.hidden = false;
     sheet.classList.add("is-open", "client-sheet--arming");
+    syncProvCalAddServiceSheetDeskBounds(sheet);
     document.body.classList.add("service-sheet-open");
     window._serviceSheetArmTimer = setTimeout(function () {
       sheet.classList.remove("client-sheet--arming");
@@ -7880,6 +7964,7 @@
     const scrollTop = body ? body.scrollTop : 0;
     sheet.innerHTML = renderProvCalAddServiceSheetHtml(p, draft);
     sheet.classList.add("is-open");
+    syncProvCalAddServiceSheetDeskBounds(sheet);
     const body2 = sheet.querySelector(".service-sheet__body");
     if (body2) body2.scrollTop = scrollTop;
   }
@@ -14372,6 +14457,10 @@
         event.preventDefault();
         selectProviderVisitInCalendar(d.bookingId);
         break;
+      case "select-provider-free":
+        event.preventDefault();
+        selectProviderFreeInCalendar(d.date, d.fromMin, d.toMin);
+        break;
       case "edit-visit":
         event.preventDefault();
         openProvCalEdit(d.bookingId);
@@ -16431,6 +16520,10 @@
 
     window.addEventListener("resize", function () {
       syncBottomNavIndicators(null);
+      const serviceSheet = document.getElementById("prov-cal-add-service-sheet");
+      if (serviceSheet && serviceSheet.classList.contains("is-open")) {
+        syncProvCalAddServiceSheetDeskBounds(serviceSheet);
+      }
     });
   });
 

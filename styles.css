@@ -7897,6 +7897,23 @@ body.service-photo-preview-open {
   --accent: var(--accent-provider);
 }
 
+/* Desktop: sheet usług = szerokość i miejsce pulpitu (nie cała szerokość okna). */
+.service-sheet.service-sheet--desk {
+  inset: auto;
+  left: var(--service-sheet-left, 0);
+  top: var(--service-sheet-top, 0);
+  width: var(--service-sheet-width, min(24rem, 36vw));
+  height: var(--service-sheet-height, 100%);
+  max-width: 24rem;
+}
+
+.service-sheet.service-sheet--desk .client-sheet__panel,
+.service-sheet.service-sheet--desk .service-sheet__panel {
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+}
+
 .service-sheet__body {
   display: flex;
   flex-direction: column;
