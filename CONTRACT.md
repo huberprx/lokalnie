@@ -14,9 +14,10 @@ Aplikacja to statyczny prototyp (bez backendu serwerowego). Uruchomienie:
 - **frontend**: `index.html` (cała statyczna struktura strony, sekcja symulatora,
   paski narzędzi, PUSTE kontenery montażu, tagi `<script>`), `styles.css` (wszystkie style,
   animacje, responsywność, `prefers-reduced-motion`).
-- **backend**: `data.js`, `app.js`, `simulator.js`, `booking.js`, `provider.js`,
-  oraz refaktor `chat.js` (M9). Backend renderuje CAŁĄ zawartość wnętrza kontenerów montażu
-  przez `innerHTML`/DOM. Backend NIE zmienia `index.html` ani `styles.css`.
+- **backend (logika JS)**: `data.js` (mocki), `app.js` (stan, render, zdarzenia — monolit
+  obejmujący booking i panel usługodawcy), `simulator.js`, `calendar.js` (embed Google
+  na landingu). Logika renderuje CAŁĄ zawartość wnętrza kontenerów montażu przez
+  `innerHTML`/DOM. NIE zmienia `index.html` ani `styles.css` poza bumpem `?v=` / cache PWA.
 - Wspólne: obie strony czytają `PLAN.md` i ten `CONTRACT.md`.
 
 ## 2. Ładowanie skryptów (index.html, kolejność na końcu <body>)
@@ -24,9 +25,6 @@ Aplikacja to statyczny prototyp (bez backendu serwerowego). Uruchomienie:
 <script src="data.js"></script>
 <script src="app.js"></script>
 <script src="simulator.js"></script>
-<script src="booking.js"></script>
-<script src="provider.js"></script>
-<script src="chat.js"></script>
 <script src="calendar.js"></script>
 ```
 Każdy moduł JS wystawia swoje API na `window` (bez modułów ES/importów — czysta statyka).
@@ -176,7 +174,7 @@ Akcje `data-action`: `request-toggle-day` (+`data-date`), `request-day-part` (+`
 Atrybut `data-booking-mode="auto"|"approval"` na `.app-screen--booking` i `.provider-booking-panel` —
 zmiana trybu wymusza pełny render zamiast częściowego odświeżenia.
 
-## 11. Kontrakt slotów (booking.js — backend)
+## 11. Kontrakt slotów (app.js — logika bookingu)
 - `window.Booking.computeSlots(provider, dateISO, totalDurationMin) -> [{ id, startISO, endISO, label:'HH:MM→HH:MM', locationLabel }]`
 - Siatka co 15 min; `wolne = dostępność − busy − istniejące bookings`. Domyślnie zaznacz najbliższy wolny.
 - `window.Booking.generateICS(booking) -> string` (VCALENDAR/VEVENT), `window.Booking.downloadICS(booking)`.

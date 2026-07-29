@@ -1,5 +1,5 @@
 /* Lokalnie PWA — przy publikacji podbij CACHE (zgodnie z APP_VERSION w app.js). */
-const CACHE = "lokalnie-shell-v1.0.82";
+const CACHE = "lokalnie-shell-v1.0.83";
 const SHELL = [
   "./",
   "./index.html",
@@ -7,7 +7,6 @@ const SHELL = [
   "./app.js",
   "./data.js",
   "./simulator.js",
-  "./chat.js",
   "./calendar.js",
   "./manifest.webmanifest",
   "./assets/icons/icon-192.png",

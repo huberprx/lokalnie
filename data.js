@@ -96,9 +96,9 @@
       category: "uroda",
       subcategory: "barber",
       avatarInitials: "GB",
+      city: "Warszawa",
       address: "ul. Marszałkowska 12, Warszawa",
       about: "Męskie strzyżenia, broda i pielęgnacja w centrum Warszawy.",
-      website: "https://grzesiubarber.pl",
       distanceKm: 1.2,
       bookingMode: "auto",
       visibleInSearch: true,
@@ -198,11 +198,6 @@
         { id: "sl-gb-web", kind: "website", value: "https://grzesiubarber.pl" },
         { id: "sl-gb-ig", kind: "instagram", value: "grzesiubarber" },
       ],
-      socials: {
-        instagram: "grzesiubarber",
-        facebook: "",
-        tiktok: "",
-      },
     },
     {
       id: "studio-bella",

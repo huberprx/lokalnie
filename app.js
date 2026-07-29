@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.82";
+  const APP_VERSION = "1.0.83";
 
   const PWA = {
     registration: null,
@@ -339,9 +339,6 @@
     if (!cp.notifications || typeof cp.notifications !== "object") {
       cp.notifications = { visitReminders: true, statusChanges: true, marketing: false };
     }
-    u.name = cp.name;
-    u.phone = cp.phone;
-    u.email = cp.email;
     return cp;
   }
 
@@ -613,14 +610,6 @@
     });
   }
 
-  function requestDaysSummary(days) {
-    return (days || [])
-      .map(function (d) {
-        return `${formatDayWithDow(d.dateISO)} · ${DAY_PART_SHORT[normalizeDayPart(d.part)]}`;
-      })
-      .join(" · ");
-  }
-
   function pushNotification(role, text) {
     if (!Array.isArray(window.AppState.notifications)) window.AppState.notifications = [];
     window.AppState.notifications.unshift({
@@ -711,8 +700,6 @@
       restoreScrollTop(layoutList, scrollTop);
     }
   }
-
-  function clearBookingPickModeUI() {}
 
   function refreshMobileBookingScreen(screen, p, ctx) {
     const isApproval = draftBookingMode(p) === "approval";
@@ -1790,14 +1777,6 @@
     return "auto";
   }
 
-  function providerHasApprovalOffers(provider) {
-    if (!provider) return false;
-    ensureServicesBookingMode(provider);
-    return (provider.services || []).some(function (s) {
-      return serviceBookingMode(s, provider) === "approval";
-    });
-  }
-
   /** Brak locationIds / pusta lista = usługa we wszystkich lokalizacjach. */
   function serviceAllowsAllLocations(service) {
     return !service || !Array.isArray(service.locationIds) || !service.locationIds.length;
@@ -1949,19 +1928,11 @@
     if (!provider.socialLinks.length) {
       provider.socialLinks.push({ id: "sl-" + Date.now(), kind: "instagram", value: "" });
     }
-    // Kompatybilność wsteczna dla starych pól.
+    // website jako lustro z socialLinks (kanoniczne jest socialLinks).
     const web = provider.socialLinks.find(function (l) {
       return l.kind === "website" && l.value;
     });
     provider.website = web ? web.value : provider.website || "";
-    if (!provider.socials || typeof provider.socials !== "object") provider.socials = {};
-    SETTINGS_SOCIAL_KINDS.forEach(function (s) {
-      if (s.key === "website") return;
-      const hit = provider.socialLinks.find(function (l) {
-        return l.kind === s.key && l.value;
-      });
-      provider.socials[s.key] = hit ? hit.value : "";
-    });
     return provider.socialLinks;
   }
 
@@ -2125,6 +2096,10 @@
             : base.availEditDrafts,
         appMenuOpen: !!stored.appMenuOpen,
         clientAvatarUrl: typeof stored.clientAvatarUrl === "string" ? stored.clientAvatarUrl : base.clientAvatarUrl,
+        clientProfile:
+          stored.clientProfile && typeof stored.clientProfile === "object"
+            ? stored.clientProfile
+            : base.clientProfile,
       };
     } else {
       window.AppState = base;
@@ -5094,110 +5069,6 @@
     el.setAttribute("aria-label", "Zaznaczony przedział " + fromLabel + "–" + toLabel);
   }
 
-  /**
-   * Swipe dnia: dwa panele w torze (outgoing|incoming), body w overflow:hidden —
-   * kalendarz nie odrywa się od krawędzi, dni płynnie się przesuwają.
-   */
-  function shiftProvCalDateAnimated(deltaDays, opts) {
-    opts = opts || {};
-    const dir = deltaDays > 0 ? 1 : -1;
-    const outgoing = resolveVisibleProvCalGcal(opts.gcal);
-    if (!outgoing || Math.abs(deltaDays) < 1) {
-      shiftProvCalDate(deltaDays);
-      return;
-    }
-    const body = outgoing.closest('[data-role="prov-cal-body"]') || resolveProvCalBody(outgoing);
-    if (!body || body.classList.contains("prov-cal-body--animating-days")) return;
-
-    const scrollTop = body.scrollTop;
-    const startX = readProvCalTranslateX(outgoing);
-    const width = Math.max(body.clientWidth, outgoing.offsetWidth, 280);
-
-    shiftProvCalWindow(deltaDays);
-    const nextISO = isoAddDays(ensureProvCalDate(), deltaDays);
-    window.AppState.provCalDate = nextISO;
-    window.AppState.provCalPickerMonth = nextISO.slice(0, 7);
-    if (ensureProvCalVisibleDays() === 1) window.AppState.provCalWindowStart = nextISO;
-    if (!opts.keepSelection) window.AppState.provCalSelection = null;
-    saveState();
-    hapticTap(12);
-
-    const host = document.createElement("div");
-    host.innerHTML = String(renderProvCalGcalHtml(nextISO) || "").trim();
-    const incoming = host.firstElementChild;
-    if (!incoming) {
-      renderAll();
-      return;
-    }
-
-    body.classList.add("prov-cal-body--day-swipe", "prov-cal-body--animating-days");
-
-    const track = document.createElement("div");
-    track.className = "prov-cal-day-track";
-    track.setAttribute("data-role", "prov-cal-day-track");
-
-    outgoing.classList.remove("gcal--sliding", "gcal--swipe-top");
-    outgoing.style.transition = "";
-    outgoing.style.opacity = "";
-    outgoing.style.transform = "";
-    outgoing.style.flex = "0 0 " + width + "px";
-    outgoing.style.width = width + "px";
-    outgoing.style.maxWidth = width + "px";
-    incoming.style.flex = "0 0 " + width + "px";
-    incoming.style.width = width + "px";
-    incoming.style.maxWidth = width + "px";
-    incoming.style.transform = "";
-    incoming.style.opacity = "1";
-
-    outgoing.replaceWith(track);
-    if (dir > 0) {
-      track.appendChild(outgoing);
-      track.appendChild(incoming);
-      track.style.transform = "translate3d(" + startX + "px,0,0)";
-    } else {
-      track.appendChild(incoming);
-      track.appendChild(outgoing);
-      track.style.transform = "translate3d(" + (-width + startX) + "px,0,0)";
-    }
-
-    body.scrollTop = scrollTop;
-    void track.offsetWidth;
-
-    const durationMs = 300;
-    track.style.transition = "transform " + durationMs + "ms cubic-bezier(0.4, 0, 0.2, 1)";
-    track.style.transform = dir > 0 ? "translate3d(" + -width + "px,0,0)" : "translate3d(0,0,0)";
-
-    let done = false;
-    function finish() {
-      if (done) return;
-      done = true;
-      renderAll();
-      requestAnimationFrame(function () {
-        const b = resolveProvCalBody();
-        if (b) b.scrollTop = scrollTop;
-      });
-    }
-    track.addEventListener(
-      "transitionend",
-      function (event) {
-        if (event.target !== track) return;
-        if (event.propertyName && event.propertyName.indexOf("transform") === -1) return;
-        finish();
-      },
-      { once: true }
-    );
-    window.setTimeout(finish, durationMs + 80);
-  }
-
-  function setProvCalView(view) {
-    if (view === "week") {
-      const cur = ensureProvCalVisibleDays();
-      applyProvCalVisibleDays(cur <= 1 ? 7 : cur);
-      return;
-    }
-    applyProvCalVisibleDays(1);
-  }
-
   /** Krótki haptyczny feedback w PWA / na telefonie (jeśli API dostępne). */
   function hapticTap(ms) {
     try {
@@ -5327,21 +5198,6 @@
 
   function snapProvCalMin(min) {
     return Math.round(Number(min) / PROV_CAL_SNAP_MIN) * PROV_CAL_SNAP_MIN;
-  }
-
-  function subtractMinuteRange(segments, from, to) {
-    const next = [];
-    (segments || []).forEach(function (seg) {
-      if (to <= seg.from || from >= seg.to) {
-        next.push({ from: seg.from, to: seg.to });
-        return;
-      }
-      if (from > seg.from) next.push({ from: seg.from, to: from });
-      if (to < seg.to) next.push({ from: to, to: seg.to });
-    });
-    return next.filter(function (s) {
-      return s.to > s.from;
-    });
   }
 
   function activeDayBookings(dateISO, exceptId) {
@@ -6099,56 +5955,6 @@
     return out;
   }
 
-  /**
-   * Wolne odcinki = tylko w ramach zdefiniowanej dostępności dnia, minus wizyty.
-   * Bez bloków dostępności → brak „Wolne” (nawet gdy są wizyty).
-   */
-  function providerFreeGapsForDate(dateISO, dayVisits) {
-    const availBlocks = providerAvailBlocksForDate(dateISO);
-    if (!availBlocks.length) return [];
-
-    let segments = mergeTimeIntervals(
-      availBlocks
-        .map(function (block) {
-          return { from: timeToMinutes(block.from), to: timeToMinutes(block.to) };
-        })
-        .filter(function (b) {
-          return !isNaN(b.from) && !isNaN(b.to) && b.to > b.from;
-        })
-    );
-    if (!segments.length) return [];
-
-    const busy = mergeTimeIntervals(
-      (dayVisits || [])
-        .map(function (b) {
-          return { from: timeToMinutes(b.from), to: timeToMinutes(b.to) };
-        })
-        .filter(function (b) {
-          return !isNaN(b.from) && !isNaN(b.to) && b.to > b.from;
-        })
-    );
-
-    busy.forEach(function (bk) {
-      const next = [];
-      segments.forEach(function (seg) {
-        // zajętość poza tym odcinkiem dostępności — bez zmian
-        if (bk.to <= seg.from || bk.from >= seg.to) {
-          next.push(seg);
-          return;
-        }
-        // lewy wolny fragment w ramach dostępności
-        if (bk.from > seg.from) next.push({ from: seg.from, to: bk.from });
-        // prawy wolny fragment w ramach dostępności
-        if (bk.to < seg.to) next.push({ from: bk.to, to: seg.to });
-      });
-      segments = next;
-    });
-
-    return segments.filter(function (s) {
-      return s.to > s.from;
-    });
-  }
-
   /** Pionowe paski zdefiniowanej dostępności dnia (lewy gutter osi) — kolor = lokalizacja bloku. */
   function renderProvCalAvailBars(dateISO, hourH, dayStartMin, dayEndMin) {
     const p = myProvider();
@@ -6247,10 +6053,6 @@
     return ((p && p.services) || []).find(function (s) {
       return s.id === id;
     }) || null;
-  }
-
-  function provCalAddServiceOptions(p) {
-    return PROV_CAL_ADD_DURATION_OPTS.concat((p && p.services) || []);
   }
 
   function defaultProvCalAddDraft() {
@@ -6493,12 +6295,6 @@
   }
 
   /** Unikalne imiona klientów, którzy już byli u usługodawcy (+ ręcznie dodani). */
-  function collectProviderClientNames(providerId) {
-    return collectProviderClients(providerId).map(function (c) {
-      return c.name;
-    });
-  }
-
   function clientContactInitials(name) {
     const parts = String(name || "")
       .trim()
@@ -6588,11 +6384,6 @@
       client.address = "";
     }
     return client;
-  }
-
-  function addProviderClientName(providerId, name) {
-    const client = upsertProviderClient(providerId, { name: name });
-    return client ? client.name : "";
   }
 
   function applyClientContactsToDraft(draft, source) {
@@ -8105,24 +7896,6 @@
     }, 420);
   }
 
-  function refreshProvCalAddServiceSheet() {
-    const draft = window.AppState.provCalAddDraft;
-    const p = myProvider();
-    if (!draft || !p || !draft.servicePickOpen) return;
-    const sheet = ensureProvCalAddServiceSheetEl();
-    if (!sheet.classList.contains("is-open")) {
-      setProvCalAddServicePickOpen(true);
-      return;
-    }
-    const body = sheet.querySelector(".service-sheet__body");
-    const scrollTop = body ? body.scrollTop : 0;
-    sheet.innerHTML = renderProvCalAddServiceSheetHtml(p, draft);
-    sheet.classList.add("is-open");
-    syncProvCalAddServiceSheetDeskBounds(sheet);
-    const body2 = sheet.querySelector(".service-sheet__body");
-    if (body2) body2.scrollTop = scrollTop;
-  }
-
   function closeProvCalAddServicePick() {
     const draft = window.AppState.provCalAddDraft;
     const dirty = !!(draft && draft.serviceScheduleDirty);
@@ -8557,10 +8330,6 @@
     patchProvCalAddServiceUi();
   }
 
-  function setProvCalAddService(serviceId) {
-    toggleProvCalAddService(serviceId);
-  }
-
   function setProvCalAddDate(dateISO) {
     captureProvCalAddClientName();
     const draft = ensureProvCalAddDraft();
@@ -8653,54 +8422,6 @@
     else draft.expandedServiceIds.splice(idx, 1);
     saveState();
     renderAll();
-  }
-
-  function renderProvCalAddServiceRows(services, draft) {
-    const selectedId = draft && draft.serviceId;
-    const expandedIds = (draft && draft.expandedServiceIds) || [];
-    return (services || [])
-      .map(function (s) {
-        const on = s.id === selectedId;
-        const expanded = expandedIds.indexOf(s.id) !== -1;
-        const detail = serviceDetailText(s);
-        const hasDetail = serviceHasDetail(s);
-        const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
-        return `
-        <article class="service-row${on ? " service-row--selected" : ""}${expanded ? " service-row--expanded" : ""}" data-service-id="${escapeHtml(s.id)}">
-          <div class="service-row__content service-row__content--with-check">
-            <button type="button" class="service-row__main" data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
-              <span class="service-row__name">${escapeHtml(s.name)}</span>
-              ${detail ? `<span class="service-row__sub">${escapeHtml(detail)}</span>` : ""}
-            </button>
-            <div class="service-row__meta">
-              <span class="service-row__dur">${escapeHtml(formatDuration(s.durationMin))}</span>
-              <span class="service-row__price">${escapeHtml(formatPrice(s.price))}</span>
-            </div>
-            <div class="service-row__foot">
-              ${
-                hasDetail
-                  ? `<button type="button" class="service-row__more" data-action="prov-cal-add-toggle-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}">
-                      <span class="service-row__more-label">${expanded ? "Mniej" : "Więcej"}</span>
-                      <span class="service-row__chev" aria-hidden="true"></span>
-                    </button>`
-                  : `<span class="service-row__foot-spacer" aria-hidden="true"></span>`
-              }
-              <button type="button" class="service-row__check${on ? " service-row__check--on" : ""}" data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}">
-                <span class="service-row__check-visual" aria-hidden="true"></span>
-              </button>
-            </div>
-            ${
-              hasDetail
-                ? `<div class="service-row__detail"${expanded ? "" : " hidden"}>
-                    ${detail ? `<p class="service-row__detail-text">${escapeHtml(detail)}</p>` : ""}
-                    ${renderServicePhotoStrip(s)}
-                  </div>`
-                : ""
-            }
-          </div>
-        </article>`;
-      })
-      .join("");
   }
 
   function confirmProvCalAdd() {
@@ -10186,17 +9907,6 @@
   }
 
   /** Pasek kalendarza: poprzedni miesiąc → +2 miesiące względem „dziś” (kilka miesięcy naraz). */
-  function availStripDays() {
-    const today = demoTodayISO();
-    const d = new Date(today + "T12:00:00");
-    const from = new Date(d.getFullYear(), d.getMonth() - 1, 1);
-    const to = new Date(d.getFullYear(), d.getMonth() + 3, 0);
-    return eachDateISO(
-      from.getFullYear() + "-" + pad(from.getMonth() + 1) + "-" + pad(from.getDate()),
-      to.getFullYear() + "-" + pad(to.getMonth() + 1) + "-" + pad(to.getDate())
-    );
-  }
-
   function availWeekDays(weekStartISO) {
     const start = new Date(weekStartISO + "T12:00:00");
     const out = [];
@@ -10214,17 +9924,6 @@
     const col = grid.querySelector(".avail-week__col");
     const step = ((col && col.offsetWidth) || 74) + 7;
     grid.scrollBy({ left: deltaWeeks * 7 * step, behavior: "smooth" });
-  }
-
-  function scrollAvailStripToDate(dateISO) {
-    const grid = document.querySelector('[data-role="avail-week-grid"]');
-    if (!grid || !dateISO) return;
-    const col = grid.querySelector('.avail-week__col[data-date="' + dateISO + '"]');
-    if (!col) return;
-    const left = Math.max(0, col.offsetLeft - 8);
-    grid.scrollTo({ left: left, behavior: "smooth" });
-    window.AppState.availStripScrollLeft = left;
-    handleAvailStripScroll(grid);
   }
 
   function ensureAvailPickerMonth() {
@@ -10258,30 +9957,6 @@
   }
 
   /** Przesuń listę dostępności o całe tygodnie (góra = poprzedni, dół = następny). */
-  function shiftAvailListWeek(deltaWeeks) {
-    const delta = Number(deltaWeeks) || 0;
-    if (!delta) return;
-    const focus = ensureAvailFocusDate() || demoTodayISO();
-    const prevMonth = ensureAvailPickerMonth();
-    const d = new Date(focus + "T12:00:00");
-    if (isNaN(d.getTime())) return;
-    d.setDate(d.getDate() + delta * 7);
-    const next = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
-    window.AppState.availFocusDate = next;
-    window.AppState.availWeekStart = mondayISOFrom(next);
-    window.AppState.availPickerMonth = next.slice(0, 7);
-    window.AppState.availEditDate = null;
-    saveState();
-    const nextMonth = window.AppState.availPickerMonth;
-    const monthChanged = prevMonth !== nextMonth;
-    // Soft refresh — bez renderAll, żeby siatka miesiąca nie migała i pasek mógł się animować.
-    refreshAvailWeekView({
-      rebuildMonth: monthChanged,
-      monthDir: monthChanged ? (nextMonth > prevMonth ? 1 : -1) : 0,
-      weekDir: delta > 0 ? 1 : -1,
-    });
-  }
-
   /** Panel miesiąca (jak w kalendarzu wizyt) — kropki = dni z ustawioną dostępnością. */
   /** Do 3 unikalnych tonów lokalizacji z bloków dnia (kolejność pierwszego wystąpienia). */
   function availDayToneSlots(provider, blocks) {
@@ -11345,10 +11020,6 @@
         if (btn) btn.setAttribute("aria-expanded", "false");
         if (menu) menu.hidden = true;
       });
-  }
-
-  function closeAvailLocMenus(except) {
-    closeAvailPickMenus(except);
   }
 
   function toggleAvailPickMenu(pick, btn, menuRole) {
@@ -12901,10 +12572,6 @@
     showToast("Plik kalendarza pobrany ✓");
   }
 
-  function openProfile(slug) {
-    openProvider(slug);
-  }
-
   function toggleFav(slug) {
     const i = window.AppState.favorites.indexOf(slug);
     if (i === -1) window.AppState.favorites.push(slug);
@@ -13109,7 +12776,6 @@
     saveState();
     const pickOn = draft.multiSelectMode;
     if (!refreshBookingDraftUI()) renderAll();
-    else if (!pickOn) clearBookingPickModeUI();
     if (pickOn) {
       const list =
         document.querySelector('.app-screen--booking [data-role="booking-mobile-services"]') ||
