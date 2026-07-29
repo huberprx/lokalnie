@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.56";
+  const APP_VERSION = "1.0.59";
 
   const PWA = {
     registration: null,
@@ -4905,10 +4905,17 @@
       draft.serviceIds = [durSvc.id];
       draft.slotId = "slot-" + dateISO + "-" + fromMin;
     }
+    // Przed renderem: dopasuj chip (najbliższy start) i dociągnij szkic do slotu.
+    if (window.AppState.provCalAddOpen && !replyRequestId()) {
+      syncProvCalAddDraftFromSelection();
+      snapProvCalSelectionToAddSlot();
+    }
     saveState();
     renderAll();
     hapticTap(12);
-    updateProvCalAddSelectionLive();
+    updateProvCalAddSelectionLive({ snapSelection: true });
+    // Tap w siatkę → karuzela dojeżdża do zaznaczonego wolnego terminu.
+    scheduleScrollProvCalAddTimeToSelected();
   }
 
   function applyProvCalFreeDraftLayout(el, fromMin, toMin) {
@@ -7324,7 +7331,11 @@
       const durSvc = durationServiceForMinutes(dur);
       draft.dateISO = sel.dateISO;
       draft.serviceIds = [durSvc.id];
-      draft.slotId = "slot-" + sel.dateISO + "-" + Number(sel.fromMin);
+      const matched = matchProvCalAddSlotForFromMin(
+        computeSlots(myProvider(), sel.dateISO, dur, {}),
+        Number(sel.fromMin)
+      );
+      draft.slotId = matched ? matched.id : null;
       window.AppState.provCalDate = sel.dateISO;
       window.AppState.provCalPickerMonth = sel.dateISO.slice(0, 7);
     }
@@ -7333,10 +7344,13 @@
     window.AppState.provCalAddOpen = true;
     window.AppState.provCalAddMinimized = false;
     window.AppState.provCalAddDraft = draft;
+    // Wyrównaj szkic do chipa (5 min vs 15 min), żeby etykiety się zgadzały.
+    snapProvCalSelectionToAddSlot();
     setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
     closeProvCalViewCloud();
     saveState();
     renderAll();
+    scheduleScrollProvCalAddTimeToSelected();
     requestAnimationFrame(function () {
       const input = document.querySelector('[data-role="prov-cal-add-client"]');
       if (input) input.focus();
@@ -7686,6 +7700,61 @@
     renderAll();
   }
 
+  /** Start slotu w minutach z id `slot-YYYY-MM-DD-<min>-…`. */
+  function parseProvCalSlotStartMin(slotId) {
+    const m = String(slotId || "").match(/^slot-\d{4}-\d{2}-\d{2}-(\d+)/);
+    return m ? Number(m[1]) : NaN;
+  }
+
+  /**
+   * Dopasuj wolny slot do szkicu: najpierw dokładny start, inaczej najbliższy start.
+   * (Stara heurystyka „fromMin ∈ [start, start+dur)” brała pierwszy nachodzący
+   * slot — przy długim czasie 15:20 wpadało w 13:00→15:25.)
+   */
+  function matchProvCalAddSlotForFromMin(slots, fromMin) {
+    if (!slots || !slots.length || !Number.isFinite(fromMin)) return null;
+    let best = null;
+    let bestDist = Infinity;
+    for (let i = 0; i < slots.length; i++) {
+      const start = parseProvCalSlotStartMin(slots[i].id);
+      if (!Number.isFinite(start)) continue;
+      const dist = Math.abs(start - fromMin);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = slots[i];
+        if (dist === 0) break;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Po finalizacji: wyrównaj szkic do wybranego chipa (sloty co 15 min, snap siatki co 5).
+   * Zwraca true, gdy selekcja się zmieniła.
+   */
+  function snapProvCalSelectionToAddSlot() {
+    if (!window.AppState.provCalAddOpen) return false;
+    const draft = window.AppState.provCalAddDraft;
+    const sel = window.AppState.provCalSelection;
+    if (!draft || !draft.slotId || !sel || sel.kind !== "free" || replyRequestId()) return false;
+    const start = parseProvCalSlotStartMin(draft.slotId);
+    if (!Number.isFinite(start)) return false;
+    const dur =
+      provCalAddServiceTotals(provCalAddSelectedServices(myProvider(), draft)).duration ||
+      Math.max(5, Number(sel.toMin) - Number(sel.fromMin));
+    const next = normalizeProvCalSelection({
+      kind: "free",
+      dateISO: draft.dateISO || sel.dateISO,
+      fromMin: start,
+      toMin: start + Math.max(5, dur),
+    });
+    if (provCalSelectionKey(sel) === provCalSelectionKey(next)) return false;
+    window.AppState.provCalSelection = next;
+    const el = document.querySelector('[data-role="prov-cal-slot"][data-kind="free"]');
+    if (el) applyProvCalFreeDraftLayout(el, next.fromMin, next.toMin);
+    return true;
+  }
+
   function syncProvCalAddDraftFromSelection() {
     if (!window.AppState.provCalAddOpen) return false;
     const draft = window.AppState.provCalAddDraft;
@@ -7698,19 +7767,8 @@
     const p = myProvider();
     const duration = Math.max(5, toMin - fromMin);
     const slots = computeSlots(p, sel.dateISO, duration, {});
-    let nextSlotId = null;
-    for (let i = 0; i < slots.length; i++) {
-      const slotId = slots[i].id;
-      const slotStartMatch = slotId.match(/slot-\d{4}-\d{2}-\d{2}-(\d+)-/);
-      if (slotStartMatch) {
-        const slotStart = Number(slotStartMatch[1]);
-        const slotEnd = slotStart + duration;
-        if (fromMin >= slotStart && fromMin < slotEnd) {
-          nextSlotId = slotId;
-          break;
-        }
-      }
-    }
+    const matched = matchProvCalAddSlotForFromMin(slots, fromMin);
+    const nextSlotId = matched ? matched.id : null;
     const changed =
       draft.dateISO !== sel.dateISO || draft.slotId !== nextSlotId || draft.serviceIds.join(",") !== durSvc.id;
     draft.dateISO = sel.dateISO;
@@ -7763,6 +7821,55 @@
     return changed;
   }
 
+  /**
+   * Karuzela „WOLNE TERMINY” / propozycji: dociągnij chip do widoku (smooth),
+   * tylko gdy wystaje poza viewport — bez przelotu całej osi od 0.
+   * Tylko po finalizacji (tap / drop / koniec resize) — nie przy live-drag.
+   */
+  function scrollProvCalAddTimeToSelected(slotId) {
+    if (!window.AppState.provCalAddOpen) return;
+    const draft = window.AppState.provCalAddDraft;
+    const targetId = slotId || (draft && !draft.requestId ? draft.slotId : null);
+    const pad = 12;
+    document.querySelectorAll('[data-role="prov-cal-add-time-list"]').forEach(function (list) {
+      const rect = list.getBoundingClientRect();
+      if (rect.width < 8 || rect.height < 8) return;
+      let chip = null;
+      if (targetId) {
+        const buttons = list.querySelectorAll("[data-slot]");
+        for (let i = 0; i < buttons.length; i++) {
+          if (buttons[i].getAttribute("data-slot") === targetId) {
+            chip = buttons[i];
+            break;
+          }
+        }
+      }
+      if (!chip) chip = list.querySelector(".time-row--selected");
+      if (!chip) return;
+      const chipLeft = chip.offsetLeft;
+      const chipRight = chipLeft + chip.offsetWidth;
+      const viewLeft = list.scrollLeft;
+      const viewRight = viewLeft + list.clientWidth;
+      // Sąsiad już w kadrze — bez animacji.
+      if (chipLeft >= viewLeft + pad && chipRight <= viewRight - pad) return;
+      let next = viewLeft;
+      if (chipLeft < viewLeft + pad) next = chipLeft - pad;
+      else if (chipRight > viewRight - pad) next = chipRight - list.clientWidth + pad;
+      const max = Math.max(0, list.scrollWidth - list.clientWidth);
+      next = Math.max(0, Math.min(max, next));
+      if (Math.abs(next - viewLeft) < 1) return;
+      list.scrollTo({ left: next, behavior: "smooth" });
+    });
+  }
+
+  function scheduleScrollProvCalAddTimeToSelected(slotId) {
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        scrollProvCalAddTimeToSelected(slotId);
+      });
+    });
+  }
+
   function updateProvCalAddTimeList() {
     if (!window.AppState.provCalAddOpen || !window.AppState.provCalAddDraft) return;
     const draft = window.AppState.provCalAddDraft;
@@ -7773,34 +7880,38 @@
     });
     const duration = provCalAddServiceTotals(provCalAddSelectedServices(p, draft)).duration || 30;
     const slots = computeSlots(p, draft.dateISO, duration, {});
-    const listEl = document.querySelector('[data-role="prov-cal-add-time-list"]');
-    if (!listEl) return;
+    const listEls = document.querySelectorAll('[data-role="prov-cal-add-time-list"]');
+    if (!listEls.length) return;
     const hasSvc = (draft.serviceIds || []).length > 0;
-    if (!hasSvc || !draft.dateISO) {
-      listEl.innerHTML = "";
-      listEl.setAttribute("hidden", "");
-    } else if (!slots.length) {
-      listEl.innerHTML = `<p class="empty-note">Brak wolnych godzin tego dnia.</p>`;
-      listEl.removeAttribute("hidden");
-    } else {
-      listEl.innerHTML = slots
-        .map(function (s) {
-          const on = draft.slotId === s.id;
-          return `<button type="button" class="time-row time-row--chip${on ? " time-row--selected" : ""}" data-action="prov-cal-add-slot" data-slot="${escapeHtml(s.id)}" aria-label="Wybierz ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${on ? "true" : "false"}">
+    listEls.forEach(function (listEl) {
+      const prevScroll = listEl.scrollLeft;
+      if (!hasSvc || !draft.dateISO) {
+        listEl.innerHTML = "";
+        listEl.setAttribute("hidden", "");
+      } else if (!slots.length) {
+        listEl.innerHTML = `<p class="empty-note">Brak wolnych godzin tego dnia.</p>`;
+        listEl.removeAttribute("hidden");
+      } else {
+        listEl.innerHTML = slots
+          .map(function (s) {
+            const on = draft.slotId === s.id;
+            return `<button type="button" class="time-row time-row--chip${on ? " time-row--selected" : ""}" data-action="prov-cal-add-slot" data-slot="${escapeHtml(s.id)}" aria-label="Wybierz ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${on ? "true" : "false"}">
             <span class="time-row__info">
               <span class="time-row__range">${escapeHtml(s.from)}→${escapeHtml(s.to)}</span>
               ${renderTimeSlotPlace(p, s)}
             </span>
           </button>`;
-        })
-        .join("");
-      listEl.removeAttribute("hidden");
-    }
-    const labelEl = document.querySelector('[data-role="prov-cal-add-times-label"]');
-    if (labelEl) {
+          })
+          .join("");
+        listEl.removeAttribute("hidden");
+        // Live-patch nie powinien resetować pozycji (drag/resize na żywo).
+        listEl.scrollLeft = prevScroll;
+      }
+    });
+    document.querySelectorAll('[data-role="prov-cal-add-times-label"]').forEach(function (labelEl) {
       if (hasSvc && draft.dateISO) labelEl.removeAttribute("hidden");
       else labelEl.setAttribute("hidden", "");
-    }
+    });
     updateProvCalAddSummaryLive();
   }
 
@@ -7835,10 +7946,24 @@
     }
   }
 
-  function updateProvCalAddSelectionLive() {
+  /**
+   * @param {{ snapSelection?: boolean }} [opts]
+   * snapSelection — po drop/tap/resize-end wyrównaj godziny szkicu do chipa.
+   */
+  function updateProvCalAddSelectionLive(opts) {
+    opts = opts || {};
     if (!window.AppState.provCalAddOpen || !window.AppState.provCalAddDraft) return false;
-    if (!syncProvCalAddDraftFromSelection()) return false;
+    if (!syncProvCalAddDraftFromSelection()) {
+      if (opts.snapSelection && snapProvCalSelectionToAddSlot()) {
+        scheduleScrollProvCalAddTimeToSelected();
+        return true;
+      }
+      return false;
+    }
     updateProvCalAddTimeList();
+    // Czas trwania z resize/drag → etykieta „Inne · N min” musi iść w ślad.
+    patchProvCalAddServiceUi();
+    if (opts.snapSelection) snapProvCalSelectionToAddSlot();
     return true;
   }
 
@@ -11670,8 +11795,19 @@
         return b.scrollTop;
       }
     );
+    // Karuzela wolnych terminów — bez resetu do 0 (smooth inaczej leci przez całą oś).
+    const prevAddTimeScrolls = Array.prototype.map.call(
+      document.querySelectorAll('[data-role="prov-cal-add-time-list"]'),
+      function (el) {
+        return el.scrollLeft;
+      }
+    );
     INSTANCES.forEach(render);
     renderFullscreen();
+    // Przywróć od razu (sync), zanim scheduleScroll zrobi short-nudge.
+    document.querySelectorAll('[data-role="prov-cal-add-time-list"]').forEach(function (el, i) {
+      if (typeof prevAddTimeScrolls[i] === "number") el.scrollLeft = prevAddTimeScrolls[i];
+    });
     lastRenderedScreens = {
       client: window.AppState.screen.client,
       provider: window.AppState.screen.provider,
@@ -11712,6 +11848,10 @@
             body.scrollTop = Math.max(0, morningY - 48);
           }
         }
+      });
+      // Po layoutcie flex jeszcze raz — sync mógł nie złapać pełnej szerokości.
+      document.querySelectorAll('[data-role="prov-cal-add-time-list"]').forEach(function (el, i) {
+        if (typeof prevAddTimeScrolls[i] === "number") el.scrollLeft = prevAddTimeScrolls[i];
       });
       refreshProvCalTimeLabels();
       // Drugi frame — po layoutcie siatki miesiąca (inaczej pasek pada na top:0).
@@ -14213,8 +14353,11 @@
           fromMin: resize.fromMin,
           toMin: resize.toMin,
         });
+        updateProvCalAddSelectionLive({ snapSelection: true });
         saveState();
         hapticTap(10);
+        // Koniec resize — karuzela dojeżdża do dopasowanego slotu.
+        scheduleScrollProvCalAddTimeToSelected();
       }
       resize.active = false;
       resize.el = null;
@@ -14763,22 +14906,31 @@
           fromMin: newFrom,
           toMin: newTo,
         });
-        // Karuzela w panelu „+” podąża za upuszczonym szkicem.
-        updateProvCalAddSelectionLive();
+        // Karuzela w panelu „+” podąża za upuszczonym szkicem (+ snap do chipa).
+        updateProvCalAddSelectionLive({ snapSelection: true });
         hapticTap(22);
         resetDrag();
         saveState();
         renderAll();
+        // Po dropie — animacja karuzeli do chipa (nie przy live-drag).
+        scheduleScrollProvCalAddTimeToSelected();
         return;
       }
       if (drag.kind === "proposal") {
         // Duch propozycji: przesuwa propozycję na legalny slot; inaczej odbija z powrotem.
         const movedProposal = moveReplyProposalToSlot(drag.slotId, targetDate, newFrom);
+        const movedSlotId =
+          movedProposal && window.AppState.provCalAddDraft
+            ? (window.AppState.provCalAddDraft.proposals || []).find(function (c) {
+                return c && c.dateISO === targetDate && timeToMinutes(c.from) === newFrom;
+              })
+            : null;
         hapticTap(movedProposal ? 22 : 10);
         resetDrag();
         saveState();
         renderAll();
         if (!movedProposal) showToast("Ten termin nie pasuje do prośby.");
+        else if (movedSlotId) scheduleScrollProvCalAddTimeToSelected(movedSlotId.id);
         return;
       }
       const overlap = bookingOverlapsOthers(drag.bookingId, targetDate, newFrom, newTo);
