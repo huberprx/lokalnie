@@ -6974,24 +6974,17 @@ body.service-photo-preview-open {
 }
 
 .prov-cal-add__head {
-  display: grid;
-  grid-template-columns: minmax(4.5rem, 1fr) auto minmax(4.5rem, 1fr);
+  display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
-  padding: 0.85rem var(--prov-cal-add-pad-x) 0.55rem;
+  padding: 0.55rem var(--prov-cal-add-pad-x) 0.45rem;
   flex-shrink: 0;
 }
 
 .prov-cal-add__head--tabs {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  padding-bottom: 0;
+  padding: 0.2rem var(--prov-cal-add-pad-x) 0;
   border-bottom: 1px solid var(--border);
-}
-
-.prov-cal-add__head--tabs .prov-cal-add__head-spacer {
-  align-self: center;
-  margin-bottom: 0.35rem;
 }
 
 .prov-cal-add__title {
@@ -7000,14 +6993,10 @@ body.service-photo-preview-open {
   font-weight: 750;
   color: var(--text);
   text-align: center;
-  justify-self: center;
-  grid-column: 2;
 }
 
 .prov-cal-add__tabs {
   position: relative;
-  grid-column: 2;
-  justify-self: center;
   display: flex;
   align-items: stretch;
   justify-content: center;
@@ -7048,8 +7037,9 @@ body.service-photo-preview-open {
 .prov-cal-add__tab-ink {
   position: absolute;
   left: 0;
-  bottom: 0;
-  z-index: 0;
+  /* Na linii separatora nagłówka (.prov-cal-add__head--tabs border-bottom). */
+  bottom: -1px;
+  z-index: 2;
   width: 0;
   height: 2px;
   border-radius: 2px 2px 0 0;
@@ -7290,7 +7280,7 @@ body.service-photo-preview-open {
 }
 
 .prov-cal-add--minimized .prov-cal-add__head--tabs {
-  padding-top: 0.55rem;
+  padding-top: 0.2rem;
 }
 
 .prov-cal-add--minimized .prov-cal-add__head--mini {

@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.51";
+  const APP_VERSION = "1.0.53";
 
   const PWA = {
     registration: null,
@@ -7033,28 +7033,37 @@
   }
 
   function captureProvCalAddTabInkFrom() {
-    const tabs = document.querySelector(".prov-cal-add__tabs");
-    const active = tabs && tabs.querySelector(".prov-cal-add__tab.is-active");
-    if (!tabs || !active) return null;
-    return { left: active.offsetLeft, width: active.offsetWidth };
+    const out = [];
+    document.querySelectorAll(".prov-cal-add__tabs").forEach(function (tabs, index) {
+      const active = tabs.querySelector(".prov-cal-add__tab.is-active");
+      if (!active || !active.offsetWidth) return;
+      out.push({ index: index, left: active.offsetLeft, width: active.offsetWidth });
+    });
+    return out.length ? out : null;
   }
 
-  function placeProvCalAddTabInk(from) {
-    const tabs = document.querySelector(".prov-cal-add__tabs");
-    const ink = tabs && tabs.querySelector('[data-role="prov-cal-add-tab-ink"]');
-    const active = tabs && tabs.querySelector(".prov-cal-add__tab.is-active");
-    if (!tabs || !ink || !active) return;
-    const left = active.offsetLeft;
-    const width = active.offsetWidth;
-    if (from && (from.left !== left || from.width !== width)) {
-      ink.style.transition = "none";
-      ink.style.width = from.width + "px";
-      ink.style.transform = "translateX(" + from.left + "px)";
-      void ink.offsetWidth;
-      ink.style.transition = "";
-    }
-    ink.style.width = width + "px";
-    ink.style.transform = "translateX(" + left + "px)";
+  function placeProvCalAddTabInk(fromList) {
+    const fromMap = {};
+    (fromList || []).forEach(function (f) {
+      if (f && typeof f.index === "number") fromMap[f.index] = f;
+    });
+    document.querySelectorAll(".prov-cal-add__tabs").forEach(function (tabs, index) {
+      const ink = tabs.querySelector('[data-role="prov-cal-add-tab-ink"]');
+      const active = tabs.querySelector(".prov-cal-add__tab.is-active");
+      if (!ink || !active || !active.offsetWidth) return;
+      const left = active.offsetLeft;
+      const width = active.offsetWidth;
+      const from = fromMap[index];
+      if (from && (from.left !== left || from.width !== width)) {
+        ink.style.transition = "none";
+        ink.style.width = from.width + "px";
+        ink.style.transform = "translateX(" + from.left + "px)";
+        void ink.offsetWidth;
+        ink.style.transition = "";
+      }
+      ink.style.width = width + "px";
+      ink.style.transform = "translateX(" + left + "px)";
+    });
   }
 
   function animateProvCalAddTabContent(dir) {
@@ -8170,9 +8179,7 @@
       }${showTabs ? " prov-cal-add--tabs" : ""}${enterCls}" data-role="prov-cal-add">
         <div class="prov-cal-add__sheet" role="dialog" aria-modal="false" aria-labelledby="prov-cal-add-title">
           <header class="prov-cal-add__head${showTabs ? " prov-cal-add__head--tabs" : ""}">
-            <span class="prov-cal-add__head-spacer" aria-hidden="true"></span>
             ${headCenter}
-            <span class="prov-cal-add__head-spacer" aria-hidden="true"></span>
           </header>
           <div class="prov-cal-add__body">
             ${requestsListHtml}
