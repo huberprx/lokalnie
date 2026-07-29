@@ -9441,13 +9441,13 @@ body.client-sheet-open {
   background: color-mix(in srgb, var(--accent-provider) 4%, transparent);
 }
 
-/* Zaznaczona kolumna dnia — lekki tint akcentu */
+/* Zaznaczona kolumna dnia — jasny tint akcentu na całej wysokości */
 .gcal-week__col--sel {
-  background: color-mix(in srgb, var(--accent-provider) 9%, transparent);
+  background: color-mix(in srgb, var(--accent-provider) 16%, transparent);
 }
 
 .gcal-week__col--sel.gcal-week__col--request {
-  background: color-mix(in srgb, var(--accent-provider) 11%, transparent);
+  background: color-mix(in srgb, var(--accent-provider) 18%, transparent);
 }
 
 .gcal-week__track {

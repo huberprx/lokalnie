@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.43";
+  const APP_VERSION = "1.0.50";
 
   const PWA = {
     registration: null,
@@ -4743,6 +4743,11 @@
       fromMin: fromMin,
       toMin: toMin,
     });
+    // Zaznacz też dzień w nagłówku — bez przesuwania okna (keepWindow).
+    if (dateISO && window.AppState.provCalDate !== dateISO) {
+      window.AppState.provCalDate = dateISO;
+      window.AppState.provCalPickerMonth = dateISO.slice(0, 7);
+    }
     // Panel „+” otwarty — synchronizuj dzień i slot w draftcie.
     if (window.AppState.provCalAddOpen && window.AppState.provCalAddDraft && !replyRequestId()) {
       const draft = window.AppState.provCalAddDraft;
@@ -4752,7 +4757,6 @@
       draft.serviceIds = [durSvc.id];
       draft.slotId = "slot-" + dateISO + "-" + fromMin;
     }
-    // Nie zmieniaj provCalDate — inaczej okno 1/3/5 dni skacze do klikniętej kolumny.
     saveState();
     renderAll();
     hapticTap(12);
@@ -4952,6 +4956,16 @@
       el.classList.toggle("gcal__event--selected", on);
       el.setAttribute("aria-pressed", on ? "true" : "false");
     });
+    // Nagłówek dnia + kolumna — podświetlenie zgodnie z provCalDate.
+    const selected = window.AppState.provCalDate;
+    if (selected) {
+      document.querySelectorAll(".gcal-week__dayhead[data-date]").forEach(function (el) {
+        el.classList.toggle("gcal-week__dayhead--sel", el.getAttribute("data-date") === selected);
+      });
+      document.querySelectorAll(".gcal-week__col[data-date]").forEach(function (el) {
+        el.classList.toggle("gcal-week__col--sel", el.getAttribute("data-date") === selected);
+      });
+    }
   }
 
   function selectProvCalSlot(nextSel, opts) {
@@ -4963,6 +4977,10 @@
       window.AppState.provCalSelection = null;
     } else {
       window.AppState.provCalSelection = normalized;
+      if (normalized && normalized.dateISO && window.AppState.provCalDate !== normalized.dateISO) {
+        window.AppState.provCalDate = normalized.dateISO;
+        window.AppState.provCalPickerMonth = normalized.dateISO.slice(0, 7);
+      }
     }
     hapticTap(window.AppState.provCalSelection ? 16 : 10);
     syncProvCalSelection();
@@ -14323,6 +14341,11 @@
           fromMin: fromMin,
           toMin: toMin,
         });
+        if (window.AppState.provCalDate !== dateISO) {
+          window.AppState.provCalDate = dateISO;
+          window.AppState.provCalPickerMonth = dateISO.slice(0, 7);
+          syncProvCalSelection();
+        }
         updateProvCalAddSelectionLive();
         return;
       }
