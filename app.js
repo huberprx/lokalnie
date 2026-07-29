@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.62";
+  const APP_VERSION = "1.0.63";
 
   const PWA = {
     registration: null,
@@ -4255,7 +4255,10 @@
     return getProviderById(MY_PROVIDER_ID);
   }
 
-  function renderDashboard() {
+  /** Treść pulpitu (statystyki, powiadomienia, wizyty) — mobilnie pełny ekran, desktopowo lewy panel. */
+  function renderProviderDashBodyHtml(opts) {
+    opts = opts || {};
+    const compact = !!opts.compact;
     const upcoming = (window.AppState.bookings || [])
       .filter((b) => b.providerId === MY_PROVIDER_ID && (b.status === "confirmed" || b.status === "proposed"))
       .sort((a, b) => (a.dateISO + a.from).localeCompare(b.dateISO + b.from));
@@ -4264,8 +4267,7 @@
     const showFree = !!window.AppState.dashShowFreeSlots;
 
     return `
-      <div class="app-screen app-screen--provider app-screen--dashboard">
-        <div class="app-scroll app-scroll--dash">
+        <div class="app-scroll app-scroll--dash${compact ? " app-scroll--dash-side" : ""}">
           <header class="screen-head">
             <h2 class="screen-head__title">Pulpit</h2>
             <p class="screen-head__sub">${escapeHtml(myProvider() ? myProvider().name : "")}</p>
@@ -4292,7 +4294,15 @@
                 : `<p class="empty-note">Brak nadchodzących wizyt. Zarezerwuj coś jako klient, aby zobaczyć synchronizację.</p>`
             }
           </div>
-        </div>
+        </div>`;
+  }
+
+  function renderDashboard() {
+    // Desktop: ten sam workspace co kalendarz (pulpit | siatka).
+    if (usesDesktopLayout()) return renderProviderCalendar({ navActive: "dashboard" });
+    return `
+      <div class="app-screen app-screen--provider app-screen--dashboard">
+        ${renderProviderDashBodyHtml()}
         ${providerBottomNav("dashboard")}
       </div>`;
   }
@@ -8800,7 +8810,14 @@
     </div>`;
   }
 
-  function renderProviderCalendar() {
+  /**
+   * Kalendarz usługodawcy.
+   * Desktop: lewy pulpit + większa siatka po prawej (opts.navActive = zakładka w nav).
+   */
+  function renderProviderCalendar(opts) {
+    opts = opts || {};
+    const desktop = usesDesktopLayout();
+    const navActive = opts.navActive === "dashboard" ? "dashboard" : "calendar";
     const selected = ensureProvCalDate();
     const visits = providerVisits();
     ensureProvCalVisibleDays();
@@ -8813,19 +8830,21 @@
     const isReply = !!(addOpen && replyReq);
     // Etykieta śledzi miesiąc pickera (swipe w panelu), nie tylko wybraną datę tygodnia.
     const monthLabel = monthLabelFromISO(ensureProvCalPickerMonth() + "-01") || "Miesiąc";
-    return `
-      <div class="app-screen app-screen--provider app-screen--prov-cal${addOpen ? " app-screen--prov-cal-add-open" : ""}${
-        isReply ? " app-screen--prov-cal-reply" : ""
-      }">
+    // Desktop: pulpit widać obok — „Wróć” tylko w trybie odpowiedzi.
+    const backBtn =
+      isReply || !desktop
+        ? `<button type="button" class="screen-head__back" data-action="${
+            isReply ? "close-prov-cal-add" : "provider-tab"
+          }"${isReply ? "" : ' data-tab="dashboard"'} aria-label="Wróć">
+                  <span class="screen-head__back-icon" aria-hidden="true"></span>
+                </button>`
+        : "";
+    const calInner = `
         <div class="prov-cal-top">
           <header class="screen-head screen-head--prov-cal">
             <div class="prov-cal-head">
               <div class="prov-cal-head__title-row">
-                <button type="button" class="screen-head__back" data-action="${
-                  isReply ? "close-prov-cal-add" : "provider-tab"
-                }"${isReply ? "" : ' data-tab="dashboard"'} aria-label="Wróć">
-                  <span class="screen-head__back-icon" aria-hidden="true"></span>
-                </button>
+                ${backBtn}
                 <h2 class="screen-head__title">${isReply ? "Zaproponuj terminy" : "Kalendarz"}</h2>
               </div>
               <div class="prov-cal-head__actions">
@@ -8851,8 +8870,23 @@
         <button type="button" class="prov-cal-fab" data-action="open-prov-cal-add" aria-label="Dodaj termin" title="Dodaj termin"${addOpen ? " hidden" : ""}>
           <span class="prov-cal-fab__icon" aria-hidden="true">+</span>
         </button>
-        ${renderProvCalAddPanel()}
-        ${providerBottomNav("calendar")}
+        ${renderProvCalAddPanel()}`;
+    const body = desktop
+      ? `<div class="prov-desk" data-role="prov-desk">
+          <aside class="prov-desk__dash" data-role="prov-desk-dash" aria-label="Pulpit">
+            ${renderProviderDashBodyHtml({ compact: true })}
+          </aside>
+          <div class="prov-desk__cal" data-role="prov-desk-cal">
+            ${calInner}
+          </div>
+        </div>`
+      : calInner;
+    return `
+      <div class="app-screen app-screen--provider app-screen--prov-cal${
+        desktop ? " app-screen--prov-cal-desktop" : ""
+      }${addOpen ? " app-screen--prov-cal-add-open" : ""}${isReply ? " app-screen--prov-cal-reply" : ""}">
+        ${body}
+        ${providerBottomNav(navActive)}
       </div>`;
   }
 

@@ -6695,6 +6695,90 @@ body.service-photo-preview-open {
   overscroll-behavior: none;
 }
 
+/* Desktop: pulpit (lewy) + większy kalendarz (prawy) */
+.prov-desk {
+  display: none;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.prov-desk__dash {
+  flex: 0 0 min(24rem, 36%);
+  width: min(24rem, 36%);
+  min-width: 18rem;
+  max-width: 24rem;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+}
+
+.prov-desk__dash .app-scroll--dash-side {
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 0.7rem 0.85rem 1rem;
+}
+
+.prov-desk__dash .stat-row {
+  gap: 0.45rem;
+}
+
+.prov-desk__dash .stat-card {
+  padding: 0.55rem 0.5rem;
+}
+
+.prov-desk__dash .stat-card__lbl {
+  font-size: 0.68rem;
+  line-height: 1.25;
+}
+
+.prov-desk__cal {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.prov-desk__cal .prov-cal-body {
+  padding-bottom: 1rem;
+}
+
+.prov-desk__cal .prov-cal-fab {
+  bottom: max(0.85rem, env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 900px) {
+  .app-screen--prov-cal-desktop > .prov-desk {
+    display: flex;
+  }
+}
+
+.device-frame[data-view="desktop"] .app-screen--prov-cal-desktop > .prov-desk {
+  display: flex;
+}
+
+/* Ramka mobilna: nawet przy szerokim oknie zostaje sam kalendarz (bez lewego pulpitu). */
+.device-frame[data-view="mobile"] .prov-desk__dash {
+  display: none;
+}
+
+.device-frame[data-view="mobile"] .app-screen--prov-cal-desktop > .prov-desk {
+  display: flex;
+}
+
+.device-frame[data-view="mobile"] .prov-desk__cal {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
 .prov-cal-top {
   flex-shrink: 0;
   padding: 0.55rem var(--app-pad-x) 0.15rem;
@@ -11417,7 +11501,8 @@ body.prov-cal-resizing * {
 }
 
 /* Lista wizyt na pulpicie — karuzela pionowa na resztę wysokości */
-.app-screen--dashboard .app-scroll--dash {
+.app-screen--dashboard .app-scroll--dash,
+.prov-desk__dash .app-scroll--dash {
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -11426,7 +11511,10 @@ body.prov-cal-resizing * {
 
 .app-screen--dashboard .app-scroll--dash > .screen-head,
 .app-screen--dashboard .app-scroll--dash > .stat-row,
-.app-screen--dashboard .app-scroll--dash > .prov-section-row {
+.app-screen--dashboard .app-scroll--dash > .prov-section-row,
+.prov-desk__dash .app-scroll--dash > .screen-head,
+.prov-desk__dash .app-scroll--dash > .stat-row,
+.prov-desk__dash .app-scroll--dash > .prov-section-row {
   flex-shrink: 0;
 }
 
