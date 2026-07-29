@@ -9125,10 +9125,16 @@ body.client-sheet-open {
   box-shadow: inset 0 0 0 1.5px var(--cal-today-fg);
 }
 
-/* Zaznaczony (przeglądanie) — szary w kółku */
+/* Zaznaczony (przeglądanie) — szary w kółku; usługodawca: pełny akcent jak w pasku dni */
 .gcal-month__day--on .gcal-month__day-num {
   background: var(--cal-selected-bg);
   color: var(--cal-selected-fg);
+}
+
+.app-screen--provider .gcal-month__day--on .gcal-month__day-num {
+  background: var(--accent-provider);
+  color: #fff;
+  box-shadow: none;
 }
 
 .gcal-month__day--red:not(.gcal-month__day--on) {
@@ -9775,6 +9781,18 @@ body.prov-cal-dragging * {
 .gcal__event--draft .gcal__event-time {
   font-weight: 650;
   opacity: 1;
+}
+
+/* Duchy propozycji terminów (odpowiedź na prośbę o termin) — klik zdejmuje propozycję */
+.gcal__event--proposal {
+  z-index: 5;
+  cursor: pointer;
+  border-style: dashed;
+  background: color-mix(in srgb, var(--accent-provider) 10%, var(--surface));
+}
+
+.gcal__event--proposal:hover {
+  background: color-mix(in srgb, var(--accent-provider) 17%, var(--surface));
 }
 
 .gcal__event-resize {

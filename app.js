@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.53";
+  const APP_VERSION = "1.0.55";
 
   const PWA = {
     registration: null,
@@ -4676,6 +4676,7 @@
         ? `<p class="gcal__empty">Brak wizyt w tym dniu</p>`
         : "";
     const draftSlot = renderProvCalFreeDraftHtml(dateISO, hourH, dayStartMin, dayEndMin);
+    const proposalSlots = renderProvCalProposalDraftsHtml(dateISO, hourH, dayStartMin, dayEndMin);
 
     const requestDays = replyRequestDaySet();
     const isRequestDay = !!(requestDays && requestDays.has(dateISO));
@@ -4692,6 +4693,7 @@
           ${nowLine}
           ${events}
           ${draftSlot}
+          ${proposalSlots}
           ${empty}
         </div>
       </div>`;
@@ -4722,6 +4724,39 @@
         </div>
         <span class="gcal__event-resize gcal__event-resize--end" data-role="prov-cal-resize" data-edge="end" aria-hidden="true"></span>
       </article>`;
+  }
+
+  /** Propozycje terminów (odpowiedź na prośbę) jako „duchy” na siatce — klik zdejmuje propozycję. */
+  function renderProvCalProposalDraftsHtml(dateISO, hourH, dayStartMin, dayEndMin) {
+    if (!window.AppState.provCalAddOpen) return "";
+    const draft = window.AppState.provCalAddDraft;
+    if (!draft || !draft.requestId || !Array.isArray(draft.proposals)) return "";
+    return draft.proposals
+      .filter(function (c) {
+        return c && c.dateISO === dateISO;
+      })
+      .map(function (c) {
+        const fromM = Math.max(dayStartMin, Math.min(dayEndMin, timeToMinutes(c.from)));
+        const toM = Math.max(dayStartMin, Math.min(dayEndMin, timeToMinutes(c.to)));
+        if (!(toM > fromM)) return "";
+        const top = ((fromM - dayStartMin) / 60) * hourH;
+        const height = Math.max(28, ((toM - fromM) / 60) * hourH);
+        const fromLabel = minToTime(fromM);
+        const toLabel = minToTime(toM);
+        return `
+      <article class="gcal__event gcal__event--draft gcal__event--proposal"
+        style="top:${top}px;height:${height}px"
+        data-role="prov-cal-slot" data-kind="proposal" data-date="${escapeHtml(dateISO)}"
+        data-action="prov-cal-add-slot" data-slot="${escapeHtml(c.id)}"
+        data-from-min="${fromM}" data-to-min="${toM}"
+        role="button" tabindex="0" aria-pressed="true"
+        aria-label="Propozycja ${escapeHtml(fromLabel)}–${escapeHtml(toLabel)} — kliknij, aby usunąć">
+        <div class="gcal__event-row">
+          <span class="gcal__event-time">${escapeHtml(fromLabel)}–${escapeHtml(toLabel)}</span>
+        </div>
+      </article>`;
+      })
+      .join("");
   }
 
   function placeProvCalFreeSelection(dateISO, clientY, track) {
@@ -4954,6 +4989,8 @@
 
   function syncProvCalSelection() {
     document.querySelectorAll('[data-role="prov-cal-slot"]').forEach(function (el) {
+      // Duchy propozycji nie podlegają selekcji — są zawsze „włączone”.
+      if (el.getAttribute("data-kind") === "proposal") return;
       const on = isProvCalSlotSelected(el);
       el.classList.toggle("gcal__event--selected", on);
       el.setAttribute("aria-pressed", on ? "true" : "false");
@@ -4982,6 +5019,22 @@
       if (normalized && normalized.dateISO && window.AppState.provCalDate !== normalized.dateISO) {
         window.AppState.provCalDate = normalized.dateISO;
         window.AppState.provCalPickerMonth = normalized.dateISO.slice(0, 7);
+      }
+    }
+    // Odkliknięty szkic na siatce zdejmuje też godzinę z panelu „+”
+    // (renderAll — demo renderuje dwie instancje panelu, live-patch trafia tylko pierwszą).
+    if (!window.AppState.provCalSelection) {
+      const addDraft = window.AppState.provCalAddDraft;
+      if (
+        window.AppState.provCalAddOpen &&
+        addDraft &&
+        !addDraft.requestId &&
+        !addDraft.bookingId &&
+        addDraft.slotId
+      ) {
+        addDraft.slotId = null;
+        saveState();
+        renderAll();
       }
     }
     hapticTap(window.AppState.provCalSelection ? 16 : 10);
@@ -7555,6 +7608,50 @@
     return changed;
   }
 
+  /**
+   * Panel „+” → siatka: szkic na kalendarzu podąża za godziną wybraną w karuzeli;
+   * odznaczenie chipa zdejmuje szkic. Tryb odpowiedzi i edycji pomijamy —
+   * propozycje renderuje renderProvCalProposalDraftsHtml, edycja ma selekcję wizyty.
+   */
+  function syncProvCalSelectionFromAddDraft() {
+    if (!window.AppState.provCalAddOpen) return false;
+    const draft = window.AppState.provCalAddDraft;
+    if (!draft || draft.requestId || draft.bookingId) return false;
+    let dateISO = null;
+    let fromMin = NaN;
+    let toMin = NaN;
+    if (draft.slotId) {
+      const m = String(draft.slotId).match(/^slot-(\d{4}-\d{2}-\d{2})-(\d+)/);
+      if (m) {
+        dateISO = m[1];
+        fromMin = Number(m[2]);
+        const dur =
+          provCalAddServiceTotals(provCalAddSelectedServices(myProvider(), draft)).duration || 30;
+        toMin = fromMin + Math.max(5, dur);
+      }
+    }
+    const next =
+      dateISO && isFinite(fromMin) && toMin > fromMin
+        ? normalizeProvCalSelection({
+            kind: "free",
+            dateISO: dateISO,
+            fromMin: fromMin,
+            toMin: toMin,
+          })
+        : null;
+    const changed =
+      provCalSelectionKey(window.AppState.provCalSelection) !== provCalSelectionKey(next);
+    window.AppState.provCalSelection = next;
+    if (next) {
+      if (window.AppState.provCalDate !== next.dateISO) {
+        window.AppState.provCalDate = next.dateISO;
+        window.AppState.provCalPickerMonth = next.dateISO.slice(0, 7);
+      }
+      if (!provCalWindowContainsDate(next.dateISO)) moveProvCalWindowToInclude(next.dateISO);
+    }
+    return changed;
+  }
+
   function updateProvCalAddTimeList() {
     if (!window.AppState.provCalAddOpen || !window.AppState.provCalAddDraft) return;
     const draft = window.AppState.provCalAddDraft;
@@ -7657,6 +7754,7 @@
     }
     if (!draft.serviceIds.length) draft.serviceIds = [PROV_CAL_ADD_DEFAULT_DURATION_ID];
     draft.slotId = null;
+    syncProvCalSelectionFromAddDraft();
     draft.servicePickOpen = true;
     draft.serviceScheduleDirty = true;
     saveState();
@@ -7676,6 +7774,7 @@
     window.AppState.provCalDate = draft.dateISO;
     window.AppState.provCalPickerMonth = draft.dateISO.slice(0, 7);
     moveProvCalWindowToInclude(draft.dateISO);
+    syncProvCalSelectionFromAddDraft();
     saveState();
     renderAll();
   }
@@ -7686,8 +7785,10 @@
     if (draft.requestId) {
       toggleReplyProposalSlot(draft, slotId);
     } else {
-      draft.slotId = slotId || null;
+      // Drugi klik w ten sam chip odznacza godzinę — szkic znika z siatki.
+      draft.slotId = draft.slotId === slotId ? null : slotId || null;
     }
+    syncProvCalSelectionFromAddDraft();
     saveState();
     renderAll();
   }
