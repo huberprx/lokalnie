@@ -1,5 +1,5 @@
 /* Lokalnie PWA — przy publikacji podbij CACHE (zgodnie z APP_VERSION w app.js). */
-const CACHE = "lokalnie-shell-v1.0.55";
+const CACHE = "lokalnie-shell-v1.0.56";
 const SHELL = [
   "./",
   "./index.html",
@@ -58,7 +58,10 @@ function networkFirst(request) {
     })
     .catch(function () {
       return caches.match(request).then(function (cached) {
-        return cached || caches.match("./index.html");
+        if (cached) return cached;
+        // Fallback na shell tylko dla nawigacji — JS/CSS nigdy nie może dostać HTML-a.
+        if (request.mode === "navigate") return caches.match("./index.html");
+        return Response.error();
       });
     });
 }

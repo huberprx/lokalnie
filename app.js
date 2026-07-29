@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.55";
+  const APP_VERSION = "1.0.56";
 
   const PWA = {
     registration: null,
@@ -4747,7 +4747,7 @@
       <article class="gcal__event gcal__event--draft gcal__event--proposal"
         style="top:${top}px;height:${height}px"
         data-role="prov-cal-slot" data-kind="proposal" data-date="${escapeHtml(dateISO)}"
-        data-action="prov-cal-add-slot" data-slot="${escapeHtml(c.id)}"
+        data-action="prov-cal-remove-proposal" data-slot="${escapeHtml(c.id)}"
         data-from-min="${fromM}" data-to-min="${toM}"
         role="button" tabindex="0" aria-pressed="true"
         aria-label="Propozycja ${escapeHtml(fromLabel)}–${escapeHtml(toLabel)} — kliknij, aby usunąć">
@@ -4757,6 +4757,112 @@
       </article>`;
       })
       .join("");
+  }
+
+  /** Legalny slot dla propozycji w danym dniu — dni i pora z prośby, dostępność, kolizje. */
+  function replyProposalSlotForMove(p, req, draft, dateISO, fromMin, durationMin) {
+    const daySet = replyRequestDaySet();
+    const showAll = !!window.AppState.provCalReplyShowAll;
+    if (daySet && !showAll && !daySet.has(dateISO)) return null;
+    const slotOpts = slotOptsForServiceIds(p, (draft && draft.serviceIds) || req.serviceIds || []);
+    let slots = computeSlots(p, dateISO, Math.max(5, durationMin || 30), slotOpts);
+    if (daySet && daySet.has(dateISO)) {
+      const part = replyDayPartForDate(dateISO);
+      slots = slots.filter(function (s) {
+        return slotMatchesDayPart(s, part);
+      });
+    }
+    return (
+      slots.find(function (s) {
+        return timeToMin(s.from) === fromMin;
+      }) || null
+    );
+  }
+
+  /** Przesuń propozycję na nowy slot (upuszczenie ducha). Zwraca true przy sukcesie. */
+  function moveReplyProposalToSlot(slotId, dateISO, fromMin) {
+    const draft = window.AppState.provCalAddDraft;
+    const req = replyRequest();
+    const p = myProvider();
+    if (!slotId || !draft || !req || !p) return false;
+    const c = (draft.proposals || []).find(function (x) {
+      return x && x.id === slotId;
+    });
+    if (!c) return false;
+    const dur = Math.max(5, timeToMinutes(c.to) - timeToMinutes(c.from));
+    const slot = replyProposalSlotForMove(p, req, draft, dateISO, fromMin, dur);
+    if (!slot) return false;
+    c.id = slot.id;
+    c.dateISO = dateISO;
+    c.from = slot.from;
+    c.to = slot.to;
+    c.locationId = slot.locationId;
+    c.locationLabel = slot.locationLabel;
+    draft.proposals.sort(function (a, b) {
+      return (a.dateISO + a.from).localeCompare(b.dateISO + b.from);
+    });
+    return true;
+  }
+
+  /** Tap w puste miejsce siatki w trybie odpowiedzi — dodaj najbliższą legalną propozycję. */
+  function addReplyProposalFromPoint(dateISO, fromMin) {
+    const draft = window.AppState.provCalAddDraft;
+    const req = replyRequest();
+    const p = myProvider();
+    if (!draft || !req || !p) return;
+    const daySet = replyRequestDaySet();
+    const showAll = !!window.AppState.provCalReplyShowAll;
+    if (daySet && !showAll && !daySet.has(dateISO)) {
+      showToast("Ten dzień jest poza prośbą klienta.");
+      return;
+    }
+    const dur = requestServicesDuration(p, draft.serviceIds || req.serviceIds || []) || 30;
+    const slotOpts = slotOptsForServiceIds(p, draft.serviceIds || req.serviceIds || []);
+    let slots = computeSlots(p, dateISO, dur, slotOpts);
+    if (daySet && daySet.has(dateISO)) {
+      const part = replyDayPartForDate(dateISO);
+      slots = slots.filter(function (s) {
+        return slotMatchesDayPart(s, part);
+      });
+    }
+    let best = null;
+    let bestDist = Infinity;
+    slots.forEach(function (s) {
+      const st = timeToMin(s.from);
+      const dist = Math.abs(st - fromMin);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = s;
+      }
+    });
+    if (!best) {
+      showToast("Brak wolnych terminów tego dnia.");
+      return;
+    }
+    if (!Array.isArray(draft.proposals)) draft.proposals = [];
+    if (
+      draft.proposals.some(function (c) {
+        return c && c.id === best.id;
+      })
+    ) {
+      showToast("Ta propozycja już jest na liście.");
+      return;
+    }
+    draft.proposals.push({
+      id: best.id,
+      dateISO: dateISO,
+      from: best.from,
+      to: best.to,
+      locationId: best.locationId,
+      locationLabel: best.locationLabel,
+    });
+    draft.proposals.sort(function (a, b) {
+      return (a.dateISO + a.from).localeCompare(b.dateISO + b.from);
+    });
+    window.AppState.provCalSelection = null;
+    saveState();
+    renderAll();
+    hapticTap(16);
   }
 
   function placeProvCalFreeSelection(dateISO, clientY, track) {
@@ -4773,6 +4879,11 @@
     if (toMin > dayEnd) {
       toMin = dayEnd;
       fromMin = Math.max(dayStart, toMin - defaultDur);
+    }
+    // Tryb odpowiedzi na prośbę: tap w wolne miejsce dodaje propozycję (bez szkicu).
+    if (window.AppState.provCalAddOpen && replyRequestId()) {
+      addReplyProposalFromPoint(dateISO, fromMin);
+      return;
     }
     window.AppState.provCalSelection = normalizeProvCalSelection({
       kind: "free",
@@ -13426,6 +13537,17 @@
           toMin: Number(d.toMin),
         });
         break;
+      case "prov-cal-remove-proposal":
+        event.preventDefault();
+        event.stopPropagation();
+        // Tap myszą/dotykiem obsłużony już na pointerup (tam też drag) — tu tylko klawiatura.
+        if (window._provCalSlotIgnoreClick || window._provCalResizeIgnoreClick) {
+          window._provCalSlotIgnoreClick = false;
+          window._provCalResizeIgnoreClick = false;
+          break;
+        }
+        setProvCalAddSlot(d.slot);
+        break;
       case "prov-cal-today":
         event.preventDefault();
         pickProvCalDate(demoTodayISO(), { keepView: true });
@@ -14335,6 +14457,7 @@
       drag.allowMove = false;
       drag.armed = false;
       drag.weekView = false;
+      drag.slotId = null;
     }
 
     function armBookingDrag() {
@@ -14444,6 +14567,8 @@
           "aria-label",
           "Zaznaczony przedział " + minToTime(newFrom) + "–" + minToTime(newTo)
         );
+        // Chip w karuzeli „jedzie” za palcem na żywo (zgodnie z resize/tap).
+        syncDragLiveToState(drag.dateISO, newFrom, newTo);
       }
     }
 
@@ -14502,6 +14627,11 @@
     /** Przytrzymanie przy lewej/prawej krawędzi okna dni — przesuń widok i przenieś blok (jak GCal). */
     function tryEdgeDayShift() {
       if (!drag.armed || !drag.allowMove || !drag.el) return;
+      // Duchy propozycji: bez skoków okna — przesuwanie tylko w obrębie widocznych dni.
+      if (drag.kind === "proposal") {
+        clearDragEdgeHint();
+        return;
+      }
       const root = dragRootGcal();
       if (!colsClipRect()) {
         clearDragEdgeHint();
@@ -14633,10 +14763,22 @@
           fromMin: newFrom,
           toMin: newTo,
         });
+        // Karuzela w panelu „+” podąża za upuszczonym szkicem.
+        updateProvCalAddSelectionLive();
         hapticTap(22);
         resetDrag();
         saveState();
         renderAll();
+        return;
+      }
+      if (drag.kind === "proposal") {
+        // Duch propozycji: przesuwa propozycję na legalny slot; inaczej odbija z powrotem.
+        const movedProposal = moveReplyProposalToSlot(drag.slotId, targetDate, newFrom);
+        hapticTap(movedProposal ? 22 : 10);
+        resetDrag();
+        saveState();
+        renderAll();
+        if (!movedProposal) showToast("Ten termin nie pasuje do prośby.");
         return;
       }
       const overlap = bookingOverlapsOthers(drag.bookingId, targetDate, newFrom, newTo);
@@ -14679,8 +14821,9 @@
         drag.active = true;
         drag.el = el;
         drag.kind = kind;
-        drag.allowMove = kind === "booking" || kind === "free";
+        drag.allowMove = kind === "booking" || kind === "free" || kind === "proposal";
         drag.bookingId = el.getAttribute("data-booking-id");
+        drag.slotId = el.getAttribute("data-slot");
         drag.dateISO = el.getAttribute("data-date") || ensureProvCalDate();
         drag.startDate = drag.dateISO;
         drag.startFrom = fromMin;
@@ -14781,8 +14924,13 @@
         resetDrag();
       } else {
         const sel = selectionFromSlotEl(drag.el);
+        const tapKind = drag.kind;
+        const tapSlotId = drag.slotId;
         resetDrag();
-        if (sel && sel.kind === "booking" && sel.bookingId) openProvCalEdit(sel.bookingId);
+        // Tap na ducha obsługujemy tu — klik stłumiony flagą, by nie odpalić się 2× ani po dragu.
+        if (tapKind === "proposal") {
+          if (tapSlotId) setProvCalAddSlot(tapSlotId);
+        } else if (sel && sel.kind === "booking" && sel.bookingId) openProvCalEdit(sel.bookingId);
         else if (sel && sel.kind === "free") selectProvCalSlot(sel);
         else selectProvCalSlot(sel);
       }
