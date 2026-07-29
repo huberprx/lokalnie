@@ -6702,6 +6702,16 @@ body.service-photo-preview-open {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  position: relative;
+}
+
+/* Panel „Nowy termin” / prośba / edycja — tylko nad pulpitem (szerokość lewej kolumny). */
+.prov-desk > .prov-cal-add {
+  right: auto;
+  width: min(24rem, 36%);
+  min-width: 18rem;
+  max-width: 24rem;
+  z-index: 140;
 }
 
 .prov-desk__dash {
@@ -6916,6 +6926,14 @@ body.service-photo-preview-open {
 .device-frame[data-view="mobile"] .prov-desk__cal {
   flex: 1 1 auto;
   width: 100%;
+}
+
+/* Bez pulpitu panel wraca na pełną szerokość (jak na mobile). */
+.device-frame[data-view="mobile"] .prov-desk > .prov-cal-add {
+  right: 0;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
 }
 
 .prov-cal-top {
@@ -11456,6 +11474,16 @@ body.prov-cal-resizing * {
   border: none;
   border-radius: 0;
   box-shadow: none;
+  cursor: pointer;
+}
+
+.visit-card--provider.is-selected {
+  background: color-mix(in srgb, var(--accent-provider-soft) 55%, var(--surface));
+  border-radius: 12px;
+}
+
+.visit-card--provider.is-selected::after {
+  opacity: 0;
 }
 
 .visit-card--provider::before {

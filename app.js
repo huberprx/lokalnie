@@ -42,7 +42,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.66";
+  const APP_VERSION = "1.0.70";
 
   const PWA = {
     registration: null,
@@ -4352,8 +4352,18 @@
     }
     const toneClass = locId ? locationToneClass(p, locId) : "";
     const locAttr = locId ? ` data-location-id="${escapeHtml(String(locId))}"` : "";
+    const selected = !!(
+      window.AppState.provCalSelection &&
+      window.AppState.provCalSelection.kind === "booking" &&
+      window.AppState.provCalSelection.bookingId === b.id
+    );
     return `
-      <div class="visit-card visit-card--provider${toneClass ? " " + escapeHtml(toneClass) : ""}" data-booking-id="${escapeHtml(b.id)}" data-status="${escapeHtml(b.status)}"${locAttr}>
+      <div class="visit-card visit-card--provider${toneClass ? " " + escapeHtml(toneClass) : ""}${
+        selected ? " is-selected" : ""
+      }" data-booking-id="${escapeHtml(b.id)}" data-status="${escapeHtml(b.status)}"${locAttr}
+        data-action="select-provider-visit" role="button" tabindex="0"
+        aria-pressed="${selected ? "true" : "false"}"
+        aria-label="Pokaż w kalendarzu: ${escapeHtml((b.clientName || "Klient") + ", " + (services[0] || "usługa"))}">
         <div class="visit-card__schedule">
           <time class="visit-card__range" datetime="${escapeHtml(b.dateISO + "T" + b.from)}">${escapeHtml(b.from)}–${escapeHtml(b.to)}</time>
           <span class="visit-card__duration" aria-label="Czas trwania: ${escapeHtml(formatDuration(durationMin))}">
@@ -4368,6 +4378,7 @@
         ${
           b.status === "confirmed"
             ? `<div class="visit-card__actions">
+                 <button type="button" class="btn btn--ghost btn--sm" data-action="edit-visit" data-booking-id="${escapeHtml(b.id)}">Edytuj</button>
                  <button type="button" class="btn btn--ghost btn--sm" data-action="cancel-visit" data-booking-id="${escapeHtml(b.id)}">Odwołaj</button>
                </div>`
             : ""
@@ -7431,6 +7442,44 @@
     hapticTap(12);
   }
 
+  /** Klik wizyty na pulpicie — zaznacz termin w kalendarzu (bez otwierania panelu edycji). */
+  function selectProviderVisitInCalendar(bookingId) {
+    const bk = (window.AppState.bookings || []).find(function (b) {
+      return b && b.id === bookingId;
+    });
+    if (!bk || !bk.dateISO) return;
+    const next = normalizeProvCalSelection({
+      kind: "booking",
+      bookingId: bk.id,
+      dateISO: bk.dateISO,
+      fromMin: timeToMinutes(bk.from),
+      toMin: timeToMinutes(bk.to),
+    });
+    const prevKey = provCalSelectionKey(window.AppState.provCalSelection);
+    const nextKey = provCalSelectionKey(next);
+    if (prevKey && prevKey === nextKey) {
+      window.AppState.provCalSelection = null;
+    } else {
+      window.AppState.provCalSelection = next;
+      window.AppState.provCalDate = bk.dateISO;
+      window.AppState.provCalPickerMonth = bk.dateISO.slice(0, 7);
+      moveProvCalWindowToInclude(bk.dateISO);
+    }
+    saveState();
+    renderAll();
+    hapticTap(window.AppState.provCalSelection ? 16 : 10);
+    if (!window.AppState.provCalSelection) return;
+    const id = String(bk.id);
+    requestAnimationFrame(function () {
+      document.querySelectorAll('[data-role="prov-cal-slot"][data-kind="booking"]').forEach(function (el) {
+        if (el.getAttribute("data-booking-id") !== id) return;
+        if (typeof el.scrollIntoView === "function") {
+          el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+      });
+    });
+  }
+
   function openProvCalEdit(bookingId) {
     const bk = (window.AppState.bookings || []).find(function (b) {
       return b && b.id === bookingId;
@@ -8928,8 +8977,10 @@
         </div>
         <button type="button" class="prov-cal-fab" data-action="open-prov-cal-add" aria-label="Dodaj termin" title="Dodaj termin"${addOpen ? " hidden" : ""}>
           <span class="prov-cal-fab__icon" aria-hidden="true">+</span>
-        </button>
-        ${renderProvCalAddPanel()}`;
+        </button>`;
+    // Desktop: panel tylko nad pulpitem (szerokość lewej kolumny; kalendarz wolny).
+    // Mobile: panel w obrębie całego ekranu kalendarza jak dotychczas.
+    const addPanel = renderProvCalAddPanel();
     const body = desktop
       ? `<div class="prov-desk" data-role="prov-desk">
           <aside class="prov-desk__dash" data-role="prov-desk-dash" aria-label="Pulpit">
@@ -8938,8 +8989,9 @@
           <div class="prov-desk__cal" data-role="prov-desk-cal">
             ${calInner}
           </div>
+          ${addPanel}
         </div>`
-      : calInner;
+      : `${calInner}${addPanel}`;
     return `
       <div class="app-screen app-screen--provider app-screen--prov-cal${
         desktop ? " app-screen--prov-cal-desktop" : ""
@@ -14315,6 +14367,14 @@
           const form = btn.closest("form.service-edit");
           saveService(d.serviceId, form);
         }
+        break;
+      case "select-provider-visit":
+        event.preventDefault();
+        selectProviderVisitInCalendar(d.bookingId);
+        break;
+      case "edit-visit":
+        event.preventDefault();
+        openProvCalEdit(d.bookingId);
         break;
       case "cancel-visit":
         event.preventDefault();
