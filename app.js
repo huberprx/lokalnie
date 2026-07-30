@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.109";
+  const APP_VERSION = "1.0.117";
 
   const PWA = {
     registration: null,
@@ -401,16 +401,75 @@
     return timeToMinutes(aFrom) < timeToMinutes(bTo) && timeToMinutes(bFrom) < timeToMinutes(aTo);
   }
 
-  function searchFilterDateOptions() {
+  const SEARCH_FILTER_DATE_CHUNK = 60;
+  const SEARCH_FILTER_DATE_MAX = 366;
+
+  function searchFilterDateOptions(count) {
+    const n = Math.max(1, count || SEARCH_FILTER_DATE_CHUNK);
     const start = demoTodayISO();
     const parts = start.split("-").map(Number);
-    let t = Date.UTC(parts[0], parts[1] - 1, parts[2]);
+    const t0 = Date.UTC(parts[0], parts[1] - 1, parts[2]);
     const out = [];
-    for (let i = 0; i < 14; i++) {
-      const d = new Date(t + i * 86400000);
+    for (let i = 0; i < n; i++) {
+      const d = new Date(t0 + i * 86400000);
       out.push(d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate()));
     }
     return out;
+  }
+
+  function addDaysISO(dateISO, days) {
+    const parts = String(dateISO || "")
+      .split("-")
+      .map(Number);
+    if (parts.length < 3 || parts.some(function (x) { return !Number.isFinite(x); })) return "";
+    const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2] + Number(days || 0)));
+    return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate());
+  }
+
+  function renderSearchFilterDateChip(dateISO, selectedDates, todayISO) {
+    const dt = new Date(dateISO + "T12:00:00");
+    const on = (selectedDates || []).indexOf(dateISO) !== -1;
+    const red = isRedCalendarDay(dateISO);
+    const isToday = dateISO === todayISO;
+    return `
+          <button type="button" class="date-chip${on ? " date-chip--active" : ""}${isToday ? " date-chip--today" : ""}${red ? " date-chip--holiday" : ""}"
+            data-action="toggle-filter-date" data-date="${escapeHtml(dateISO)}" aria-pressed="${on ? "true" : "false"}">
+            <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span>
+            <span class="date-chip__day">${dt.getDate()}</span>
+          </button>`;
+  }
+
+  function updateSearchFilterMonthLabel(scrollEl) {
+    if (!scrollEl) return;
+    const section = scrollEl.closest(".search-filters__section");
+    const label = section && section.querySelector('[data-role="search-filter-month"]');
+    if (!label) return;
+    const chosen = leftmostDatedChild(scrollEl, ".date-chip[data-date]");
+    if (!chosen) return;
+    const text = monthLabelFromISO(chosen.getAttribute("data-date"));
+    if (text && label.textContent !== text) label.textContent = text;
+  }
+
+  function ensureSearchFilterDatesExtended(scrollEl) {
+    if (!scrollEl || !scrollEl.classList.contains("filter-scroll--dates")) return;
+    const track = scrollEl.querySelector(".filter-scroll__track");
+    if (!track) return;
+    if (scrollEl.scrollLeft + scrollEl.clientWidth < scrollEl.scrollWidth - 96) return;
+    const chips = track.querySelectorAll(".date-chip[data-date]");
+    if (chips.length >= SEARCH_FILTER_DATE_MAX) return;
+    const last = chips[chips.length - 1];
+    const lastISO = last && last.getAttribute("data-date");
+    if (!lastISO) return;
+    const selectedDates = window.AppState.searchFilterDates || [];
+    const todayISO = demoTodayISO();
+    const add = Math.min(SEARCH_FILTER_DATE_CHUNK, SEARCH_FILTER_DATE_MAX - chips.length);
+    let html = "";
+    for (let i = 1; i <= add; i++) {
+      const iso = addDaysISO(lastISO, i);
+      if (!iso) break;
+      html += renderSearchFilterDateChip(iso, selectedDates, todayISO);
+    }
+    if (html) track.insertAdjacentHTML("beforeend", html);
   }
 
   function providerMatchesScheduleFilters(p) {
@@ -1783,7 +1842,7 @@
       : `<button type="button" class="provider-card__name" data-slug="${escapeHtml(p.slug)}" data-action="open-provider">${escapeHtml(p.name)}</button>`;
 
     const detailsInner = `
-            ${opts.bookingHeader ? "" : `<span class="provider-card__cat">${escapeHtml(providerCategoryLine(p))}</span>`}
+            <span class="provider-card__cat">${escapeHtml(providerCategoryLine(p))}</span>
             ${renderProviderCardHoursMeta(p)}
             <span class="provider-card__addr">${escapeHtml(addrLine)}</span>`;
 
@@ -3399,20 +3458,13 @@
         </div>`;
 
     const todayISO = demoTodayISO();
-    const dateChips = searchFilterDateOptions()
+    const filterDates = searchFilterDateOptions();
+    const dateChips = filterDates
       .map(function (dateISO) {
-        const dt = new Date(dateISO + "T12:00:00");
-        const on = selectedDates.indexOf(dateISO) !== -1;
-        const red = isRedCalendarDay(dateISO);
-        const isToday = dateISO === todayISO;
-        return `
-          <button type="button" class="date-chip${on ? " date-chip--active" : ""}${isToday ? " date-chip--today" : ""}${red ? " date-chip--holiday" : ""}"
-            data-action="toggle-filter-date" data-date="${escapeHtml(dateISO)}" aria-pressed="${on ? "true" : "false"}">
-            <span class="date-chip__dow">${WEEKDAYS[dt.getDay()]}</span>
-            <span class="date-chip__day">${dt.getDate()}</span>
-          </button>`;
+        return renderSearchFilterDateChip(dateISO, selectedDates, todayISO);
       })
       .join("");
+    const filterMonth = monthLabelFromISO(filterDates[0] || todayISO) || "";
 
     const periodChips = SEARCH_PERIODS.map(function (period) {
       const on = selectedPeriods.indexOf(period.id) !== -1;
@@ -3429,7 +3481,10 @@
         <div class="search-filters__inner">
           ${subRow}
           <div class="search-filters__section">
-            <p class="search-filters__label">Dzień</p>
+            <div class="search-filters__label-row">
+              <p class="search-filters__label">Dzień</p>
+              <span class="search-filters__month" data-role="search-filter-month">${escapeHtml(filterMonth)}</span>
+            </div>
             <div class="filter-scroll filter-scroll--dates" data-filter-scroll>
               <div class="filter-scroll__track date-strip date-strip--filters">${dateChips}</div>
             </div>
@@ -12452,6 +12507,7 @@
       if (prevScreens) playScreenEnterAnim(prevScreens);
     });
     document.querySelectorAll('[data-role="booking-date-strip"]').forEach(updateBookingMonthLabel);
+    document.querySelectorAll(".filter-scroll--dates").forEach(updateSearchFilterMonthLabel);
     requestAnimationFrame(function () {
       const availGrid = document.querySelector('[data-role="avail-week-grid"]');
       if (availGrid) initAvailStripScroll(availGrid);
@@ -12544,6 +12600,10 @@
         }
         event.preventDefault();
         filterDrag.el.scrollLeft = filterDrag.startScroll - dx;
+        if (filterDrag.el.classList.contains("filter-scroll--dates")) {
+          updateSearchFilterMonthLabel(filterDrag.el);
+          ensureSearchFilterDatesExtended(filterDrag.el);
+        }
       },
       { capture: true, passive: false }
     );
@@ -12861,12 +12921,35 @@
     showToast("Plik kalendarza pobrany ✓");
   }
 
+  function applyFavButtons(slug, on) {
+    if (!slug) return;
+    const label = on ? "Usuń z ulubionych" : "Dodaj do ulubionych";
+    document.querySelectorAll('[data-action="toggle-fav"]').forEach(function (btn) {
+      if (btn.getAttribute("data-slug") !== slug) return;
+      if (btn.classList.contains("provider-card__fav")) {
+        btn.classList.toggle("provider-card__fav--on", on);
+      }
+      if (btn.classList.contains("fav-btn")) {
+        btn.classList.toggle("fav-btn--on", on);
+      }
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.setAttribute("aria-label", label);
+      btn.title = label;
+    });
+  }
+
   function toggleFav(slug) {
+    if (!slug) return;
     const i = window.AppState.favorites.indexOf(slug);
     if (i === -1) window.AppState.favorites.push(slug);
     else window.AppState.favorites.splice(i, 1);
     saveState();
-    renderAll();
+    // Na liście Ulubione trzeba przebudować karty; gdzie indziej tylko stan przycisku.
+    if (window.AppState.role === "client" && window.AppState.screen.client === "favorites") {
+      renderAll();
+      return;
+    }
+    applyFavButtons(slug, window.AppState.favorites.indexOf(slug) !== -1);
   }
 
   function toggleServiceDesc(serviceId) {
@@ -15003,6 +15086,11 @@
       if (!target || !target.closest) return;
       const bookingStrip = target.closest('[data-role="booking-date-strip"], [data-role="prov-cal-add-date-strip"]');
       if (bookingStrip) updateBookingMonthLabel(bookingStrip);
+      const filterDates = target.closest(".filter-scroll--dates");
+      if (filterDates) {
+        updateSearchFilterMonthLabel(filterDates);
+        ensureSearchFilterDatesExtended(filterDates);
+      }
       const availGrid = target.closest('[data-role="avail-week-grid"]');
       if (availGrid) handleAvailStripScroll(availGrid);
     },

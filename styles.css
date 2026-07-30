@@ -2573,6 +2573,13 @@ body.cancel-visit-dialog-open {
   min-width: 0;
 }
 
+.search-filters__label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .search-filters__label {
   margin: 0;
   font-size: 0.72rem;
@@ -2580,6 +2587,14 @@ body.cancel-visit-dialog-open {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+.search-filters__month {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--text);
+  white-space: nowrap;
 }
 
 .search-filters__empty {
@@ -5651,15 +5666,23 @@ body.service-photo-preview-open {
   padding-left: 0.15rem;
 }
 
-/* Desktop: wstecz po lewej na pełną wysokość, oddzielony separatorem */
+/* Desktop: wstecz po lewej + awatar na wysokość karty (jak lista) */
 @media (min-width: 900px) {
+  .app-screen--booking > .booking__provider-card .provider-card--booking-header {
+    column-gap: 0.75rem;
+    row-gap: 0.15rem;
+    padding: 0.8rem;
+  }
+
   .app-screen--booking > .booking__provider-card .provider-card--booking-header.provider-card--with-back {
     grid-template-columns: auto auto 1fr auto;
     grid-template-areas:
       "back avatar head menu"
       "back avatar details details";
-    column-gap: 0.55rem;
+    column-gap: 0.75rem;
+    row-gap: 0.15rem;
     align-items: stretch;
+    padding: 0.8rem 0.8rem 0.8rem 0;
   }
 
   .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__back {
@@ -5679,21 +5702,38 @@ body.service-photo-preview-open {
   }
 
   .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__head {
-    padding-left: 0;
+    padding: 0;
+  }
+
+  .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__menu-slot {
+    margin-right: 0;
   }
 
   .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__avatar {
     margin-left: 0;
+    align-self: stretch;
+    box-sizing: border-box;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    max-width: none;
+    max-height: none;
+    aspect-ratio: 1;
+    font-size: 1.35rem;
+    border-radius: 12px;
   }
 }
 
+.device-frame[data-view="desktop"] .app-screen--booking > .booking__provider-card .provider-card--booking-header,
 .device-frame[data-view="desktop"] .app-screen--booking > .booking__provider-card .provider-card--booking-header.provider-card--with-back {
   grid-template-columns: auto auto 1fr auto;
   grid-template-areas:
     "back avatar head menu"
     "back avatar details details";
-  column-gap: 0.55rem;
+  column-gap: 0.75rem;
+  row-gap: 0.15rem;
   align-items: stretch;
+  padding: 0.8rem 0.8rem 0.8rem 0;
 }
 
 .device-frame[data-view="desktop"] .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__back {
@@ -5709,8 +5749,26 @@ body.service-photo-preview-open {
   border-radius: 0;
 }
 
+.device-frame[data-view="desktop"] .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__head {
+  padding: 0;
+}
+
+.device-frame[data-view="desktop"] .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__menu-slot {
+  margin-right: 0;
+}
+
 .device-frame[data-view="desktop"] .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__avatar {
   margin-left: 0;
+  align-self: stretch;
+  box-sizing: border-box;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  aspect-ratio: 1;
+  font-size: 1.35rem;
+  border-radius: 12px;
 }
 
 .device-frame[data-view="mobile"] .app-screen--booking > .booking__provider-card .provider-card--booking-header.provider-card--with-back {
