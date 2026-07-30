@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.104";
+  const APP_VERSION = "1.0.105";
 
   const PWA = {
     registration: null,
@@ -4080,30 +4080,26 @@
       else openBook.push(s);
     });
 
-    function group(title, list, subtitle, mode) {
-      if (!list.length) return "";
-      const modeClass = mode ? " service-list__group--" + mode : "";
-      return `
-        <div class="service-list__group${modeClass}">
-          <div class="service-list__group-head">
-            <h4 class="service-list__group-title">${escapeHtml(title)}</h4>
-            ${
-              subtitle
-                ? `<p class="service-list__group-sub">${escapeHtml(subtitle)}</p>`
-                : ""
-            }
-          </div>
-          ${list
-            .map(function (s) {
-              return renderBookingServiceRow(p, s, selectedIds, draft, expandedIds);
-            })
-            .join("")}
-        </div>`;
+    function rowsHtml(list) {
+      return list
+        .map(function (s) {
+          return renderBookingServiceRow(p, s, selectedIds, draft, expandedIds);
+        })
+        .join("");
     }
 
-    const html =
-      group("Wybór terminu", openBook) +
-      group("Na prośbę o termin", approval, "", "approval");
+    // Jedna płaska lista — bez osobnych flex-grup, które rozpychają wolne miejsce.
+    let html = "";
+    if (openBook.length) {
+      html += `<div class="service-list__group-head">
+          <h4 class="service-list__group-title">Wybór terminu</h4>
+        </div>${rowsHtml(openBook)}`;
+    }
+    if (approval.length) {
+      html += `<div class="service-list__sep${openBook.length ? " service-list__sep--divider" : ""}">
+          <h4 class="service-list__group-title">Na prośbę o termin</h4>
+        </div>${rowsHtml(approval)}`;
+    }
     return html || `<p class="empty-note">Brak usług w ofercie.</p>`;
   }
 

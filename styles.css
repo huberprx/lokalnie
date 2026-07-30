@@ -4209,11 +4209,21 @@ body.avatar-preview-open {
   color: var(--text-muted);
 }
 
-/* „Na prośbę” — osobna sekcja za separatorem */
-.service-list__group--approval {
-  margin-top: 0.85rem;
-  padding-top: 0.85rem;
+/* „Na prośbę” — nagłówek w płaskiej liście (bez flex-grupy rozpychającej lukę) */
+.service-list__sep {
+  margin: 0;
+  padding: 0.15rem 0.05rem 0.35rem;
+}
+
+.service-list__sep--divider {
+  margin-top: 0.35rem;
+  padding-top: 0.65rem;
   border-top: 1px solid var(--border);
+}
+
+.booking-mobile .booking__services-list.service-list,
+.booking__services .booking__services-list.service-list {
+  display: block;
 }
 
 .service-row__mode {
@@ -4427,7 +4437,8 @@ body.avatar-preview-open {
   pointer-events: none;
 }
 
-.service-row--booking-b:last-child::after {
+.service-row--booking-b:last-child::after,
+.service-row--booking-b:has(+ .service-list__sep)::after {
   display: none;
 }
 
@@ -5555,12 +5566,12 @@ body.service-photo-preview-open {
   row-gap: 0.35rem;
   padding: 0 0 0.45rem;
   background: var(--surface-2);
+  align-items: stretch;
 }
 
 .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__head {
   padding: 0.35rem var(--app-pad-x);
   background: transparent;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
 }
 
 .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__avatar,
@@ -5569,10 +5580,17 @@ body.service-photo-preview-open {
   margin-left: 0;
 }
 
+/* Avatar = wysokość bloku godzin/adresu, z limitem */
 .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__avatar {
-  width: 2.25rem;
-  height: 2.25rem;
-  font-size: 0.82rem;
+  align-self: stretch;
+  box-sizing: border-box;
+  width: auto;
+  height: auto;
+  max-width: 3.25rem;
+  max-height: 3.25rem;
+  aspect-ratio: 1;
+  font-size: 1rem;
+  border-radius: 11px;
   margin-left: var(--app-pad-x);
 }
 
