@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.117";
+  const APP_VERSION = "1.0.125";
 
   const PWA = {
     registration: null,
@@ -777,7 +777,7 @@
       providerWrap.classList.toggle("booking__provider-card--info-open", infoOpen);
       providerWrap.innerHTML =
         renderProviderCard(p, false, { staticMain: true, bookingHeader: true, showBack: true }) +
-        (infoOpen ? renderBookingProviderInfoPanel(p) : "");
+        (infoOpen ? renderProviderInfoPopover(p) : "");
     }
 
     const mobileMain = screen.querySelector(".booking-mobile .booking__main");
@@ -1297,6 +1297,17 @@
     return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(address);
   }
 
+  /** Adres do nawigacji: główny adres firmy albo pierwsza lokalizacja z adresem. */
+  function providerNavAddress(p) {
+    if (!p) return "";
+    if (p.address) return String(p.address);
+    const locs = Array.isArray(p.locations) ? p.locations : [];
+    for (let i = 0; i < locs.length; i++) {
+      if (locs[i] && locs[i].address) return String(locs[i].address);
+    }
+    return "";
+  }
+
   function providerShareUrl(slug) {
     return location.origin + location.pathname + "#provider/" + slug;
   }
@@ -1640,33 +1651,41 @@
       </button>`;
   }
 
-  function renderProviderContactTiles(p) {
+  function renderProviderContactTiles(p, opts) {
+    opts = opts || {};
     ensureProviderContact(p);
     const phone = String(p.phone || "").replace(/\s/g, "");
     const navAddr = providerNavAddress(p);
     const tiles = [];
 
-    tiles.push(`<button type="button" class="provider-tile" data-action="provider-info-profile" data-slug="${escapeHtml(p.slug)}" title="Profil">
+    if (opts.actions !== false) {
+      tiles.push(`<button type="button" class="provider-tile" data-action="provider-info-profile" data-slug="${escapeHtml(p.slug)}" title="Profil">
         <span class="provider-tile__icon provider-tile__icon--profile" aria-hidden="true"></span><span class="provider-tile__label">Profil</span></button>`);
-    tiles.push(
-      phone
-        ? `<a class="provider-tile" href="tel:${escapeHtml(phone)}" title="Zadzwoń: ${escapeHtml(String(p.phone || ""))}">
+      tiles.push(
+        phone
+          ? `<a class="provider-tile" href="tel:${escapeHtml(phone)}" title="Zadzwoń: ${escapeHtml(String(p.phone || ""))}">
         <span class="provider-tile__icon provider-tile__icon--call" aria-hidden="true"></span><span class="provider-tile__label">Zadzwoń</span></a>`
-        : `<span class="provider-tile provider-tile--disabled" aria-disabled="true">
+          : `<span class="provider-tile provider-tile--disabled" aria-disabled="true">
         <span class="provider-tile__icon provider-tile__icon--call" aria-hidden="true"></span><span class="provider-tile__label">Zadzwoń</span></span>`
-    );
-    tiles.push(
-      navAddr
-        ? `<a class="provider-tile" href="${escapeHtml(mapsSearchUrl(navAddr))}" target="_blank" rel="noopener noreferrer" title="Nawiguj: ${escapeHtml(navAddr)}">
+      );
+      tiles.push(
+        navAddr
+          ? `<a class="provider-tile" href="${escapeHtml(mapsSearchUrl(navAddr))}" target="_blank" rel="noopener noreferrer" title="Nawiguj: ${escapeHtml(navAddr)}">
         <span class="provider-tile__icon provider-tile__icon--nav" aria-hidden="true"></span><span class="provider-tile__label">Nawiguj</span></a>`
-        : `<span class="provider-tile provider-tile--disabled" aria-disabled="true">
+          : `<span class="provider-tile provider-tile--disabled" aria-disabled="true">
         <span class="provider-tile__icon provider-tile__icon--nav" aria-hidden="true"></span><span class="provider-tile__label">Nawiguj</span></span>`
-    );
+      );
+    }
 
     providerSocialLinks(p).forEach(function (s) {
       tiles.push(`<a class="provider-tile" href="${escapeHtml(s.href)}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(s.label)}">
         <span class="provider-tile__icon provider-tile__icon--${escapeHtml(s.key)}" aria-hidden="true"></span><span class="provider-tile__label">${escapeHtml(s.label)}</span></a>`);
     });
+
+    if (opts.share) {
+      tiles.push(`<button type="button" class="provider-tile" data-action="share-provider" data-slug="${escapeHtml(p.slug)}" title="Udostępnij profil">
+        <span class="provider-tile__icon provider-tile__icon--share" aria-hidden="true"></span><span class="provider-tile__label">Udostępnij</span></button>`);
+    }
 
     return `<div class="provider-tiles" role="group" aria-label="Kontakt i linki">${tiles.join("")}</div>`;
   }
@@ -1743,6 +1762,108 @@
           ${renderProviderHoursSection(p)}
         </div>
       </div>`;
+  }
+
+  /** Pływające okno informacji o usługodawcy (wzorowane na karcie miejsca Google Maps). */
+  function renderProviderInfoPopover(p) {
+    ensureProviderContact(p);
+    const phone = String(p.phone || "").replace(/\s/g, "");
+    const email = providerPublicEmail(p);
+    const locs = (Array.isArray(p.locations) ? p.locations : []).filter(function (l) {
+      return l && (l.address || l.label);
+    });
+    const weekly = providerWeeklyHours(p);
+    const todayDow = new Date(demoTodayISO() + "T12:00:00").getDay();
+    const order = [1, 2, 3, 4, 5, 6, 0];
+    const closeAttrs = `data-action="toggle-booking-provider-info" data-slug="${escapeHtml(p.slug)}"`;
+
+    let addrRows = "";
+    if (locs.length) {
+      addrRows = locs
+        .map(function (l) {
+          const addr = String(l.address || "").trim();
+          const label = String(l.label || "Lokalizacja").trim();
+          const inner = `
+          <span class="provider-info-pop__loc-dot ${locationToneClass(p, l.id)}" aria-hidden="true"></span>
+          <span class="provider-info-pop__loc-text">
+            <span class="provider-info-pop__loc-label">${escapeHtml(label)}</span>
+            <span class="provider-info-pop__loc-addr">${escapeHtml(addr || "Adres wkrótce")}</span>
+          </span>`;
+          return addr
+            ? `<a class="provider-info-pop__loc" href="${escapeHtml(mapsSearchUrl(addr))}" target="_blank" rel="noopener noreferrer" title="Otwórz w Mapach Google: ${escapeHtml(addr)}">${inner}<span class="provider-info-pop__loc-go" aria-hidden="true"></span></a>`
+            : `<div class="provider-info-pop__loc provider-info-pop__loc--static">${inner}</div>`;
+        })
+        .join("");
+    } else if (p.address) {
+      const addr = String(p.address);
+      addrRows = `<a class="provider-info-pop__loc" href="${escapeHtml(mapsSearchUrl(addr))}" target="_blank" rel="noopener noreferrer" title="Otwórz w Mapach Google: ${escapeHtml(addr)}">
+          <span class="provider-info-pop__loc-text">
+            <span class="provider-info-pop__loc-addr">${escapeHtml(addr)}</span>
+          </span>
+          <span class="provider-info-pop__loc-go" aria-hidden="true"></span>
+        </a>`;
+    }
+    const addrSection = addrRows
+      ? `<div class="provider-info-pop__section">
+        <span class="provider-info-pop__ic provider-info-pop__ic--pin" aria-hidden="true"></span>
+        <div class="provider-info-pop__section-body">${addrRows}</div>
+      </div>`
+      : "";
+
+    const phoneSection = phone
+      ? `<div class="provider-info-pop__section">
+        <span class="provider-info-pop__ic provider-info-pop__ic--phone" aria-hidden="true"></span>
+        <a class="provider-info-pop__line provider-info-pop__line--link" href="tel:${escapeHtml(phone)}">${escapeHtml(String(p.phone))}</a>
+      </div>`
+      : "";
+
+    const emailSection = email
+      ? `<div class="provider-info-pop__section">
+        <span class="provider-info-pop__ic provider-info-pop__ic--mail" aria-hidden="true"></span>
+        <a class="provider-info-pop__line provider-info-pop__line--link" href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>
+      </div>`
+      : "";
+
+    const hoursRows = order
+      .map(function (dow) {
+        const blocks = weekly[dow] || [];
+        const isToday = dow === todayDow;
+        const time = blocks.length
+          ? blocks
+              .map(function (b) {
+                return b.from + "–" + b.to;
+              })
+              .join(" · ")
+          : "Zamknięte";
+        return `<div class="provider-info-pop__hours-row${isToday ? " provider-info-pop__hours-row--today" : ""}">
+        <span class="provider-info-pop__hours-day">${escapeHtml(WEEKDAYS_NOM[dow])}${isToday ? " · dziś" : ""}</span>
+        <span class="provider-info-pop__hours-time${blocks.length ? "" : " provider-info-pop__hours-time--closed"}">${escapeHtml(time)}</span>
+      </div>`;
+      })
+      .join("");
+
+    return `
+    <div class="provider-info-pop" role="dialog" aria-label="Informacje o ${escapeHtml(p.name)}">
+      <button type="button" class="provider-info-pop__backdrop" ${closeAttrs} tabindex="-1" aria-label="Zamknij informacje"></button>
+      <div class="provider-info-pop__card">
+        <div class="provider-info-pop__head">
+          <div class="provider-info-pop__title">
+            <p class="provider-info-pop__name">${escapeHtml(p.name)}</p>
+          </div>
+          <button type="button" class="provider-info-pop__close" ${closeAttrs} aria-label="Zamknij informacje" title="Zamknij"><span class="provider-info-pop__close-ic" aria-hidden="true"></span></button>
+        </div>
+        ${renderProviderContactTiles(p, { share: true, actions: false })}
+        <div class="provider-info-pop__body">
+          ${addrSection}
+          ${phoneSection}
+          ${emailSection}
+          <div class="provider-info-pop__section">
+            <span class="provider-info-pop__ic provider-info-pop__ic--clock" aria-hidden="true"></span>
+            <div class="provider-info-pop__section-body provider-info-pop__hours">${hoursRows}</div>
+          </div>
+        </div>
+      </div>
+    </div>`;
   }
 
   function closeBookingProviderInfo(opts) {
@@ -4585,7 +4706,7 @@
     const providerHead = `
         <div class="booking__provider-card${ctx.draft.providerInfoOpen ? " booking__provider-card--info-open" : ""}">
           ${renderProviderCard(p, false, { staticMain: true, bookingHeader: true, showBack: true })}
-          ${ctx.draft.providerInfoOpen ? renderBookingProviderInfoPanel(p) : ""}
+          ${ctx.draft.providerInfoOpen ? renderProviderInfoPopover(p) : ""}
         </div>`;
 
     return `
