@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.107";
+  const APP_VERSION = "1.0.108";
 
   const PWA = {
     registration: null,
@@ -1883,7 +1883,7 @@
     return `
       <div class="search-bar search-bar--mobile">
         <div class="search-bar__row search-bar__row--query">
-          <button type="button" class="search-bar__logo" data-action="go-home" aria-label="Lokalnie — strona główna">
+          <button type="button" class="search-bar__logo" data-action="go-home" aria-label="Lokalnie — marketplace">
             <img class="search-bar__logo-img" src="assets/icons/logo-1024.png" alt="" width="40" height="40" />
           </button>
           <label class="search-bar__segment search-bar__segment--query search-bar__segment--block">
@@ -3525,7 +3525,7 @@
             ${providers.length ? providers.map(function (p) { return renderProviderListItem(p, p.slug === openSlug); }).join("") : `<p class="empty-note">Brak wyników dla wybranych filtrów.</p>`}
           </div>
         </div>
-        ${bottomNav("search", { withHome: true })}
+        ${bottomNav("search")}
       </div>`;
   }
 
@@ -13647,6 +13647,19 @@
     }
   }
 
+  /** Wejście do marketplace (lista usługodawców) zamiast panelu głównego / odkryj. */
+  function goMarketplace() {
+    window.AppState.loggedIn = true;
+    window.AppState.activeRole = "client";
+    window.AppState.screen.client = "search";
+    window.AppState.searchOpenSlug = null;
+    window.AppState.appMenuOpen = false;
+    saveState();
+    updateAppHeader("client");
+    renderAll();
+    showPage("app");
+  }
+
   function handleRouteHash() {
     const hash = (location.hash || "").replace(/^#/, "");
     const embedMatch = hash.match(/^embed\/(.+)$/);
@@ -13697,10 +13710,9 @@
       ];
     }
     const screen = window.AppState.screen.client;
-    const onHome = screen === "search" || screen === "booking" || screen === "profile";
+    const onMarket = screen === "search" || screen === "booking" || screen === "profile";
     return [
-      { label: "Strona główna", action: "go-screen", screen: "search", active: !menuOpen && onHome },
-      { label: "Szukaj", action: "go-screen", screen: "search", active: false },
+      { label: "Szukaj", action: "go-screen", screen: "search", active: !menuOpen && onMarket },
       { label: "Ulubione", action: "go-screen", screen: "favorites", active: !menuOpen && screen === "favorites" },
       { label: "Kalendarz", action: "go-screen", screen: "myCalendar", active: !menuOpen && screen === "myCalendar" },
     ];
@@ -13796,7 +13808,7 @@
     window.AppState.loggedIn = false;
     window.AppState.activeRole = null;
     saveState();
-    showSimulator();
+    goMarketplace();
   }
 
   function closeAppMenuThen(fn) {
@@ -14075,6 +14087,9 @@
       case "open-my-calendar": event.preventDefault(); openMyCalendar(); break;
       case "logout": logout(); break;
       case "go-home":
+        event.preventDefault();
+        goMarketplace();
+        break;
       case "show-simulator":
         event.preventDefault();
         showSimulator();
@@ -16709,9 +16724,11 @@
     bindAvailTimePickers();
     loadState();
     renderAll();
-    showPage("home");
     if (window.AppState.loggedIn && window.AppState.activeRole) {
       updateAppHeader(window.AppState.activeRole);
+      showPage("app");
+    } else {
+      goMarketplace();
     }
     handleRouteHash();
     bindPwaInstallPrompt();
