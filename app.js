@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.88";
+  const APP_VERSION = "1.0.89";
 
   const PWA = {
     registration: null,
@@ -1757,7 +1757,11 @@
       ? `<button type="button" class="provider-card__back" data-action="close-provider" aria-label="Wróć"><span class="provider-card__back-icon" aria-hidden="true"></span></button>`
       : "";
 
-    const infoOpen = !!(window.AppState.draft && window.AppState.draft.providerInfoOpen);
+    const infoOpen = !!(
+      window.AppState.draft &&
+      window.AppState.draft.providerInfoOpen &&
+      (isOpen || opts.bookingHeader)
+    );
     const favBtn = `<button type="button" class="provider-card__action provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__action-icon provider-card__fav-icon" aria-hidden="true"></span></button>`;
     const infoAction = opts.bookingHeader ? "toggle-booking-provider-info" : "toggle-provider-card-info";
     const infoBtn = `<button type="button" class="provider-card__action provider-card__info${infoOpen ? " provider-card__info--open" : ""}" data-action="${infoAction}" data-slug="${escapeHtml(p.slug)}" aria-expanded="${infoOpen ? "true" : "false"}" aria-controls="booking-provider-info" aria-label="Informacje o ${escapeHtml(p.name)}" title="Informacje"><span class="provider-card__action-icon provider-card__info-icon" aria-hidden="true"></span></button>`;
@@ -1768,9 +1772,13 @@
       : isOpen
         ? infoBtn + menuBtn
         : menuBtn;
+    const openAttrs =
+      opts.staticMain || opts.bookingHeader
+        ? ""
+        : ` data-action="open-provider" data-slug="${escapeHtml(p.slug)}" role="link" tabindex="0"`;
 
     return `
-      <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}${opts.staticMain ? " provider-card--static" : ""}${opts.showBack ? " provider-card--with-back" : ""}${infoOpen ? " provider-card--info-open" : ""}">
+      <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}${opts.staticMain ? " provider-card--static" : ""}${opts.showBack ? " provider-card--with-back" : ""}${infoOpen ? " provider-card--info-open" : ""}${openAttrs ? " provider-card--clickable" : ""}"${openAttrs}>
         <div class="provider-card__head">
           ${backHtml}
           ${nameHtml}
@@ -4394,17 +4402,20 @@
     const ctx = buildBookingContext(p);
     if (!ctx) return renderSearch();
     const isApproval = draftBookingMode(p) === "approval";
+    // Nagłówek poza .booking-mobile — na desktopie ten blok jest ukrywany,
+    // a bez karty usługodawcy ekran rezerwacji wygląda na „pusty”.
+    const providerHead = `
+        <div class="booking__provider-card${ctx.draft.providerInfoOpen ? " booking__provider-card--info-open" : ""}">
+          ${renderProviderCard(p, false, { staticMain: true, bookingHeader: true, showBack: true })}
+          ${ctx.draft.providerInfoOpen ? renderBookingProviderInfoPanel(p) : ""}
+        </div>`;
 
     return `
       <div class="app-screen app-screen--client app-screen--booking" data-booking-mode="${isApproval ? "approval" : "auto"}">
+        ${providerHead}
         <div class="booking-mobile">
           <div class="booking booking--mobile-split">
             <div class="booking__main">
-              <div class="booking__provider-card${ctx.draft.providerInfoOpen ? " booking__provider-card--info-open" : ""}">
-                ${renderProviderCard(p, false, { staticMain: true, bookingHeader: true, showBack: true })}
-                ${ctx.draft.providerInfoOpen ? renderBookingProviderInfoPanel(p) : ""}
-              </div>
-
               ${renderServicesPanelHead(p, ctx.draft, { mobile: true })}
               <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
             </div>
@@ -12570,7 +12581,8 @@
 
   function openProvider(slug, opts) {
     opts = opts || {};
-    if (window.AppState.closingProvider) return;
+    // Nie blokuj otwarcia, jeśli animacja zamykania utknęła.
+    window.AppState.closingProvider = false;
     const p = getProviderBySlug(slug);
     if (!p) return;
 
@@ -12594,12 +12606,7 @@
       }
     }
     window.AppState.params.client = { slug: slug };
-
-    // Zawsze pełny ekran rezerwacji — ten sam UX na wąskim podglądzie i szerokim desktopie.
-    // (Wcześniej desktop tylko rozwijał panel pod kartą na liście.)
-    if (clientUsesDesktopBookingLayout() && !opts.embed) {
-      window.AppState.draft.providerInfoOpen = true;
-    }
+    window.AppState.activeRole = "client";
     window.AppState.searchOpenSlug = null;
     window.AppState.screen.client = "booking";
 
