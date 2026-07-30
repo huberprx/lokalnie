@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.87";
+  const APP_VERSION = "1.0.88";
 
   const PWA = {
     registration: null,
@@ -2404,6 +2404,7 @@
     const withHome = !!opts.withHome || backOnSearch;
     const items = [
       { tab: "search", label: "Szukaj", icon: "search" },
+      { tab: "favorites", label: "Ulubione", icon: "heart" },
       { tab: "myCalendar", label: "Kalendarz", icon: "calendar" },
       { tab: "account", label: "Menu", icon: "profile", menu: true },
     ];
@@ -12573,16 +12574,6 @@
     const p = getProviderBySlug(slug);
     if (!p) return;
 
-    if (
-      !opts.force &&
-      clientUsesDesktopBookingLayout() &&
-      window.AppState.searchOpenSlug === slug &&
-      (window.AppState.screen.client === "search" || window.AppState.screen.client === "favorites")
-    ) {
-      closeProvider();
-      return;
-    }
-
     initDraftForProvider(p);
     const preferredIds = Array.isArray(opts.serviceIds) ? opts.serviceIds.filter(Boolean) : [];
     if (preferredIds.length) {
@@ -12604,20 +12595,13 @@
     }
     window.AppState.params.client = { slug: slug };
 
-    if (opts.embed) {
-      window.AppState.searchOpenSlug = null;
-      window.AppState.screen.client = "booking";
-    } else if (clientUsesDesktopBookingLayout()) {
-      // Desktop: od razu pokaż kafelki kontakt/social pod kartą.
+    // Zawsze pełny ekran rezerwacji — ten sam UX na wąskim podglądzie i szerokim desktopie.
+    // (Wcześniej desktop tylko rozwijał panel pod kartą na liście.)
+    if (clientUsesDesktopBookingLayout() && !opts.embed) {
       window.AppState.draft.providerInfoOpen = true;
-      window.AppState.searchOpenSlug = slug;
-      window.AppState.screen.client =
-        window.AppState.screen.client === "favorites" ? "favorites" : "search";
-      window.AppState.bookingPanelEnterSlug = slug;
-    } else {
-      window.AppState.searchOpenSlug = null;
-      window.AppState.screen.client = "booking";
     }
+    window.AppState.searchOpenSlug = null;
+    window.AppState.screen.client = "booking";
 
     saveState();
     renderAll();
@@ -13586,6 +13570,7 @@
     return [
       { label: "Strona główna", action: "go-screen", screen: "search", active: !menuOpen && onHome },
       { label: "Szukaj", action: "go-screen", screen: "search", active: false },
+      { label: "Ulubione", action: "go-screen", screen: "favorites", active: !menuOpen && screen === "favorites" },
       { label: "Kalendarz", action: "go-screen", screen: "myCalendar", active: !menuOpen && screen === "myCalendar" },
     ];
   }
