@@ -148,8 +148,8 @@
           name: "Combo: włosy + broda",
           durationMin: 45,
           price: 85,
-          bookingMode: "approval",
-          subtitle: "Strzyżenie i pełna stylizacja brody — termin po uzgodnieniu",
+          bookingMode: "queue",
+          subtitle: "Strzyżenie i pełna stylizacja brody",
           photos: ["assets/services/svc-combo.jpg", "assets/services/svc-beard.jpg"],
         },
         {
@@ -157,7 +157,8 @@
           name: "Skin fade",
           durationMin: 35,
           price: 70,
-          subtitle: "Precyzyjny fade z boków i karku",
+          bookingMode: "approval",
+          subtitle: "Precyzyjny fade z boków i karku — termin po uzgodnieniu",
           photos: ["assets/services/svc-fade.jpg"],
           variants: [
             { id: "svc-gb-4-std", durationMin: 35, price: 70, label: "Classic" },

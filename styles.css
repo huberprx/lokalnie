@@ -3327,9 +3327,27 @@ body.avatar-preview-open {
 }
 
 .provider-card__meta {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.28rem;
   font-size: 0.75rem;
   color: var(--accent-client);
   font-weight: 500;
+}
+
+.provider-card__dow {
+  flex-shrink: 0;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.provider-card__meta-sep {
+  opacity: 0.55;
+}
+
+.provider-card__hours {
+  min-width: 0;
 }
 
 .provider-card__addr {
@@ -4191,11 +4209,22 @@ body.avatar-preview-open {
   color: var(--text-muted);
 }
 
+/* „Na prośbę” — osobna sekcja za separatorem */
+.service-list__group--approval {
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
 .service-row__mode {
   display: inline-block;
   margin-top: 0.2rem;
   font-size: 0.7rem;
   font-weight: 650;
+  color: var(--accent-provider);
+}
+
+.service-row__mode--auto {
   color: var(--accent-provider);
 }
 
@@ -4207,15 +4236,6 @@ body.avatar-preview-open {
   color: var(--accent-client, #5b8def);
 }
 
-.time-row__queue {
-  display: inline-block;
-  margin-top: 0.1rem;
-  font-size: 0.68rem;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--accent-client, #5b8def);
-}
 
 .service-list {
   display: flex;

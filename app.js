@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.90";
+  const APP_VERSION = "1.0.104";
 
   const PWA = {
     registration: null,
@@ -748,9 +748,7 @@
                 <span class="booking__month" data-role="booking-mobile-month">${escapeHtml(monthLabelFromISO(ctx.activeDate || ctx.availDates[0]))}</span>
               </div>
               <div class="date-strip date-strip--booking" data-role="booking-date-strip">${renderDateStripHtml(ctx.availDates, ctx.activeDate)}</div>
-              <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>${
-                draftBookingMode(p) === "queue" ? "Kolejka" : "Wolne terminy"
-              }</h3>
+              <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>Wolne terminy</h3>
               <div class="time-list time-list--horizontal" data-role="booking-mobile-times"${ctx.activeDate ? "" : " hidden"}>${
                 ctx.activeDate
                   ? ctx.timeListMobile || `<p class="empty-note">${escapeHtml(bookingTimesEmptyNote(p))}</p>`
@@ -783,7 +781,7 @@
     if (ctx.activeDate) {
       if (timeLabel) {
         timeLabel.hidden = false;
-        timeLabel.textContent = draftBookingMode(p) === "queue" ? "Kolejka" : "Wolne terminy";
+        timeLabel.textContent = "Wolne terminy";
       }
       if (timeList) {
         timeList.hidden = false;
@@ -1747,12 +1745,37 @@
     providerCardMenuTrigger = trigger;
   }
 
+  function formatDayShortLabel(dateISO) {
+    const d = new Date((dateISO || demoTodayISO()) + "T12:00:00");
+    const w = WEEKDAYS[d.getDay()] || "";
+    return w ? String(w).toUpperCase() : "";
+  }
+
+  function formatProviderCardHours(hours) {
+    return String(hours || "")
+      .split(/\s*,\s*/)
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  function renderProviderCardHoursMeta(p) {
+    const hours = p.openHoursToday || "";
+    if (!hours) return "";
+    if (hours === "Brak grafiku" || hours === "Zamknięte dziś") {
+      return `<span class="provider-card__meta">${escapeHtml(hours)}</span>`;
+    }
+    const day = formatDayShortLabel(demoTodayISO());
+    const hoursLabel = formatProviderCardHours(hours);
+    return `<span class="provider-card__meta">
+              ${day ? `<span class="provider-card__dow">${escapeHtml(day)}</span><span class="provider-card__meta-sep" aria-hidden="true">·</span>` : ""}
+              <span class="provider-card__hours">${escapeHtml(hoursLabel)}</span>
+            </span>`;
+  }
+
   function renderProviderCard(p, isOpen, opts) {
     opts = opts || {};
     const fav = window.AppState.favorites.indexOf(p.slug) !== -1;
     const dist = p.address ? p.distanceKm.toFixed(1) + " km" : "Online";
-    const hours = p.openHoursToday || "";
-    const metaLine = hours || "";
     const addrLine = p.address ? p.address + " · " + dist : dist;
 
     const nameHtml = opts.staticMain
@@ -1761,7 +1784,7 @@
 
     const detailsInner = `
             ${opts.bookingHeader ? "" : `<span class="provider-card__cat">${escapeHtml(providerCategoryLine(p))}</span>`}
-            ${metaLine ? `<span class="provider-card__meta">${escapeHtml(metaLine)}</span>` : ""}
+            ${renderProviderCardHoursMeta(p)}
             <span class="provider-card__addr">${escapeHtml(addrLine)}</span>`;
 
     const detailsBlock = opts.staticMain
@@ -1947,20 +1970,26 @@
 
   function bookingModeLabel(mode) {
     if (mode === "approval") return "Na prośbę o termin";
-    if (mode === "queue") return "Kolejka bez luk";
-    return "Automatyczne potwierdzenie";
+    if (mode === "queue") return "Automatyczne potwierdzenie — kolejka";
+    return "Wybór terminu";
+  }
+
+  function bookingModeDescription(mode) {
+    if (mode === "approval") {
+      return "Klient zaznacza pasujące dni i porę dnia → Ty proponujesz godziny w jego dostępności → klient wybiera jedną → wizyta ląduje w kalendarzu";
+    }
+    if (mode === "queue") {
+      return "Klient widzi tylko pierwszy wolny termin — a jeśli masz kilka dostępności w dniu, po jednym na każdą";
+    }
+    return "Klient sam wybiera godzinę — po rezerwacji wizyta zapisuje się u Ciebie i u niego w kalendarzu";
   }
 
   function bookingTimesPanelTitle(provider, activeDate) {
-    const queue = draftBookingMode(provider) === "queue";
-    const base = queue ? "Kolejka" : "Wolne terminy";
-    return activeDate ? base + " · " + formatDateLong(activeDate) : base;
+    return activeDate ? "Wolne terminy · " + formatDateLong(activeDate) : "Wolne terminy";
   }
 
   function bookingTimesEmptyNote(provider) {
-    return draftBookingMode(provider) === "queue"
-      ? "Brak miejsca w kolejce tego dnia."
-      : "Brak wolnych godzin tego dnia.";
+    return "Brak wolnych godzin tego dnia.";
   }
 
   /** Brak locationIds / pusta lista = usługa we wszystkich lokalizacjach. */
@@ -4043,20 +4072,19 @@
     ensureDraftServiceVariants(draft);
     ensureServicesBookingMode(p);
 
-    const auto = [];
-    const queue = [];
+    // Klient: kolejka wygląda jak zwykły wybór terminu; osobno tylko „na prośbę”.
+    const openBook = [];
     const approval = [];
     (p.services || []).forEach(function (s) {
-      const mode = serviceBookingMode(s, p);
-      if (mode === "approval") approval.push(s);
-      else if (mode === "queue") queue.push(s);
-      else auto.push(s);
+      if (serviceBookingMode(s, p) === "approval") approval.push(s);
+      else openBook.push(s);
     });
 
-    function group(title, list, subtitle) {
+    function group(title, list, subtitle, mode) {
       if (!list.length) return "";
+      const modeClass = mode ? " service-list__group--" + mode : "";
       return `
-        <div class="service-list__group">
+        <div class="service-list__group${modeClass}">
           <div class="service-list__group-head">
             <h4 class="service-list__group-title">${escapeHtml(title)}</h4>
             ${
@@ -4074,17 +4102,8 @@
     }
 
     const html =
-      group("Automatyczne potwierdzenie", auto) +
-      group(
-        "Kolejka bez luk",
-        queue,
-        "Dostajesz następny wolny termin w bloku dostępności — bez dziur w grafiku."
-      ) +
-      group(
-        "Na prośbę o termin",
-        approval,
-        "Wskaż pasujące dni, a usługodawca odeśle kilka godzin do wyboru."
-      );
+      group("Wybór terminu", openBook) +
+      group("Na prośbę o termin", approval, "", "approval");
     return html || `<p class="empty-note">Brak usług w ofercie.</p>`;
   }
 
@@ -4250,15 +4269,10 @@
     opts = opts || {};
     const mobile = !!opts.mobile;
     const provider = draft && draft.slug ? getProviderBySlug(draft.slug) : null;
-    const queueMode = provider && draftBookingMode(provider) === "queue";
     return slots
       .map(function (s) {
         const range = `${escapeHtml(s.from)}→${escapeHtml(s.to)}`;
         const placeHtml = renderTimeSlotPlace(provider, s);
-        const queueHint =
-          queueMode || s.queue
-            ? `<span class="time-row__queue">Kolejka</span>`
-            : "";
         if (mobile) {
           const selected = draft && draft.slotId === s.id;
           return `
@@ -4266,7 +4280,6 @@
           aria-label="Wybierz ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${selected ? "true" : "false"}">
           <span class="time-row__info">
             <span class="time-row__range">${range}</span>
-            ${queueHint}
             ${placeHtml}
           </span>
         </button>`;
@@ -4275,7 +4288,6 @@
         <div class="time-row">
           <div class="time-row__info">
             <span class="time-row__range">${range}</span>
-            ${queueHint}
             ${placeHtml}
           </div>
           <button type="button" class="btn btn--primary btn--sm time-row__btn" data-action="book-slot" data-slot="${escapeHtml(s.id)}">Rezeruj</button>
@@ -4544,9 +4556,7 @@
               </div>
               <div class="date-strip date-strip--booking" data-role="booking-date-strip">${renderDateStripHtml(ctx.availDates, ctx.activeDate)}</div>
 
-              <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>${
-                  draftBookingMode(p) === "queue" ? "Kolejka" : "Wolne terminy"
-                }</h3>
+              <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>Wolne terminy</h3>
               <div class="time-list time-list--horizontal" data-role="booking-mobile-times"${ctx.activeDate ? "" : " hidden"}>${
                 ctx.activeDate
                   ? ctx.timeListMobile || `<p class="empty-note">${escapeHtml(bookingTimesEmptyNote(p))}</p>`
@@ -9803,28 +9813,28 @@
           <div class="service-edit__mode-list" data-role="service-booking-mode-panel">
             <div class="settings-contact__toggle service-edit__mode-toggle">
               <div class="settings__toggle-text">
-                <span class="settings__hint">Automatyczne potwierdzenie</span>
-                <span class="settings-contact__toggle-hint">Klient wybiera termin z kalendarza</span>
+                <span class="settings__hint">Wybór terminu</span>
+                <span class="settings-contact__toggle-hint">${escapeHtml(bookingModeDescription("auto"))}</span>
               </div>
-              <label class="settings__toggle" title="Automatyczne potwierdzenie">
+              <label class="settings__toggle" title="Wybór terminu">
                 <input type="checkbox" class="avail-edit__switch" data-role="service-booking-mode-switch"
-                  data-mode="auto" ${mode === "auto" ? "checked" : ""} aria-label="Automatyczne potwierdzenie" />
+                  data-mode="auto" ${mode === "auto" ? "checked" : ""} aria-label="Wybór terminu" />
               </label>
             </div>
             <div class="settings-contact__toggle service-edit__mode-toggle">
               <div class="settings__toggle-text">
-                <span class="settings__hint">Kolejka bez luk</span>
-                <span class="settings-contact__toggle-hint">Klient dostaje następny termin w bloku — bez dziur; przerwy z dostępności = osobne kolejki</span>
+                <span class="settings__hint">Automatyczne potwierdzenie — kolejka</span>
+                <span class="settings-contact__toggle-hint">${escapeHtml(bookingModeDescription("queue"))}</span>
               </div>
-              <label class="settings__toggle" title="Kolejka bez luk">
+              <label class="settings__toggle" title="Automatyczne potwierdzenie — kolejka">
                 <input type="checkbox" class="avail-edit__switch" data-role="service-booking-mode-switch"
-                  data-mode="queue" ${mode === "queue" ? "checked" : ""} aria-label="Kolejka bez luk" />
+                  data-mode="queue" ${mode === "queue" ? "checked" : ""} aria-label="Automatyczne potwierdzenie — kolejka" />
               </label>
             </div>
             <div class="settings-contact__toggle service-edit__mode-toggle">
               <div class="settings__toggle-text">
                 <span class="settings__hint">Na prośbę o termin</span>
-                <span class="settings-contact__toggle-hint">Klient prosi — Ty proponujesz wolny slot</span>
+                <span class="settings-contact__toggle-hint">${escapeHtml(bookingModeDescription("approval"))}</span>
               </div>
               <label class="settings__toggle" title="Na prośbę o termin">
                 <input type="checkbox" class="avail-edit__switch" data-role="service-booking-mode-switch"
