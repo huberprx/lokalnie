@@ -1,0 +1,34 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "lokalnie-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-07-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "APP_ORIGIN": "https://lokalnie.app",
+    "ENVIRONMENT": "production"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lokalnie-db",
+      "database_id": "833c1b79-0ee3-4843-a4ae-5ae00ccd15d9",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "lokalnie-media" }
+  ],
+  "routes": [
+    {
+      "pattern": "api.lokalnie.app",
+      "custom_domain": true
+    }
+  ]
+}

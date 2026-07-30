@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.86";
+  const APP_VERSION = "1.0.87";
 
   const PWA = {
     registration: null,
@@ -6515,6 +6515,9 @@
     } else if (typeof client.address !== "string") {
       client.address = "";
     }
+    if (window.LokalnieApi && window.LokalnieApi.enabled) {
+      void window.LokalnieApi.upsertClient(providerId, client);
+    }
     return client;
   }
 
@@ -8668,6 +8671,33 @@
     renderAll();
     hapticTap(22);
     showToast(editing ? "Termin zapisany ✓" : "Termin dodany ✓");
+    if (window.LokalnieApi && window.LokalnieApi.enabled && booking) {
+      if (!editing || !booking._fromApi) {
+        void window.LokalnieApi.createBookingFromApp(booking).then(function () {
+          if (booking.id) {
+            window.AppState.provCalSelection = normalizeProvCalSelection({
+              kind: "booking",
+              bookingId: booking.id,
+              dateISO: booking.dateISO,
+              fromMin: timeToMinutes(booking.from),
+              toMin: timeToMinutes(booking.to),
+            });
+          }
+          saveState();
+        });
+      } else {
+        void window.LokalnieApi.request("/bookings/" + encodeURIComponent(booking.id), {
+          method: "PATCH",
+          json: {
+            status: booking.status,
+            dateISO: booking.dateISO,
+            from: booking.from,
+            to: booking.to,
+            locationLabel: booking.locationLabel,
+          },
+        }).catch(function () {});
+      }
+    }
   }
 
   function renderProvCalAddPanel() {
@@ -12945,11 +12975,14 @@
     }
 
     const svcs = draftServices(p);
+    const cp = ensureClientProfile();
     const booking = {
       id: "bk-" + Date.now(),
       providerId: p.id,
       providerName: p.name,
-      clientName: ensureClientProfile().name || "Klient",
+      clientName: cp.name || "Klient",
+      clientPhone: cp.phone || "",
+      clientEmail: cp.email || "",
       serviceIds: svcs.map((s) => s.id),
       serviceNames: svcs.map((s) => s.name),
       dateISO: draft.dateISO,
@@ -12967,6 +13000,11 @@
     saveState();
     renderAll();
     showToast("Rezerwacja potwierdzona ✓");
+    if (window.LokalnieApi && window.LokalnieApi.enabled) {
+      void window.LokalnieApi.createBookingFromApp(booking).then(function () {
+        saveState();
+      });
+    }
   }
 
   function toggleRequestDay(dateISO) {
@@ -13011,12 +13049,15 @@
       return;
     }
     const svcs = draftServices(p);
-    const clientName = ensureClientProfile().name || "Klient";
+    const cp = ensureClientProfile();
+    const clientName = cp.name || "Klient";
     const req = {
       id: "rq-" + Date.now(),
       providerId: p.id,
       providerName: p.name,
       clientName: clientName,
+      clientPhone: cp.phone || "",
+      clientEmail: cp.email || "",
       serviceIds: svcs.map((s) => s.id),
       serviceNames: svcs.map((s) => s.name),
       days: days,
@@ -13025,6 +13066,11 @@
       status: "pending",
     };
     window.AppState.requests.push(req);
+    if (window.LokalnieApi && window.LokalnieApi.enabled) {
+      void window.LokalnieApi.createRequestFromApp(req).then(function () {
+        saveState();
+      });
+    }
 
     // Widoczne u klienta jako "oczekująca" wizyta bez terminu
     window.AppState.bookings.push({
@@ -13206,6 +13252,11 @@
     saveState();
     renderAll();
     showToast(`Wysłano ${req.proposals.length} ${proposalCountLabel(req.proposals.length)} klientowi.`);
+    if (window.LokalnieApi && window.LokalnieApi.enabled) {
+      void window.LokalnieApi.proposeRequestFromApp(req).then(function () {
+        saveState();
+      });
+    }
   }
 
   function acceptProposal(bookingId) {
@@ -13275,6 +13326,15 @@
     saveState();
     renderAll();
     showToast("Termin zarezerwowany ✓");
+    if (window.LokalnieApi && window.LokalnieApi.enabled) {
+      void window.LokalnieApi.acceptRequestFromApp(req.id, prop.id).then(function (res) {
+        if (res && res.booking && bk) {
+          bk.id = res.booking.id;
+          bk._fromApi = true;
+          saveState();
+        }
+      });
+    }
   }
 
   function declineRequestProposals(requestId) {
@@ -13679,18 +13739,37 @@
       showToast("Zdjęcie jest za duże (max 2,5 MB).");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = function () {
-      window.AppState.clientAvatarUrl = String(reader.result || "");
-      window.AppState.appMenuOpen = true;
-      saveState();
-      renderAll();
-      showToast("Zdjęcie profilu zaktualizowane.");
-    };
-    reader.onerror = function () {
-      showToast("Nie udało się wczytać zdjęcia.");
-    };
-    reader.readAsDataURL(file);
+
+    function applyLocalPreview() {
+      const reader = new FileReader();
+      reader.onload = function () {
+        window.AppState.clientAvatarUrl = String(reader.result || "");
+        window.AppState.appMenuOpen = true;
+        saveState();
+        renderAll();
+        showToast("Zdjęcie profilu zaktualizowane.");
+      };
+      reader.onerror = function () {
+        showToast("Nie udało się wczytać zdjęcia.");
+      };
+      reader.readAsDataURL(file);
+    }
+
+    if (window.LokalnieApi && window.LokalnieApi.enabled) {
+      void window.LokalnieApi.uploadAvatar(file).then(function (url) {
+        if (url) {
+          window.AppState.clientAvatarUrl = url;
+          window.AppState.appMenuOpen = true;
+          saveState();
+          renderAll();
+          showToast("Zdjęcie profilu zapisane na serwerze.");
+          return;
+        }
+        applyLocalPreview();
+      });
+      return;
+    }
+    applyLocalPreview();
   }
 
   window.App = {
@@ -16521,6 +16600,15 @@
     handleRouteHash();
     bindPwaInstallPrompt();
     registerServiceWorker();
+
+    if (window.LokalnieApi && window.LokalnieApi.enabled) {
+      void window.LokalnieApi.syncFromServer().then(function (result) {
+        if (result && result.ok) {
+          saveState();
+          renderAll();
+        }
+      });
+    }
 
     window.matchMedia("(min-width: 900px)").addEventListener("change", function () {
       renderAll();

@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+.dev.vars
+*.local
+.DS_Store
+dist/
+.deploy-args.json
+.deploy-parts/

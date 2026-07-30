@@ -1,14 +1,32 @@
 # Lokalnie
 
-Komunikator do rezerwacji usług lokalnych — podgląd interfejsu.
+Komunikator do rezerwacji usług lokalnych — podgląd interfejsu + szkielet API na Cloudflare.
 
-## Uruchomienie
+## Frontend (prototyp)
 
 Otwórz `index.html` w przeglądarce lub uruchom lokalny serwer:
 
 ```bash
 python3 -m http.server 8080
 ```
+
+## Backend API (Cloudflare Workers Free)
+
+- URL: https://api.lokalnie.app
+- Kod: katalog [`worker/`](worker/)
+- Health: https://api.lokalnie.app/health
+- Auth demo: nagłówek `X-Demo-User: demo`
+- Frontend (`api.js`) synchronizuje CRM, rezerwacje, prośby i awatar z API
+- Działa: CRM klientów, rezerwacje, prośby o termin, upload zdjęć (R2), kolejka maili
+
+```bash
+cd worker
+npm install
+npx wrangler login
+npm run deploy
+```
+
+Szczegóły: [`worker/README.md`](worker/README.md).
 
 ## Kalendarz Google
 
