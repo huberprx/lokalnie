@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.106";
+  const APP_VERSION = "1.0.107";
 
   const PWA = {
     registration: null,
@@ -12939,18 +12939,7 @@
       draft.serviceIds = ids;
     }
     draft.slotId = null;
-    if (!draft.serviceIds.length) {
-      window.AppState.searchOpenSlug = null;
-      saveState();
-      if (clientUsesDesktopBookingLayout()) {
-        closeProvider();
-      } else if (window.AppState.screen.client === "booking") {
-        if (!refreshBookingDraftUI()) renderAll();
-      } else {
-        renderAll();
-      }
-      return;
-    }
+    // Pusty wybór = zostajemy w panelu (nie zamykamy usługodawcy).
     saveState();
     if (!refreshBookingDraftUI()) renderAll();
   }

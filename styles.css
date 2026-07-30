@@ -4536,10 +4536,12 @@ span.service-variant-chip {
 }
 
 .service-row--booking-b .service-row__check--radio {
-  width: 2rem;
-  height: 2rem;
+  width: 44px;
+  height: 44px;
   margin: 0;
   flex-shrink: 0;
+  border-radius: 50%;
+  transition: background 0.15s ease;
 }
 
 .service-row--booking-b .service-row__check--radio .service-row__check-visual {
@@ -4563,9 +4565,17 @@ span.service-variant-chip {
   transform: rotate(-45deg);
 }
 
+.service-row--booking-b .service-row__check--radio:hover {
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+}
+
 .service-row--booking-b .service-row__check--radio:hover .service-row__check-visual {
   opacity: 1;
   border-color: var(--accent-client);
+}
+
+.service-row--booking-b .service-row__check--radio.service-row__check--on:hover {
+  background: color-mix(in srgb, var(--accent-client) 12%, transparent);
 }
 
 .service-row--booking-b .service-row__check--radio.service-row__check--on .service-row__check-visual {
