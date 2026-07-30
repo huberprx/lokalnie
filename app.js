@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.89";
+  const APP_VERSION = "1.0.90";
 
   const PWA = {
     registration: null,
@@ -549,9 +549,13 @@
       if (times) {
         const timesScroll = (times.querySelector(".time-list--vertical") || {}).scrollTop || 0;
         times.innerHTML = `
-        <h3 class="booking__panel-label">${ctx.activeDate ? `Wolne terminy · ${escapeHtml(formatDateLong(ctx.activeDate))}` : "Wolne terminy"}</h3>
+        <h3 class="booking__panel-label">${escapeHtml(bookingTimesPanelTitle(p, ctx.activeDate))}</h3>
         <div class="time-list time-list--vertical">
-          ${ctx.activeDate ? ctx.timeList || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>` : `<p class="empty-note">Wybierz dzień w kalendarzu.</p>`}
+          ${
+            ctx.activeDate
+              ? ctx.timeList || `<p class="empty-note">${escapeHtml(bookingTimesEmptyNote(p))}</p>`
+              : `<p class="empty-note">Wybierz dzień w kalendarzu.</p>`
+          }
         </div>`;
         restoreScrollTop(times.querySelector(".time-list--vertical"), timesScroll);
       }
@@ -744,8 +748,14 @@
                 <span class="booking__month" data-role="booking-mobile-month">${escapeHtml(monthLabelFromISO(ctx.activeDate || ctx.availDates[0]))}</span>
               </div>
               <div class="date-strip date-strip--booking" data-role="booking-date-strip">${renderDateStripHtml(ctx.availDates, ctx.activeDate)}</div>
-              <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>Wolne terminy</h3>
-              <div class="time-list time-list--horizontal" data-role="booking-mobile-times"${ctx.activeDate ? "" : " hidden"}>${ctx.activeDate ? ctx.timeListMobile || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>` : ""}</div>
+              <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>${
+                draftBookingMode(p) === "queue" ? "Kolejka" : "Wolne terminy"
+              }</h3>
+              <div class="time-list time-list--horizontal" data-role="booking-mobile-times"${ctx.activeDate ? "" : " hidden"}>${
+                ctx.activeDate
+                  ? ctx.timeListMobile || `<p class="empty-note">${escapeHtml(bookingTimesEmptyNote(p))}</p>`
+                  : ""
+              }</div>
             </div>`;
         updateBookingBottomNav(screen, ctx.draft);
         return;
@@ -773,11 +783,12 @@
     if (ctx.activeDate) {
       if (timeLabel) {
         timeLabel.hidden = false;
-        timeLabel.textContent = "Wolne terminy";
+        timeLabel.textContent = draftBookingMode(p) === "queue" ? "Kolejka" : "Wolne terminy";
       }
       if (timeList) {
         timeList.hidden = false;
-        timeList.innerHTML = ctx.timeListMobile || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>`;
+        timeList.innerHTML =
+          ctx.timeListMobile || `<p class="empty-note">${escapeHtml(bookingTimesEmptyNote(p))}</p>`;
         timeList.scrollLeft = timeScrollLeft;
       }
     } else {
@@ -1200,9 +1211,13 @@
         </section>
 
         <aside class="booking__times">
-          <h3 class="booking__panel-label">${ctx.activeDate ? `Wolne terminy · ${escapeHtml(formatDateLong(ctx.activeDate))}` : "Wolne terminy"}</h3>
+          <h3 class="booking__panel-label">${escapeHtml(bookingTimesPanelTitle(p, ctx.activeDate))}</h3>
           <div class="time-list time-list--vertical">
-            ${ctx.activeDate ? ctx.timeList || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>` : `<p class="empty-note">Wybierz dzień w kalendarzu.</p>`}
+            ${
+              ctx.activeDate
+                ? ctx.timeList || `<p class="empty-note">${escapeHtml(bookingTimesEmptyNote(p))}</p>`
+                : `<p class="empty-note">Wybierz dzień w kalendarzu.</p>`
+            }
           </div>
         </aside>`
         }
@@ -1887,10 +1902,17 @@
     return "loc-tone-" + locationToneIndex(provider, locId);
   }
 
-  /** Tryb rezerwacji oferty: auto | approval (fallback: stary bookingMode profilu). */
+  /** Normalizuje tryb oferty: auto | approval | queue. */
+  function normalizeBookingMode(mode) {
+    if (mode === "approval" || mode === "queue") return mode;
+    return "auto";
+  }
+
+  /** Tryb rezerwacji oferty: auto | approval | queue (fallback: stary bookingMode profilu). */
   function serviceBookingMode(service, provider) {
-    if (service && service.bookingMode === "approval") return "approval";
-    if (service && service.bookingMode === "auto") return "auto";
+    if (service && (service.bookingMode === "approval" || service.bookingMode === "queue" || service.bookingMode === "auto")) {
+      return service.bookingMode;
+    }
     return provider && provider.bookingMode === "approval" ? "approval" : "auto";
   }
 
@@ -1899,7 +1921,9 @@
     const fallback = provider.bookingMode === "approval" ? "approval" : "auto";
     provider.services.forEach(function (s) {
       if (!s || typeof s !== "object") return;
-      if (s.bookingMode !== "auto" && s.bookingMode !== "approval") s.bookingMode = fallback;
+      if (s.bookingMode !== "auto" && s.bookingMode !== "approval" && s.bookingMode !== "queue") {
+        s.bookingMode = fallback;
+      }
     });
   }
 
@@ -1908,13 +1932,35 @@
     const ids = (draft && draft.serviceIds) || [];
     if (!provider || !ids.length) return "auto";
     ensureServicesBookingMode(provider);
+    let sawQueue = false;
     for (let i = 0; i < ids.length; i++) {
       const svc = (provider.services || []).find(function (s) {
         return s && s.id === ids[i];
       });
-      if (svc && serviceBookingMode(svc, provider) === "approval") return "approval";
+      if (!svc) continue;
+      const mode = serviceBookingMode(svc, provider);
+      if (mode === "approval") return "approval";
+      if (mode === "queue") sawQueue = true;
     }
-    return "auto";
+    return sawQueue ? "queue" : "auto";
+  }
+
+  function bookingModeLabel(mode) {
+    if (mode === "approval") return "Na prośbę o termin";
+    if (mode === "queue") return "Kolejka bez luk";
+    return "Automatyczne potwierdzenie";
+  }
+
+  function bookingTimesPanelTitle(provider, activeDate) {
+    const queue = draftBookingMode(provider) === "queue";
+    const base = queue ? "Kolejka" : "Wolne terminy";
+    return activeDate ? base + " · " + formatDateLong(activeDate) : base;
+  }
+
+  function bookingTimesEmptyNote(provider) {
+    return draftBookingMode(provider) === "queue"
+      ? "Brak miejsca w kolejce tego dnia."
+      : "Brak wolnych godzin tego dnia.";
   }
 
   /** Brak locationIds / pusta lista = usługa we wszystkich lokalizacjach. */
@@ -1959,6 +2005,7 @@
     const opts = Object.assign({}, extra || {});
     const allowed = allowedLocationIdsForServices(provider, serviceIds);
     if (allowed) opts.allowedLocationIds = allowed;
+    if (draftBookingMode(provider) === "queue") opts.mode = "queue";
     return opts;
   }
 
@@ -2314,6 +2361,7 @@
     opts = opts || {};
     const exceptBookingId = opts.exceptBookingId || null;
     const ignoreLead = !!opts.ignoreLead;
+    const queueMode = opts.mode === "queue";
     const allowedLocs = opts.allowedLocationIds
       ? opts.allowedLocationIds instanceof Set
         ? opts.allowedLocationIds
@@ -2351,6 +2399,60 @@
       const bStart = timeToMin(block.from);
       const bEnd = timeToMin(block.to);
       const locKey = block.locationId || "na";
+
+      // Kolejka bez luk: w każdym bloku dostępności tylko następny termin zaraz po
+      // ostatniej zajętości od początku bloku (osobna kolejka na przerwę w grafiku).
+      if (queueMode) {
+        const blockBusy = busy
+          .map(function (iv) {
+            return [Math.max(iv[0], bStart), Math.min(iv[1], bEnd)];
+          })
+          .filter(function (iv) {
+            return iv[0] < iv[1];
+          })
+          .sort(function (a, b) {
+            return a[0] - b[0];
+          });
+        let cursor = bStart;
+        function advanceQueueCursor(fromMin) {
+          let c = fromMin;
+          let moved = true;
+          while (moved) {
+            moved = false;
+            for (let i = 0; i < blockBusy.length; i++) {
+              const iv = blockBusy[i];
+              if (iv[0] <= c && iv[1] > c) {
+                c = iv[1];
+                moved = true;
+              } else if (iv[0] > c) {
+                break;
+              }
+            }
+          }
+          return c;
+        }
+        // Najpierw zapełnij od początku bloku, potem uwzględnij min. wyprzedzenie.
+        cursor = advanceQueueCursor(cursor);
+        if (cursor < nowMin) cursor = advanceQueueCursor(nowMin);
+        if (cursor + totalDurationMin <= bEnd) {
+          const e = cursor + totalDurationMin;
+          const overlaps = busy.some(function (iv) {
+            return cursor < iv[1] && e > iv[0];
+          });
+          if (!overlaps) {
+            slots.push({
+              id: "slot-" + dateISO + "-" + cursor + "-" + locKey,
+              from: minToTime(cursor),
+              to: minToTime(e),
+              locationId: block.locationId,
+              locationLabel: locationLabel(provider, block.locationId),
+              queue: true,
+            });
+          }
+        }
+        return;
+      }
+
       for (let s = bStart; s + totalDurationMin <= bEnd; s += 15) {
         if (s < nowMin) continue;
         const e = s + totalDurationMin;
@@ -3934,7 +4036,7 @@
       </article>`;
   }
 
-  /** Lista ofert — grupy: automatyczne potwierdzenie / na prośbę o termin. */
+  /** Lista ofert — grupy: auto / kolejka / na prośbę. */
   function renderBookingServiceRows(p, selectedIds) {
     const draft = window.AppState.draft;
     const expandedIds = (draft && draft.expandedServiceIds) || [];
@@ -3942,9 +4044,12 @@
     ensureServicesBookingMode(p);
 
     const auto = [];
+    const queue = [];
     const approval = [];
     (p.services || []).forEach(function (s) {
-      if (serviceBookingMode(s, p) === "approval") approval.push(s);
+      const mode = serviceBookingMode(s, p);
+      if (mode === "approval") approval.push(s);
+      else if (mode === "queue") queue.push(s);
       else auto.push(s);
     });
 
@@ -3969,9 +4074,11 @@
     }
 
     const html =
+      group("Automatyczne potwierdzenie", auto) +
       group(
-        "Automatyczne potwierdzenie",
-        auto
+        "Kolejka bez luk",
+        queue,
+        "Dostajesz następny wolny termin w bloku dostępności — bez dziur w grafiku."
       ) +
       group(
         "Na prośbę o termin",
@@ -4143,10 +4250,15 @@
     opts = opts || {};
     const mobile = !!opts.mobile;
     const provider = draft && draft.slug ? getProviderBySlug(draft.slug) : null;
+    const queueMode = provider && draftBookingMode(provider) === "queue";
     return slots
       .map(function (s) {
         const range = `${escapeHtml(s.from)}→${escapeHtml(s.to)}`;
         const placeHtml = renderTimeSlotPlace(provider, s);
+        const queueHint =
+          queueMode || s.queue
+            ? `<span class="time-row__queue">Kolejka</span>`
+            : "";
         if (mobile) {
           const selected = draft && draft.slotId === s.id;
           return `
@@ -4154,6 +4266,7 @@
           aria-label="Wybierz ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${selected ? "true" : "false"}">
           <span class="time-row__info">
             <span class="time-row__range">${range}</span>
+            ${queueHint}
             ${placeHtml}
           </span>
         </button>`;
@@ -4162,6 +4275,7 @@
         <div class="time-row">
           <div class="time-row__info">
             <span class="time-row__range">${range}</span>
+            ${queueHint}
             ${placeHtml}
           </div>
           <button type="button" class="btn btn--primary btn--sm time-row__btn" data-action="book-slot" data-slot="${escapeHtml(s.id)}">Rezeruj</button>
@@ -4430,8 +4544,14 @@
               </div>
               <div class="date-strip date-strip--booking" data-role="booking-date-strip">${renderDateStripHtml(ctx.availDates, ctx.activeDate)}</div>
 
-              <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>Wolne terminy</h3>
-              <div class="time-list time-list--horizontal" data-role="booking-mobile-times"${ctx.activeDate ? "" : " hidden"}>${ctx.activeDate ? ctx.timeListMobile || `<p class="empty-note">Brak wolnych godzin tego dnia.</p>` : ""}</div>
+              <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>${
+                  draftBookingMode(p) === "queue" ? "Kolejka" : "Wolne terminy"
+                }</h3>
+              <div class="time-list time-list--horizontal" data-role="booking-mobile-times"${ctx.activeDate ? "" : " hidden"}>${
+                ctx.activeDate
+                  ? ctx.timeListMobile || `<p class="empty-note">${escapeHtml(bookingTimesEmptyNote(p))}</p>`
+                  : ""
+              }</div>
             </div>`
             }
           </div>
@@ -9470,11 +9590,9 @@
   function readServiceEditBookingMode(form) {
     if (!form) return "auto";
     const hidden = form.querySelector('[data-role="service-booking-mode-value"]');
-    if (hidden && (hidden.value === "approval" || hidden.value === "auto")) return hidden.value;
+    if (hidden) return normalizeBookingMode(hidden.value);
     const on = form.querySelector('[data-role="service-booking-mode-switch"]:checked');
-    if (on && (on.getAttribute("data-mode") === "approval" || on.getAttribute("data-mode") === "auto")) {
-      return on.getAttribute("data-mode");
-    }
+    if (on) return normalizeBookingMode(on.getAttribute("data-mode"));
     return "auto";
   }
 
@@ -9658,7 +9776,7 @@
     const serviceId = isNew ? "__new__" : s.id;
     const photos = getEditServicePhotos();
     const variants = normalizeEditVariants(s);
-    const mode = s.bookingMode === "approval" ? "approval" : "auto";
+    const mode = normalizeBookingMode(s.bookingMode);
     const head = hideBack
       ? `<header class="screen-head">
           <h2 class="screen-head__title">${isNew ? "Nowa usługa" : "Edytuj usługę"}</h2>
@@ -9695,6 +9813,16 @@
             </div>
             <div class="settings-contact__toggle service-edit__mode-toggle">
               <div class="settings__toggle-text">
+                <span class="settings__hint">Kolejka bez luk</span>
+                <span class="settings-contact__toggle-hint">Klient dostaje następny termin w bloku — bez dziur; przerwy z dostępności = osobne kolejki</span>
+              </div>
+              <label class="settings__toggle" title="Kolejka bez luk">
+                <input type="checkbox" class="avail-edit__switch" data-role="service-booking-mode-switch"
+                  data-mode="queue" ${mode === "queue" ? "checked" : ""} aria-label="Kolejka bez luk" />
+              </label>
+            </div>
+            <div class="settings-contact__toggle service-edit__mode-toggle">
+              <div class="settings__toggle-text">
                 <span class="settings__hint">Na prośbę o termin</span>
                 <span class="settings-contact__toggle-hint">Klient prosi — Ty proponujesz wolny slot</span>
               </div>
@@ -9725,7 +9853,7 @@
         const defId = defaultServiceVariantId(s);
         const resolved = resolveServiceVariant(s, defId);
         const mode = serviceBookingMode(s, p);
-        const modeLabel = mode === "approval" ? "Na prośbę o termin" : "Automatyczne potwierdzenie";
+        const modeLabel = bookingModeLabel(mode);
         const locLabel = serviceLocationSummary(s, p);
         const selected = editId && editId === s.id;
         return `
@@ -9951,10 +10079,9 @@
     const durationMin = Math.round(first.durationMin);
     const price = first.price;
 
-    const bookingMode =
-      String((form.elements.bookingMode && form.elements.bookingMode.value) || "auto") === "approval"
-        ? "approval"
-        : "auto";
+    const bookingMode = normalizeBookingMode(
+      (form.elements.bookingMode && form.elements.bookingMode.value) || readServiceEditBookingMode(form)
+    );
 
     const locIdsRaw = readServiceEditLocationIds(form);
     const validLocIds = ensureProviderLocations(p).map(function (l) {
@@ -12173,7 +12300,7 @@
   function setServiceBookingMode(mode, fromEl) {
     withServiceEditScroll(fromEl, function (form) {
       if (!form) return;
-      const next = mode === "approval" ? "approval" : "auto";
+      const next = normalizeBookingMode(mode);
       const hidden = form.querySelector('[data-role="service-booking-mode-value"]') || form.elements.bookingMode;
       if (hidden) hidden.value = next;
       form.querySelectorAll('[data-role="service-booking-mode-switch"]').forEach(function (sw) {
@@ -12790,8 +12917,10 @@
         });
         showToast(
           nextMode === "approval"
-            ? "Oferty na prośbę — usunięto automatyczne z koszyka."
-            : "Oferty automatyczne — usunięto prośby z koszyka."
+            ? "Oferty na prośbę — usunięto inne tryby z koszyka."
+            : nextMode === "queue"
+              ? "Oferty w kolejce — usunięto inne tryby z koszyka."
+              : "Oferty automatyczne — usunięto inne tryby z koszyka."
         );
         ids = compatible;
       }
@@ -14773,9 +14902,9 @@
 
     const bookingModeSwitch = event.target.closest('[data-role="service-booking-mode-switch"]');
     if (bookingModeSwitch) {
-      const picked = bookingModeSwitch.getAttribute("data-mode") === "approval" ? "approval" : "auto";
-      // Włączenie jednej opcji wyłącza drugą; wyłączenie aktywnej przełącza na drugą.
-      const next = bookingModeSwitch.checked ? picked : picked === "approval" ? "auto" : "approval";
+      const picked = normalizeBookingMode(bookingModeSwitch.getAttribute("data-mode"));
+      // Jedna opcja aktywna naraz; wyłączenie wraca do automatycznego.
+      const next = bookingModeSwitch.checked ? picked : "auto";
       setServiceBookingMode(next, bookingModeSwitch);
       return;
     }

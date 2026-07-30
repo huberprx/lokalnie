@@ -87,7 +87,7 @@
 
   // --- Providerzy (6–8). „Grzesiu Barber" wiodący. ---
   // Wymagane: min. 1 oferta bookingMode:'approval', min. 1 bez address, min. 1 visibleInSearch:false.
-  // bookingMode na poziomie usługi (auto | approval); stary bookingMode profilu = fallback.
+  // bookingMode na poziomie usługi (auto | approval | queue); stary bookingMode profilu = fallback.
   const PROVIDERS = [
     {
       id: "grzesiu-barber",
@@ -133,8 +133,9 @@
           name: "Strzyżenie brody",
           durationMin: 20,
           price: 40,
+          bookingMode: "queue",
           subtitle: "Modelowanie i wyrównanie linii brody",
-          description: "Modelowanie i wyrównanie linii brody. Strzyżenie nadmiaru, konturowanie i olejek po goleniu.",
+          description: "Modelowanie i wyrównanie linii brody. Strzyżenie nadmiaru, konturowanie i olejek po goleniu. Rezerwacja w kolejce — następny wolny termin w bloku dostępności.",
           photos: ["assets/services/svc-beard.jpg"],
           variants: [
             { id: "svc-gb-2-quick", durationMin: 15, price: 35, label: "Szybkie" },
@@ -355,16 +356,37 @@
   // Tygodniowe grafiki dostępności → generujemy konkretne dni na okno ~2 tyg.
   // dow: 0=nd, 1=pon … 6=sob.
   const WEEKLY = {
+    // 3 bloki z przerwami → w trybie „kolejka” klient widzi do 3 osobnych kolejek na dzień.
     "grzesiu-barber": {
-      1: [{ from: "10:00", to: "18:00", locationId: "loc-gb-1", recurring: true }],
-      2: [{ from: "10:00", to: "18:00", locationId: "loc-gb-1", recurring: true }],
-      3: [{ from: "10:00", to: "18:00", locationId: "loc-gb-1", recurring: true }],
-      4: [{ from: "10:00", to: "18:00", locationId: "loc-gb-1", recurring: true }],
-      5: [
-        { from: "10:00", to: "14:00", locationId: "loc-gb-1", recurring: true },
-        { from: "15:00", to: "19:00", locationId: "loc-gb-2", recurring: false },
+      1: [
+        { from: "10:00", to: "12:00", locationId: "loc-gb-1", recurring: true },
+        { from: "12:30", to: "14:30", locationId: "loc-gb-1", recurring: true },
+        { from: "15:30", to: "18:00", locationId: "loc-gb-1", recurring: true },
       ],
-      6: [{ from: "10:00", to: "14:00", locationId: "loc-gb-1", recurring: true }],
+      2: [
+        { from: "10:00", to: "12:00", locationId: "loc-gb-1", recurring: true },
+        { from: "12:30", to: "14:30", locationId: "loc-gb-1", recurring: true },
+        { from: "15:30", to: "18:00", locationId: "loc-gb-1", recurring: true },
+      ],
+      3: [
+        { from: "10:00", to: "12:00", locationId: "loc-gb-1", recurring: true },
+        { from: "12:30", to: "14:30", locationId: "loc-gb-1", recurring: true },
+        { from: "15:30", to: "18:00", locationId: "loc-gb-1", recurring: true },
+      ],
+      4: [
+        { from: "10:00", to: "12:00", locationId: "loc-gb-1", recurring: true },
+        { from: "12:30", to: "14:30", locationId: "loc-gb-1", recurring: true },
+        { from: "15:30", to: "18:00", locationId: "loc-gb-1", recurring: true },
+      ],
+      5: [
+        { from: "10:00", to: "12:00", locationId: "loc-gb-1", recurring: true },
+        { from: "12:30", to: "14:30", locationId: "loc-gb-1", recurring: true },
+        { from: "15:30", to: "19:00", locationId: "loc-gb-2", recurring: false },
+      ],
+      6: [
+        { from: "10:00", to: "12:00", locationId: "loc-gb-1", recurring: true },
+        { from: "12:30", to: "14:00", locationId: "loc-gb-1", recurring: true },
+      ],
     },
     "studio-bella": {
       1: [{ from: "09:00", to: "17:00", locationId: "loc-sb-1", recurring: true }],
@@ -455,8 +477,8 @@
       serviceIds: ["svc-gb-6"],
       serviceNames: ["Golenie brzytwą"],
       dateISO: DEMO_TODAY_ISO,
-      from: "12:00",
-      to: "12:10",
+      from: "12:30",
+      to: "12:40",
       locationLabel: "Studio główne",
       status: "confirmed",
       side: "client",
@@ -469,8 +491,8 @@
       serviceIds: ["svc-gb-3"],
       serviceNames: ["Combo: włosy + broda"],
       dateISO: DEMO_TODAY_ISO,
-      from: "14:00",
-      to: "14:45",
+      from: "13:00",
+      to: "13:45",
       locationLabel: "Studio główne",
       status: "confirmed",
       side: "client",

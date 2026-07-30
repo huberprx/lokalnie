@@ -4203,6 +4203,20 @@ body.avatar-preview-open {
   color: var(--warning, #c9851a);
 }
 
+.service-row__mode--queue {
+  color: var(--accent-client, #5b8def);
+}
+
+.time-row__queue {
+  display: inline-block;
+  margin-top: 0.1rem;
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent-client, #5b8def);
+}
+
 .service-list {
   display: flex;
   flex-direction: column;
