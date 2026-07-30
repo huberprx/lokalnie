@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.108";
+  const APP_VERSION = "1.0.109";
 
   const PWA = {
     registration: null,
@@ -1817,8 +1817,9 @@
 
     return `
       <div class="provider-card${isOpen ? " provider-card--open" : ""}${opts.bookingHeader ? " provider-card--booking-header" : ""}${opts.staticMain ? " provider-card--static" : ""}${opts.showBack ? " provider-card--with-back" : ""}${infoOpen ? " provider-card--info-open" : ""}${openAttrs ? " provider-card--clickable" : ""}"${openAttrs}>
+        ${opts.bookingHeader ? backHtml : ""}
         <div class="provider-card__head">
-          ${backHtml}
+          ${opts.bookingHeader ? "" : backHtml}
           ${nameHtml}
           <div class="provider-card__toolbar">
             ${favBtn}

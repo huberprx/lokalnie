@@ -3383,7 +3383,7 @@ body.avatar-preview-open {
       "avatar head menu"
       "avatar details details";
     row-gap: 0.15rem;
-    align-items: center;
+    align-items: stretch;
   }
 
   .provider-card__head {
@@ -3398,8 +3398,16 @@ body.avatar-preview-open {
     align-self: start;
   }
 
-  .provider-card__avatar {
-    align-self: start;
+  /* Avatar na pełną wysokość karty (padding góra = dół = bok) */
+  .provider-list .provider-card__avatar {
+    align-self: stretch;
+    box-sizing: border-box;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    aspect-ratio: 1;
+    font-size: 1.35rem;
+    border-radius: 12px;
   }
 }
 
@@ -3409,16 +3417,26 @@ body.avatar-preview-open {
     "avatar head menu"
     "avatar details details";
   row-gap: 0.15rem;
-  align-items: center;
+  align-items: stretch;
 }
 
 .device-frame[data-view="desktop"] .provider-card__menu-slot {
   align-self: center;
 }
 
-.device-frame[data-view="desktop"] .provider-card__details,
-.device-frame[data-view="desktop"] .provider-card__avatar {
+.device-frame[data-view="desktop"] .provider-card__details {
   align-self: start;
+}
+
+.device-frame[data-view="desktop"] .provider-list .provider-card__avatar {
+  align-self: stretch;
+  box-sizing: border-box;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  aspect-ratio: 1;
+  font-size: 1.35rem;
+  border-radius: 12px;
 }
 
 .device-frame[data-view="mobile"] .provider-card {
@@ -5609,15 +5627,97 @@ body.service-photo-preview-open {
   margin-right: var(--app-pad-x);
 }
 
-.app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__back {
-  margin-left: -0.2rem;
-}
-
 .app-screen--booking > .booking__provider-card .provider-card__info-panel {
   left: 0;
   right: 0;
   width: 100%;
   box-sizing: border-box;
+}
+
+/* Booking: wstecz jako własna kolumna siatki */
+.app-screen--booking > .booking__provider-card .provider-card--booking-header.provider-card--with-back {
+  grid-template-columns: auto auto 1fr auto;
+  grid-template-areas:
+    "back head head head"
+    "avatar details details menu";
+}
+
+.app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__back {
+  grid-area: back;
+  margin: 0 0 0 0.15rem;
+}
+
+.app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__head {
+  padding-left: 0.15rem;
+}
+
+/* Desktop: wstecz po lewej na pełną wysokość, oddzielony separatorem */
+@media (min-width: 900px) {
+  .app-screen--booking > .booking__provider-card .provider-card--booking-header.provider-card--with-back {
+    grid-template-columns: auto auto 1fr auto;
+    grid-template-areas:
+      "back avatar head menu"
+      "back avatar details details";
+    column-gap: 0.55rem;
+    align-items: stretch;
+  }
+
+  .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__back {
+    align-self: stretch;
+    justify-self: stretch;
+    width: 2.75rem;
+    height: auto;
+    min-height: 44px;
+    margin: 0 0 0 0.35rem;
+    padding: 0 0.5rem 0 0.15rem;
+    border-right: 1px solid var(--border);
+    border-radius: 0;
+  }
+
+  .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__back:hover {
+    background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+  }
+
+  .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__head {
+    padding-left: 0;
+  }
+
+  .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__avatar {
+    margin-left: 0;
+  }
+}
+
+.device-frame[data-view="desktop"] .app-screen--booking > .booking__provider-card .provider-card--booking-header.provider-card--with-back {
+  grid-template-columns: auto auto 1fr auto;
+  grid-template-areas:
+    "back avatar head menu"
+    "back avatar details details";
+  column-gap: 0.55rem;
+  align-items: stretch;
+}
+
+.device-frame[data-view="desktop"] .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__back {
+  grid-area: back;
+  align-self: stretch;
+  justify-self: stretch;
+  width: 2.75rem;
+  height: auto;
+  min-height: 44px;
+  margin: 0 0 0 0.35rem;
+  padding: 0 0.5rem 0 0.15rem;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.device-frame[data-view="desktop"] .app-screen--booking > .booking__provider-card .provider-card--booking-header .provider-card__avatar {
+  margin-left: 0;
+}
+
+.device-frame[data-view="mobile"] .app-screen--booking > .booking__provider-card .provider-card--booking-header.provider-card--with-back {
+  grid-template-columns: auto auto 1fr auto;
+  grid-template-areas:
+    "back head head head"
+    "avatar details details menu";
 }
 
 .provider-card--clickable {
