@@ -6254,13 +6254,76 @@ button.provider-info-pop__line {
   flex-direction: column;
   justify-content: space-between;
   align-items: center;
-  min-height: 0.7rem;
+  /* Jak Google Calendar: krótkie sloty mają min. wysokość na 1 linię tekstu. */
+  min-height: 1.2rem;
   padding: 0.28rem 0 0.14rem;
   box-sizing: border-box;
   border-radius: 6px;
   background: color-mix(in srgb, var(--loc) 38%, var(--surface));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--loc) 28%, transparent);
   overflow: hidden;
+  z-index: 1;
+}
+
+.provider-hours-week__slot--short {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  border: none;
+  font: inherit;
+  color: inherit;
+  justify-content: center;
+  padding: 0.08rem 0;
+  min-height: 1.25rem;
+  z-index: 2;
+  cursor: pointer;
+  transition:
+    min-height 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    padding 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.2s ease;
+}
+
+.provider-hours-week__slot--short:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--loc) 55%, transparent);
+  outline-offset: 1px;
+}
+
+.provider-hours-week__slot--short .provider-hours-week__slot-time {
+  margin-top: 0;
+  font-size: 0.64rem;
+}
+
+/* Koniec ukryty, aż peek (klik) rozwinie slot. */
+.provider-hours-week__slot--short .provider-hours-week__slot-time--end {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transform: translateY(-2px);
+  transition:
+    max-height 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.22s ease,
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.provider-hours-week__slot--short.is-peek {
+  justify-content: space-between;
+  min-height: 2.75rem;
+  padding: 0.28rem 0 0.16rem;
+  z-index: 6;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--loc) 34%, transparent),
+    0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.provider-hours-week__slot--short.is-peek .provider-hours-week__slot-time--end {
+  max-height: 1.2rem;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.provider-hours-week__track:has(.provider-hours-week__slot.is-peek) {
+  overflow: visible;
+  z-index: 4;
 }
 
 .provider-hours-week__slot-time {
@@ -6273,8 +6336,15 @@ button.provider-info-pop__line {
   letter-spacing: -0.01em;
 }
 
-.provider-hours-week__slot-time:first-child {
+.provider-hours-week__slot:not(.provider-hours-week__slot--short) .provider-hours-week__slot-time:first-child {
   margin-top: 0.08rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .provider-hours-week__slot--short,
+  .provider-hours-week__slot--short .provider-hours-week__slot-time--end {
+    transition: none;
+  }
 }
 
 .provider-hours-week__closed-mark {

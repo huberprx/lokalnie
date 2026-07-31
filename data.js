@@ -6,9 +6,10 @@
   "use strict";
 
   // Dzisiejsza data w prototypie: 16 lipca 2026 (czwartek).
-  // Availability generujemy na ~3 miesiące — mobilny strip dat da się przewijać dalej.
-  const WINDOW_START = Date.UTC(2026, 6, 16); // 2026-07-16
-  const WINDOW_DAYS = 90;
+  // Availability od poniedziałku tego tygodnia (13.07), żeby „Dostępności” miały pełny tydzień.
+  // Okno ~3 miesiące — mobilny strip dat da się przewijać dalej.
+  const WINDOW_START = Date.UTC(2026, 6, 13); // 2026-07-13 (pn)
+  const WINDOW_DAYS = 93;
 
   function pad(n) {
     return String(n).padStart(2, "0");
@@ -368,25 +369,28 @@
         { from: "10:00", to: "12:00", locationId: "loc-gb-1", recurring: true },
         { from: "12:30", to: "14:30", locationId: "loc-gb-1", recurring: true },
         { from: "15:30", to: "18:00", locationId: "loc-gb-1", recurring: true },
+        // Krótki slot — do testu peeka w podglądzie tygodnia
+        { from: "18:15", to: "18:45", locationId: "loc-gb-1", recurring: true },
       ],
       3: [
         { from: "10:00", to: "12:00", locationId: "loc-gb-1", recurring: true },
-        { from: "12:30", to: "14:30", locationId: "loc-gb-1", recurring: true },
+        { from: "14:00", to: "14:30", locationId: "loc-gb-1", recurring: true },
         { from: "15:30", to: "18:00", locationId: "loc-gb-1", recurring: true },
       ],
       4: [
         { from: "10:00", to: "12:00", locationId: "loc-gb-1", recurring: true },
-        { from: "12:30", to: "14:30", locationId: "loc-gb-1", recurring: true },
+        { from: "12:30", to: "13:00", locationId: "loc-gb-1", recurring: true },
         { from: "15:30", to: "18:00", locationId: "loc-gb-1", recurring: true },
       ],
       5: [
         { from: "10:00", to: "12:00", locationId: "loc-gb-1", recurring: true },
-        { from: "12:30", to: "14:30", locationId: "loc-gb-1", recurring: true },
+        { from: "12:30", to: "13:00", locationId: "loc-gb-1", recurring: true },
         { from: "15:30", to: "19:00", locationId: "loc-gb-2", recurring: false },
       ],
       6: [
         { from: "10:00", to: "12:00", locationId: "loc-gb-1", recurring: true },
-        { from: "12:30", to: "14:00", locationId: "loc-gb-1", recurring: true },
+        { from: "12:30", to: "13:00", locationId: "loc-gb-1", recurring: true },
+        { from: "16:00", to: "16:20", locationId: "loc-gb-1", recurring: true },
       ],
     },
     "studio-bella": {

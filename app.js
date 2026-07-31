@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.142";
+  const APP_VERSION = "1.0.143";
 
   const PWA = {
     registration: null,
@@ -1845,6 +1845,39 @@
     return aM + " " + a.getFullYear();
   }
 
+  /** Timer peeka krótkiego slotu w podglądzie tygodnia — jeden naraz. */
+  let hoursWeekPeekTimer = null;
+
+  function collapseHoursWeekSlotPeek(slot) {
+    if (!slot) return;
+    slot.classList.remove("is-peek");
+    slot.setAttribute("aria-expanded", "false");
+  }
+
+  /** Klik w krótki slot: na chwilę pokaż godzinę końca, potem zwiń. */
+  function peekHoursWeekSlot(slot) {
+    if (!slot || !slot.classList.contains("provider-hours-week__slot--short")) return;
+    document.querySelectorAll(".provider-hours-week__slot.is-peek").forEach(function (el) {
+      if (el !== slot) collapseHoursWeekSlotPeek(el);
+    });
+    if (hoursWeekPeekTimer) {
+      clearTimeout(hoursWeekPeekTimer);
+      hoursWeekPeekTimer = null;
+    }
+    // Ponowny klik w otwarty — zwiń od razu.
+    if (slot.classList.contains("is-peek")) {
+      collapseHoursWeekSlotPeek(slot);
+      return;
+    }
+    slot.classList.add("is-peek");
+    slot.setAttribute("aria-expanded", "true");
+    const holdMs = prefersReducedMotion() ? 1600 : 2200;
+    hoursWeekPeekTimer = window.setTimeout(function () {
+      collapseHoursWeekSlotPeek(slot);
+      hoursWeekPeekTimer = null;
+    }, holdMs);
+  }
+
   function renderProviderHoursWeekHtml(p, days, todayDow) {
     const dayBlocks = days.map(function (day) {
       const dow = day.dow;
@@ -1898,15 +1931,36 @@
           : "Zamknięte";
         const slots = d.blocks
           .map(function (b) {
+            const dur = b.to - b.from;
             const top = ((b.from - axisStart) / span) * 100;
-            const height = ((b.to - b.from) / span) * 100;
+            const height = (dur / span) * 100;
             const tone = b.locationId ? " " + locationToneClass(p, b.locationId) : "";
-            const range = minToTime(b.from) + "–" + minToTime(b.to);
+            const fromLabel = minToTime(b.from);
+            const toLabel = minToTime(b.to);
+            const range = fromLabel + "–" + toLabel;
+            // Krótki blok: za mało miejsca na dwie linie — pokazujemy start; koniec po kliknięciu (peek).
+            // % względem osi tygodnia; dur łapie 30–40 min nawet na krótkiej osi.
+            const isShort = height < 14 || dur < 45;
+            const timesHtml = isShort
+              ? `<span class="provider-hours-week__slot-time">${escapeHtml(fromLabel)}</span>
+              <span class="provider-hours-week__slot-time provider-hours-week__slot-time--end">${escapeHtml(
+                toLabel
+              )}</span>`
+              : `<span class="provider-hours-week__slot-time">${escapeHtml(fromLabel)}</span>
+              <span class="provider-hours-week__slot-time">${escapeHtml(toLabel)}</span>`;
+            if (isShort) {
+              return `<button type="button" class="provider-hours-week__slot provider-hours-week__slot--short${tone}" style="top:${top.toFixed(
+                3
+              )}%;height:${height.toFixed(3)}%" title="${escapeHtml(range)}" aria-label="${escapeHtml(
+                range
+              )}. Kliknij, aby zobaczyć godzinę zakończenia" data-action="peek-hours-week-slot" aria-expanded="false">
+              ${timesHtml}
+            </button>`;
+            }
             return `<span class="provider-hours-week__slot${tone}" style="top:${top.toFixed(3)}%;height:${height.toFixed(
               3
-            )}%" title="${escapeHtml(range)}">
-              <span class="provider-hours-week__slot-time">${escapeHtml(minToTime(b.from))}</span>
-              <span class="provider-hours-week__slot-time">${escapeHtml(minToTime(b.to))}</span>
+            )}%" title="${escapeHtml(range)}" aria-label="${escapeHtml(range)}">
+              ${timesHtml}
             </span>`;
           })
           .join("");
@@ -14936,6 +14990,11 @@
         event.preventDefault();
         event.stopPropagation();
         toggleProviderCardHoursExpanded();
+        break;
+      case "peek-hours-week-slot":
+        event.preventDefault();
+        event.stopPropagation();
+        peekHoursWeekSlot(btn.closest(".provider-hours-week__slot") || btn);
         break;
       case "provider-info-profile":
         event.preventDefault();
