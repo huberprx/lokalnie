@@ -5816,8 +5816,9 @@ body.service-photo-preview-open {
 }
 
 /* ---- Pływające okno informacji o usługodawcy (jak karta miejsca w Google) ---- */
-.booking__provider-card--info-open {
-  z-index: 70;
+.app-screen--booking > .booking__provider-card.booking__provider-card--info-open {
+  /* Nad stopką rezerwacji (.booking-confirm-bar = 119), żeby menu nie nachodziło na panel. */
+  z-index: 130;
 }
 
 .provider-info-pop {
@@ -6168,39 +6169,18 @@ button.provider-info-pop__line {
 }
 
 .provider-hours-week {
-  --hours-week-h: 9.5rem;
-  display: flex;
-  align-items: stretch;
-  gap: 0.4rem;
+  --hours-week-h: 11.5rem;
+  display: block;
   width: 100%;
   min-width: 0;
-  padding: 0.9rem 0 0.15rem;
-}
-
-.provider-hours-week__axis {
-  position: relative;
-  flex: 0 0 2.1rem;
-  width: 2.1rem;
-  height: var(--hours-week-h);
-  margin-top: 1.05rem;
-}
-
-.provider-hours-week__tick {
-  position: absolute;
-  right: 0;
-  transform: translateY(-50%);
-  font-size: 0.58rem;
-  font-weight: 500;
-  color: var(--text-muted);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
+  padding: 0.55rem 0 0.15rem;
 }
 
 .provider-hours-week__cols {
   display: flex;
-  flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
-  gap: 0.18rem;
+  gap: 0.28rem;
 }
 
 .provider-hours-week__col {
@@ -6257,7 +6237,8 @@ button.provider-info-pop__line {
   justify-content: space-between;
   align-items: center;
   min-height: 0.7rem;
-  padding: 1px 0;
+  padding: 0.22rem 0 0.12rem;
+  box-sizing: border-box;
   border-radius: 5px;
   background: color-mix(in srgb, var(--loc) 26%, var(--surface));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--loc) 55%, transparent);
@@ -6265,12 +6246,16 @@ button.provider-info-pop__line {
 }
 
 .provider-hours-week__slot-time {
-  font-size: 0.5rem;
+  font-size: 0.62rem;
   font-weight: 600;
   line-height: 1.05;
   color: color-mix(in srgb, var(--loc) 78%, var(--text));
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.provider-hours-week__slot-time:first-child {
+  margin-top: 0.05rem;
 }
 
 .provider-hours-week__closed-mark {
@@ -6285,11 +6270,11 @@ button.provider-info-pop__line {
 
 @media (max-width: 400px) {
   .provider-hours-week {
-    --hours-week-h: 8.5rem;
+    --hours-week-h: 12.5rem;
   }
 
   .provider-hours-week__slot-time {
-    display: none;
+    font-size: 0.58rem;
   }
 }
 
@@ -6298,7 +6283,11 @@ button.provider-info-pop__line {
     left: var(--app-pad-x, 0.75rem);
     right: var(--app-pad-x, 0.75rem);
     width: auto;
-    max-height: min(30rem, calc(100vh - 6rem));
+    /* Zostaw miejsce na stopkę Suma/Rezerwuj + safe-area, żeby panel nie chował się pod menu. */
+    max-height: min(
+      30rem,
+      calc(100dvh - 10.5rem - env(safe-area-inset-bottom, 0px))
+    );
   }
 }
 
@@ -6306,6 +6295,7 @@ button.provider-info-pop__line {
   left: var(--app-pad-x, 0.75rem);
   right: var(--app-pad-x, 0.75rem);
   width: auto;
+  max-height: min(30rem, calc(var(--frame-h, 100dvh) - 10.5rem));
 }
 
 @media (prefers-reduced-motion: reduce) {

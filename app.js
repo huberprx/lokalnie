@@ -1804,12 +1804,6 @@
     const spanHours = span / 60;
     const tickStep = spanHours <= 6 ? 1 : spanHours <= 12 ? 2 : 3;
 
-    let ticks = "";
-    for (let m = axisStart; m <= axisEnd; m += tickStep * 60) {
-      const pct = ((m - axisStart) / span) * 100;
-      ticks += `<span class="provider-hours-week__tick" style="top:${pct.toFixed(3)}%">${escapeHtml(minToTime(m))}</span>`;
-    }
-
     let lines = "";
     for (let m = axisStart + tickStep * 60; m < axisEnd; m += tickStep * 60) {
       const pct = ((m - axisStart) / span) * 100;
@@ -1855,7 +1849,6 @@
       .join("");
 
     return `<div class="provider-hours-week">
-      <div class="provider-hours-week__axis" aria-hidden="true">${ticks}</div>
       <div class="provider-hours-week__cols">${cols}</div>
     </div>`;
   }
@@ -1945,7 +1938,6 @@
           ${phoneSection}
           ${emailSection}
           <div class="provider-info-pop__section provider-info-pop__section--hours">
-            <span class="provider-info-pop__ic provider-info-pop__ic--clock" aria-hidden="true"></span>
             <div class="provider-info-pop__section-body provider-info-pop__hours">${hoursWeek}</div>
           </div>
         </div>
