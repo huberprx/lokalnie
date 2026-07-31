@@ -5931,7 +5931,73 @@ body.service-photo-preview-open {
 }
 
 .provider-info-pop .provider-tiles {
-  padding: 0.35rem 0 0.1rem;
+  display: flex;
+  flex-flow: row nowrap;
+  align-items: center;
+  gap: 0.2rem;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0.15rem 0 0.05rem;
+  padding: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.provider-info-pop .provider-tiles::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.provider-info-pop .provider-tile {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  padding: 2px;
+  gap: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-muted) 80%, transparent);
+  box-sizing: border-box;
+  scroll-snap-align: start;
+}
+
+.provider-info-pop .provider-tile:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--accent-client);
+}
+
+.provider-info-pop .provider-tile:active {
+  transform: scale(0.94);
+}
+
+.provider-info-pop .provider-tile__icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+}
+
+.provider-info-pop .provider-tile__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .provider-info-pop__body {
@@ -6095,40 +6161,136 @@ button.provider-info-pop__line {
   padding: 0.1rem 0;
 }
 
-.provider-info-pop__hours-row {
+/* Godziny otwarcia jako tygodniowa oś czasu (kolumny dni + sloty dostępności). */
+.provider-info-pop__section--hours {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.7rem;
+}
+
+.provider-hours-week {
+  --hours-week-h: 9.5rem;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.12rem;
-  padding: 0.35rem 0;
-  font-size: 0.82rem;
+  align-items: stretch;
+  gap: 0.4rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.9rem 0 0.15rem;
 }
 
-.provider-info-pop__hours-day {
-  font-weight: 700;
-  color: var(--text);
-  text-align: left;
+.provider-hours-week__axis {
+  position: relative;
+  flex: 0 0 2.1rem;
+  width: 2.1rem;
+  height: var(--hours-week-h);
+  margin-top: 1.05rem;
 }
 
-.provider-info-pop__hours-time {
+.provider-hours-week__tick {
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
+  font-size: 0.58rem;
   font-weight: 500;
   color: var(--text-muted);
-  text-align: left;
-  line-height: 1.35;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
-.provider-info-pop__hours-time--closed {
+.provider-hours-week__cols {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 0.18rem;
+}
+
+.provider-hours-week__col {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: 1 1 0;
+  min-width: 0;
+  gap: 0.22rem;
+}
+
+.provider-hours-week__dow {
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: center;
   color: var(--text-muted);
-  font-weight: 400;
 }
 
-.provider-info-pop__hours-row--today .provider-info-pop__hours-day {
+.provider-hours-week__col--today .provider-hours-week__dow {
   color: var(--accent-client);
 }
 
-.provider-info-pop__hours-row--today .provider-info-pop__hours-time {
-  color: color-mix(in srgb, var(--accent-client) 72%, var(--text-muted));
+.provider-hours-week__track {
+  position: relative;
+  display: block;
+  height: var(--hours-week-h);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text-muted) 7%, transparent);
+  overflow: hidden;
+}
+
+.provider-hours-week__col--today .provider-hours-week__track {
+  background: color-mix(in srgb, var(--accent-client) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-client) 32%, transparent);
+}
+
+.provider-hours-week__line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--text-muted) 16%, transparent);
+}
+
+.provider-hours-week__slot {
+  --loc: var(--accent-provider);
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 0.7rem;
+  padding: 1px 0;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--loc) 26%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--loc) 55%, transparent);
+  overflow: hidden;
+}
+
+.provider-hours-week__slot-time {
+  font-size: 0.5rem;
   font-weight: 600;
+  line-height: 1.05;
+  color: color-mix(in srgb, var(--loc) 78%, var(--text));
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.provider-hours-week__closed-mark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0.55rem;
+  height: 1px;
+  transform: translate(-50%, -50%);
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+}
+
+@media (max-width: 400px) {
+  .provider-hours-week {
+    --hours-week-h: 8.5rem;
+  }
+
+  .provider-hours-week__slot-time {
+    display: none;
+  }
 }
 
 @media (max-width: 899px) {
@@ -10204,6 +10366,23 @@ body.client-sheet-open {
 
 .gcal__event--proposed::before {
   background: color-mix(in srgb, var(--event-accent) 70%, var(--text-muted));
+}
+
+.gcal__event--cancelled {
+  opacity: 0.62;
+  filter: grayscale(0.35);
+}
+
+.gcal__event--cancelled::before {
+  background: var(--text-muted);
+}
+
+.gcal__event--rejected {
+  opacity: 0.72;
+}
+
+.gcal__event--rejected::before {
+  background: var(--danger);
 }
 
 .gcal__event[data-role="prov-cal-slot"] {

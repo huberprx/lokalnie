@@ -159,6 +159,8 @@
       const otherBookings = (window.AppState.bookings || []).filter(function (b) {
         if (!b) return false;
         if (b._fromApi) return false;
+        // Zachowaj lokalne przykłady demo (np. odwołane/odrzucone), których nie ma na serwerze.
+        if (b._demo) return true;
         const pid = b.providerId;
         return pid !== appProviderId && pid !== apiProviderId;
       });

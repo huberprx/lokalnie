@@ -1767,6 +1767,99 @@
   }
 
   /** Pływające okno informacji o usługodawcy (wzorowane na karcie miejsca Google Maps). */
+  /**
+   * Tygodniowy grafik jako kolumny dni ze slotami rozłożonymi na wspólnej osi czasu —
+   * dzięki temu widać, że w danym dniu praca zaczyna się wcześniej / kończy później.
+   */
+  function renderProviderHoursWeekHtml(p, weekly, order, todayDow) {
+    const dayBlocks = order.map(function (dow) {
+      const blocks = (weekly[dow] || [])
+        .map(function (b) {
+          return { from: timeToMin(b.from), to: timeToMin(b.to), locationId: b.locationId || null, raw: b };
+        })
+        .filter(function (b) {
+          return !isNaN(b.from) && !isNaN(b.to) && b.to > b.from;
+        })
+        .sort(function (a, b) {
+          return a.from - b.from;
+        });
+      return { dow: dow, blocks: blocks };
+    });
+
+    let minMin = Infinity;
+    let maxMin = -Infinity;
+    dayBlocks.forEach(function (d) {
+      d.blocks.forEach(function (b) {
+        if (b.from < minMin) minMin = b.from;
+        if (b.to > maxMin) maxMin = b.to;
+      });
+    });
+    if (!isFinite(minMin) || !isFinite(maxMin)) {
+      return `<p class="empty-note">Brak godzin otwarcia.</p>`;
+    }
+
+    const axisStart = Math.floor(minMin / 60) * 60;
+    const axisEnd = Math.ceil(maxMin / 60) * 60;
+    const span = Math.max(60, axisEnd - axisStart);
+    const spanHours = span / 60;
+    const tickStep = spanHours <= 6 ? 1 : spanHours <= 12 ? 2 : 3;
+
+    let ticks = "";
+    for (let m = axisStart; m <= axisEnd; m += tickStep * 60) {
+      const pct = ((m - axisStart) / span) * 100;
+      ticks += `<span class="provider-hours-week__tick" style="top:${pct.toFixed(3)}%">${escapeHtml(minToTime(m))}</span>`;
+    }
+
+    let lines = "";
+    for (let m = axisStart + tickStep * 60; m < axisEnd; m += tickStep * 60) {
+      const pct = ((m - axisStart) / span) * 100;
+      lines += `<span class="provider-hours-week__line" style="top:${pct.toFixed(3)}%"></span>`;
+    }
+
+    const cols = dayBlocks
+      .map(function (d) {
+        const isToday = d.dow === todayDow;
+        const label = WEEKDAYS[d.dow] || "";
+        const rangeText = d.blocks.length
+          ? d.blocks
+              .map(function (b) {
+                return minToTime(b.from) + "–" + minToTime(b.to);
+              })
+              .join(", ")
+          : "Zamknięte";
+        const slots = d.blocks
+          .map(function (b) {
+            const top = ((b.from - axisStart) / span) * 100;
+            const height = ((b.to - b.from) / span) * 100;
+            const tone = b.locationId ? " " + locationToneClass(p, b.locationId) : "";
+            const range = minToTime(b.from) + "–" + minToTime(b.to);
+            return `<span class="provider-hours-week__slot${tone}" style="top:${top.toFixed(3)}%;height:${height.toFixed(
+              3
+            )}%" title="${escapeHtml(range)}">
+              <span class="provider-hours-week__slot-time">${escapeHtml(minToTime(b.from))}</span>
+              <span class="provider-hours-week__slot-time">${escapeHtml(minToTime(b.to))}</span>
+            </span>`;
+          })
+          .join("");
+        return `<div class="provider-hours-week__col${isToday ? " provider-hours-week__col--today" : ""}${
+          d.blocks.length ? "" : " provider-hours-week__col--closed"
+        }">
+          <span class="provider-hours-week__dow">${escapeHtml(label)}</span>
+          <span class="provider-hours-week__track" role="img"
+            aria-label="${escapeHtml((WEEKDAYS_NOM[d.dow] || "") + (isToday ? " (dziś)" : "") + ": " + rangeText)}">
+            ${lines}
+            ${slots || `<span class="provider-hours-week__closed-mark" aria-hidden="true"></span>`}
+          </span>
+        </div>`;
+      })
+      .join("");
+
+    return `<div class="provider-hours-week">
+      <div class="provider-hours-week__axis" aria-hidden="true">${ticks}</div>
+      <div class="provider-hours-week__cols">${cols}</div>
+    </div>`;
+  }
+
   function renderProviderInfoPopover(p) {
     ensureProviderContact(p);
     const phone = String(p.phone || "").replace(/\s/g, "");
@@ -1826,23 +1919,7 @@
       </div>`
       : "";
 
-    const hoursRows = order
-      .map(function (dow) {
-        const blocks = weekly[dow] || [];
-        const isToday = dow === todayDow;
-        const time = blocks.length
-          ? blocks
-              .map(function (b) {
-                return b.from + "–" + b.to;
-              })
-              .join(" · ")
-          : "Zamknięte";
-        return `<div class="provider-info-pop__hours-row${isToday ? " provider-info-pop__hours-row--today" : ""}">
-        <span class="provider-info-pop__hours-day">${escapeHtml(WEEKDAYS_NOM[dow])}${isToday ? " · dziś" : ""}</span>
-        <span class="provider-info-pop__hours-time${blocks.length ? "" : " provider-info-pop__hours-time--closed"}">${escapeHtml(time)}</span>
-      </div>`;
-      })
-      .join("");
+    const hoursWeek = renderProviderHoursWeekHtml(p, weekly, order, todayDow);
 
     const shareUrl = providerShareUrl(p.slug);
     const shareSection = `<div class="provider-info-pop__section provider-info-pop__section--share">
@@ -1867,9 +1944,9 @@
           ${addrSection}
           ${phoneSection}
           ${emailSection}
-          <div class="provider-info-pop__section">
+          <div class="provider-info-pop__section provider-info-pop__section--hours">
             <span class="provider-info-pop__ic provider-info-pop__ic--clock" aria-hidden="true"></span>
-            <div class="provider-info-pop__section-body provider-info-pop__hours">${hoursRows}</div>
+            <div class="provider-info-pop__section-body provider-info-pop__hours">${hoursWeek}</div>
           </div>
         </div>
       </div>
@@ -4305,7 +4382,11 @@
     const upcomingOnly =
       statusFilters.length === 1 && statusFilters[0] === "upcoming";
     const pastOnly = statusFilters.length === 1 && statusFilters[0] === "past";
-    const rangeOnly = upcomingOnly || pastOnly;
+    const cancelledOnly =
+      statusFilters.length === 1 && statusFilters[0] === "cancelled";
+    const rejectedOnly =
+      statusFilters.length === 1 && statusFilters[0] === "rejected";
+    const rangeOnly = upcomingOnly || pastOnly || cancelledOnly || rejectedOnly;
     // Oczekujące bez daty (prośba o termin) — przy filtrze „Czekające na potwierdzenie”.
     const waitingUndated = waitingOnly
       ? (window.AppState.bookings || []).filter(function (b) {
@@ -4327,9 +4408,13 @@
       ? "Nadchodzące wizyty"
       : pastOnly
         ? "Odbyte wizyty"
-        : waitingOnly
-          ? "Wizyty oczekujące"
-          : `Wizyty · ${formatDateLong(selectedDate)}`;
+        : cancelledOnly
+          ? "Odwołane wizyty"
+          : rejectedOnly
+            ? "Odrzucone wizyty"
+            : waitingOnly
+              ? "Wizyty oczekujące"
+              : `Wizyty · ${formatDateLong(selectedDate)}`;
     const requestsHtml = waitingOnly ? renderClientRequestsSection() : "";
     // Na „Czekające…” pusta lista wizyt jest zbędna, gdy widać już zapytania o termin.
     const showVisitsSection = filtered.length > 0 || !(waitingOnly && requestsHtml);
@@ -4391,11 +4476,15 @@
                             ? "Brak nadchodzących wizyt."
                             : pastOnly
                               ? "Brak odbytych wizyt."
-                              : waitingOnly
-                                ? "Brak wizyt czekających na potwierdzenie."
-                                : statusFilters.length
-                                  ? "Brak wizyt o wybranym statusie w tym dniu."
-                                  : "Brak wizyt w tym dniu."
+                              : cancelledOnly
+                                ? "Brak odwołanych wizyt."
+                                : rejectedOnly
+                                  ? "Brak odrzuconych wizyt."
+                                  : waitingOnly
+                                    ? "Brak wizyt czekających na potwierdzenie."
+                                    : statusFilters.length
+                                      ? "Brak wizyt o wybranym statusie w tym dniu."
+                                      : "Brak wizyt w tym dniu."
                         }</p>`
                   }
                 </div>
@@ -5301,7 +5390,11 @@
           ${
             b.status === "proposed"
               ? `<span class="status-badge" data-status="proposed">Propozycja</span>`
-              : ""
+              : b.status === "cancelled" || b.status === "rejected"
+                ? `<span class="status-badge" data-status="${escapeHtml(b.status)}">${escapeHtml(
+                    STATUS_LABEL[b.status] || b.status
+                  )}</span>`
+                : ""
           }
         </div>
         <div class="visit-card__name">${escapeHtml(b.clientName || "Klient")}</div>
@@ -5327,7 +5420,10 @@
           b.dateISO &&
           b.from &&
           b.to &&
-          (b.status === "confirmed" || b.status === "proposed")
+          (b.status === "confirmed" ||
+            b.status === "proposed" ||
+            b.status === "cancelled" ||
+            b.status === "rejected")
         );
       })
       .slice()
