@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.140";
+  const APP_VERSION = "1.0.142";
 
   const PWA = {
     registration: null,
@@ -1844,6 +1844,13 @@
       })
       .join("");
 
+    const shareUrl = providerShareUrl(p.slug);
+    const shareSection = `<div class="provider-info-pop__section provider-info-pop__section--share">
+        <span class="provider-info-pop__ic provider-info-pop__ic--link" aria-hidden="true"></span>
+        <button type="button" class="provider-info-pop__line provider-info-pop__line--link provider-info-pop__line--url"
+          data-action="share-provider" data-slug="${escapeHtml(p.slug)}" title="Udostępnij profil">${escapeHtml(shareUrl)}</button>
+      </div>`;
+
     return `
     <div class="provider-info-pop" role="dialog" aria-label="Informacje o ${escapeHtml(p.name)}">
       <button type="button" class="provider-info-pop__backdrop" ${closeAttrs} tabindex="-1" aria-label="Zamknij informacje"></button>
@@ -1854,7 +1861,8 @@
           </div>
           <button type="button" class="provider-info-pop__close" ${closeAttrs} aria-label="Zamknij informacje" title="Zamknij"><span class="provider-info-pop__close-ic" aria-hidden="true"></span></button>
         </div>
-        ${renderProviderContactTiles(p, { share: true, actions: false })}
+        ${shareSection}
+        ${renderProviderContactTiles(p, { share: false, actions: false })}
         <div class="provider-info-pop__body">
           ${addrSection}
           ${phoneSection}
