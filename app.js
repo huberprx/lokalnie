@@ -119,6 +119,8 @@
       provCalReplyShowAll: false,
       /** Pulpit: pokazywać karty wolnych luk między wizytami (domyślnie nie). */
       dashShowFreeSlots: false,
+      /** Pulpit: "visits" | "requests" — lista wizyt albo próśb o termin. */
+      dashListMode: "visits",
       /** Zapisani klienci usługodawcy: { [providerId]: [{ id, name, phone, email, address }] } */
       providerClients: {},
       availWeekStart: null,
@@ -2473,6 +2475,7 @@
         provCalReplyRequestId: null,
         provCalReplyShowAll: false,
         dashShowFreeSlots: stored.dashShowFreeSlots === true,
+        dashListMode: stored.dashListMode === "requests" ? "requests" : "visits",
         providerClients:
           stored.providerClients && typeof stored.providerClients === "object" ? stored.providerClients : base.providerClients,
         provCalSelection: normalizeProvCalSelection(
@@ -5023,6 +5026,89 @@
     return getProviderById(MY_PROVIDER_ID);
   }
 
+  function providerOpenRequests() {
+    return (window.AppState.requests || [])
+      .filter(function (r) {
+        return r && r.providerId === MY_PROVIDER_ID && (r.status === "pending" || r.status === "proposed");
+      })
+      .slice()
+      .sort(function (a, b) {
+        if (a.status === "pending" && b.status !== "pending") return -1;
+        if (a.status !== "pending" && b.status === "pending") return 1;
+        const aDays = normalizeRequestDays(a.days);
+        const bDays = normalizeRequestDays(b.days);
+        const aDay = (aDays[0] && aDays[0].dateISO) || "";
+        const bDay = (bDays[0] && bDays[0].dateISO) || "";
+        return aDay.localeCompare(bDay) || String(a.clientName || "").localeCompare(String(b.clientName || ""));
+      });
+  }
+
+  /** Skrót pory dnia na chipie dnia — pełne etykiety rozpychają wąski pulpit. */
+  const REQUEST_PART_SHORT = { am: "rano", pm: "po poł.", any: "cały dzień" };
+
+  function renderProviderRequestDayChips(days) {
+    return `<ul class="request-card__days visit-card__req-days" aria-label="Dni wskazane przez klienta">
+        ${days
+          .map(function (d) {
+            const part = normalizeDayPart(d.part);
+            return `<li class="request-day-badge">
+              <span class="request-day-badge__day">${escapeHtml(formatDayWithDow(d.dateISO))}</span>
+              <span class="request-day-badge__part">${escapeHtml(REQUEST_PART_SHORT[part])}</span>
+            </li>`;
+          })
+          .join("")}
+      </ul>`;
+  }
+
+  function renderProviderRequestCard(r) {
+    const services = (r.serviceNames || []).filter(Boolean);
+    const serviceLabel = services.length ? services.join(" + ") : "Usługa";
+    const isProposed = r.status === "proposed";
+    const days = normalizeRequestDays(r.days);
+    const p = myProvider();
+    const durationMin = p ? requestServicesDuration(p, r.serviceIds || []) : 0;
+    const sentCount = isProposed ? (Array.isArray(r.proposals) ? r.proposals.length : 0) : 0;
+    const statusLabel = isProposed
+      ? sentCount
+        ? `Wysłano ${sentCount} ${proposalCountLabel(sentCount)}`
+        : "Wysłano propozycje"
+      : "Nowa prośba";
+    const proposeLabel = isProposed ? "Zmień propozycje" : "Zaproponuj termin";
+    return `
+      <div class="visit-card visit-card--provider visit-card--request" data-request-id="${escapeHtml(r.id)}" data-status="${escapeHtml(
+        isProposed ? "proposed" : "pending"
+      )}" aria-label="${escapeHtml((r.clientName || "Klient") + ", " + serviceLabel)}">
+        <div class="visit-card__req-head">
+          <span class="visit-card__name">${escapeHtml(r.clientName || "Klient")}</span>
+          <span class="status-badge" data-status="${escapeHtml(isProposed ? "proposed" : "pending")}">${escapeHtml(statusLabel)}</span>
+        </div>
+        <div class="visit-card__req-svc">
+          <span class="visit-card__req-svc-name">${escapeHtml(serviceLabel)}</span>
+          ${
+            durationMin
+              ? `<span class="visit-card__duration" aria-label="Czas trwania: ${escapeHtml(formatDuration(durationMin))}">
+                  <span class="visit-card__clock" aria-hidden="true"></span>
+                  ${escapeHtml(formatDuration(durationMin))}
+                </span>`
+              : ""
+          }
+        </div>
+        ${
+          days.length
+            ? renderProviderRequestDayChips(days)
+            : `<p class="visit-card__req-note">Bez wskazanych dni — możesz zaproponować dowolny termin.</p>`
+        }
+        <div class="visit-card__actions visit-card__actions--request">
+          <button type="button" class="btn btn--primary btn--sm" data-action="propose-open" data-request-id="${escapeHtml(
+            r.id
+          )}">${escapeHtml(proposeLabel)}</button>
+          <button type="button" class="btn btn--quiet btn--sm" data-action="reject-request" data-request-id="${escapeHtml(
+            r.id
+          )}">Odrzuć</button>
+        </div>
+      </div>`;
+  }
+
   /** Treść pulpitu (statystyki, powiadomienia, wizyty) — mobilnie pełny ekran, desktopowo lewy panel. */
   function renderProviderDashBodyHtml(opts) {
     opts = opts || {};
@@ -5031,7 +5117,11 @@
       .filter((b) => b.providerId === MY_PROVIDER_ID && (b.status === "confirmed" || b.status === "proposed"))
       .sort((a, b) => (a.dateISO + a.from).localeCompare(b.dateISO + b.from));
 
-    const pendingCount = (window.AppState.requests || []).filter((r) => r.providerId === MY_PROVIDER_ID && r.status === "pending").length;
+    const openRequests = providerOpenRequests();
+    const pendingCount = openRequests.filter(function (r) {
+      return r.status === "pending";
+    }).length;
+    const showRequests = window.AppState.dashListMode === "requests";
     const showFree = !!window.AppState.dashShowFreeSlots;
 
     return `
@@ -5041,25 +5131,39 @@
             <p class="screen-head__sub">${escapeHtml(myProvider() ? myProvider().name : "")}</p>
           </header>
           <div class="stat-row" role="region" aria-label="Statystyki">
-            <div class="stat-card"><span class="stat-card__num">${upcoming.length}</span><span class="stat-card__lbl">Nadchodzące wizyty</span></div>
-            <button type="button" class="stat-card stat-card--link${pendingCount > 0 ? " stat-card--alert" : ""}" data-action="open-prov-cal-requests">
+            <button type="button" class="stat-card stat-card--link${!showRequests ? " is-active" : ""}" data-action="open-dash-visits">
+              <span class="stat-card__num">${upcoming.length}</span><span class="stat-card__lbl">Nadchodzące wizyty</span>
+            </button>
+            <button type="button" class="stat-card stat-card--link${pendingCount > 0 ? " stat-card--alert" : ""}${
+              showRequests ? " is-active" : ""
+            }" data-action="open-prov-cal-requests">
               <span class="stat-card__num">${pendingCount}</span><span class="stat-card__lbl">Prośby o termin</span>
             </button>
           </div>
           ${renderNotificationsBlock("provider", "Powiadomienia")}
           <div class="prov-section-row">
-            <h3 class="prov-section">Nadchodzące wizyty</h3>
-            <label class="prov-free-toggle">
+            <h3 class="prov-section">${showRequests ? "Prośby o termin" : "Nadchodzące wizyty"}</h3>
+            ${
+              showRequests
+                ? ""
+                : `<label class="prov-free-toggle">
               <span class="prov-free-toggle__text">Wolne terminy</span>
               <input type="checkbox" class="avail-edit__switch" data-role="prov-show-free"
                 ${showFree ? "checked" : ""} aria-label="Pokazuj wolne terminy" />
-            </label>
+            </label>`
+            }
           </div>
-          <div class="visit-list visit-list--carousel" role="region" aria-label="Lista nadchodzących wizyt">
+          <div class="visit-list visit-list--carousel" role="region" aria-label="${
+            showRequests ? "Lista próśb o termin" : "Lista nadchodzących wizyt"
+          }">
             ${
-              upcoming.length
-                ? renderProviderVisitTimeline(upcoming, { showFree: showFree })
-                : `<p class="empty-note">Brak nadchodzących wizyt. Zarezerwuj coś jako klient, aby zobaczyć synchronizację.</p>`
+              showRequests
+                ? openRequests.length
+                  ? openRequests.map(renderProviderRequestCard).join("")
+                  : `<p class="empty-note">Brak próśb o termin.</p>`
+                : upcoming.length
+                  ? renderProviderVisitTimeline(upcoming, { showFree: showFree })
+                  : `<p class="empty-note">Brak nadchodzących wizyt. Zarezerwuj coś jako klient, aby zobaczyć synchronizację.</p>`
             }
           </div>
         </div>`;
@@ -5075,16 +5179,47 @@
       </div>`;
   }
 
+  function visitCountLabel(n) {
+    const abs = Math.abs(Number(n) || 0) % 100;
+    const last = abs % 10;
+    if (abs === 1) return "wizyta";
+    if (last >= 2 && last <= 4 && (abs < 12 || abs > 14)) return "wizyty";
+    return "wizyt";
+  }
+
+  /** Nagłówek dnia w agendzie pulpitu — bez niego godziny nie mówią, o który dzień chodzi. */
+  function renderProviderDayHeadHtml(dateISO, count) {
+    const today = demoTodayISO();
+    const prefix = dateISO === today ? "Dziś" : dateISO === addDaysISO(today, 1) ? "Jutro" : "";
+    const dayLabel = formatDayWithDow(dateISO);
+    return `
+      <h4 class="visit-day"${dateISO === today ? ' data-today="true"' : ""}>
+        <span class="visit-day__label">${
+          prefix ? `<span class="visit-day__prefix">${escapeHtml(prefix)}</span> · ` : ""
+        }${escapeHtml(dayLabel)}</span>
+        <span class="visit-day__count">${count} ${escapeHtml(visitCountLabel(count))}</span>
+      </h4>`;
+  }
+
   /** Lista wizyt z kartami „Wolne” w lukach między kolejnymi terminami tego samego dnia. */
   function renderProviderVisitTimeline(upcoming, opts) {
     const showFree = !opts || opts.showFree !== false;
+    const perDay = Object.create(null);
+    upcoming.forEach(function (b) {
+      perDay[b.dateISO] = (perDay[b.dateISO] || 0) + 1;
+    });
     let html = "";
+    let openDay = null;
     for (let i = 0; i < upcoming.length; i++) {
-      html += renderProviderVisitCard(upcoming[i]);
+      const cur = upcoming[i];
+      if (cur.dateISO !== openDay) {
+        openDay = cur.dateISO;
+        html += renderProviderDayHeadHtml(openDay, perDay[openDay]);
+      }
+      html += renderProviderVisitCard(cur);
       if (!showFree) continue;
       const next = upcoming[i + 1];
       if (!next) continue;
-      const cur = upcoming[i];
       if (cur.dateISO !== next.dateISO) continue;
       const gapFrom = timeToMin(cur.to);
       const gapTo = timeToMin(next.from);
@@ -5121,8 +5256,22 @@
             <span class="visit-card__clock" aria-hidden="true"></span>
             ${escapeHtml(formatDuration(durationMin))}
           </span>
+          <span class="visit-card__free-tag">Wolne</span>
         </div>
       </div>`;
+  }
+
+  /** Etykieta lokalizacji ma sens tylko wtedy, gdy usługodawca pracuje w kilku miejscach. */
+  function providerVisitLocationHtml(p, locId) {
+    if (!locId || !p || !Array.isArray(p.locations) || p.locations.length < 2) return "";
+    const loc = p.locations.find(function (l) {
+      return l && l.id === locId;
+    });
+    if (!loc || !loc.label) return "";
+    return `<span class="visit-card__place">
+          <span class="visit-card__place-dot" aria-hidden="true"></span>
+          ${escapeHtml(loc.label)}
+        </span>`;
   }
 
   function renderProviderVisitCard(b) {
@@ -5154,16 +5303,24 @@
             <span class="visit-card__clock" aria-hidden="true"></span>
             ${escapeHtml(formatDuration(durationMin))}
           </span>
+          ${
+            b.status === "proposed"
+              ? `<span class="status-badge" data-status="proposed">Propozycja</span>`
+              : ""
+          }
         </div>
         <div class="visit-card__name">${escapeHtml(b.clientName || "Klient")}</div>
-        <ul class="visit-card__services" aria-label="Zamówione usługi">
-          ${services.map((serviceName) => `<li>${escapeHtml(serviceName)}</li>`).join("")}
-        </ul>
+        <div class="visit-card__meta">
+          <ul class="visit-card__services" aria-label="Zamówione usługi">
+            ${services.map((serviceName) => `<li>${escapeHtml(serviceName)}</li>`).join("")}
+          </ul>
+          ${providerVisitLocationHtml(p, locId)}
+        </div>
         ${
           b.status === "confirmed"
             ? `<div class="visit-card__actions">
-                 <button type="button" class="btn btn--ghost btn--sm" data-action="edit-visit" data-booking-id="${escapeHtml(b.id)}">Edytuj</button>
-                 <button type="button" class="btn btn--ghost btn--sm" data-action="cancel-visit" data-booking-id="${escapeHtml(b.id)}">Odwołaj</button>
+                 <button type="button" class="btn btn--quiet btn--sm" data-action="edit-visit" data-booking-id="${escapeHtml(b.id)}">Edytuj</button>
+                 <button type="button" class="btn btn--quiet btn--sm btn--quiet-danger" data-action="cancel-visit" data-booking-id="${escapeHtml(b.id)}">Odwołaj</button>
                </div>`
             : ""
         }
@@ -7810,14 +7967,6 @@
     if (emailInput) draft.clientEmail = String(emailInput.value || "").trim();
   }
 
-  function providerPendingRequestCount() {
-    return (window.AppState.requests || []).filter(function (r) {
-      return r && r.providerId === MY_PROVIDER_ID && r.status === "pending";
-    }).length;
-  }
-
-  /** Animacja przełączania zakładek panelu „+” (po re-renderze). */
-  let provCalAddTabAnim = null;
   /** Animacja wjazdu sheetu — tylko przy pierwszym otwarciu, nie przy zmianie dnia/slotu. */
   let provCalAddPlayEnterAnim = false;
 
@@ -7825,118 +7974,26 @@
     if (!window.AppState.provCalAddOpen) provCalAddPlayEnterAnim = true;
   }
 
-  function captureProvCalAddTabInkFrom() {
-    const out = [];
-    document.querySelectorAll(".prov-cal-add__tabs").forEach(function (tabs, index) {
-      const active = tabs.querySelector(".prov-cal-add__tab.is-active");
-      if (!active || !active.offsetWidth) return;
-      out.push({ index: index, left: active.offsetLeft, width: active.offsetWidth });
-    });
-    return out.length ? out : null;
-  }
-
-  function placeProvCalAddTabInk(fromList) {
-    const fromMap = {};
-    (fromList || []).forEach(function (f) {
-      if (f && typeof f.index === "number") fromMap[f.index] = f;
-    });
-    document.querySelectorAll(".prov-cal-add__tabs").forEach(function (tabs, index) {
-      const ink = tabs.querySelector('[data-role="prov-cal-add-tab-ink"]');
-      const active = tabs.querySelector(".prov-cal-add__tab.is-active");
-      if (!ink || !active || !active.offsetWidth) return;
-      const left = active.offsetLeft;
-      const width = active.offsetWidth;
-      const from = fromMap[index];
-      if (from && (from.left !== left || from.width !== width)) {
-        ink.style.transition = "none";
-        ink.style.width = from.width + "px";
-        ink.style.transform = "translateX(" + from.left + "px)";
-        void ink.offsetWidth;
-        ink.style.transition = "";
-      }
-      ink.style.width = width + "px";
-      ink.style.transform = "translateX(" + left + "px)";
-    });
-  }
-
-  function animateProvCalAddTabContent(dir) {
-    const sheet = document.querySelector(".prov-cal-add__sheet");
-    if (!sheet) return;
-    const nodes = [sheet.querySelector(".prov-cal-add__body"), sheet.querySelector(".prov-cal-add__foot")];
-    const x = (dir < 0 ? -1 : 1) * 14;
-    nodes.forEach(function (el) {
-      if (!el) return;
-      el.style.setProperty("--tab-swap-x", x + "px");
-      el.classList.remove("prov-cal-add--tab-enter");
-      el.classList.add("prov-cal-add--tab-swap");
-    });
-    requestAnimationFrame(function () {
-      requestAnimationFrame(function () {
-        nodes.forEach(function (el) {
-          if (!el) return;
-          el.classList.add("prov-cal-add--tab-enter");
-          el.classList.remove("prov-cal-add--tab-swap");
-        });
-      });
-    });
-  }
-
-  function finishProvCalAddTabAnim() {
-    const anim = provCalAddTabAnim;
-    provCalAddTabAnim = null;
-    placeProvCalAddTabInk(anim && anim.fromInk ? anim.fromInk : null);
-    if (anim && anim.animate) animateProvCalAddTabContent(anim.dir || 1);
-  }
-
-  function setProvCalAddTab(tab) {
-    const next = tab === "requests" ? "requests" : "new";
-    const prev =
-      replyRequestId() || window.AppState.provCalAddTab === "requests" ? "requests" : "new";
-    if (next === prev && !replyRequestId() && window.AppState.provCalAddOpen && !window.AppState.provCalAddMinimized) {
-      return;
-    }
-    const wasReply = !!replyRequestId();
-    const fromInk = captureProvCalAddTabInkFrom();
-    const panelOpen = !!document.querySelector('[data-role="prov-cal-add"]');
-    if (!wasReply && window.AppState.provCalAddDraft) {
-      captureProvCalAddClientName();
-    }
-    if (wasReply) {
-      clearProvCalReplyMode();
-      window.AppState.provCalAddDraft = defaultProvCalAddDraft();
-    }
-    markProvCalAddEnterAnim();
-    window.AppState.provCalAddTab = next;
-    window.AppState.provCalAddOpen = true;
-    window.AppState.provCalAddMinimized = false;
-    if (!window.AppState.provCalAddDraft) {
-      window.AppState.provCalAddDraft = defaultProvCalAddDraft();
-    }
-    if (panelOpen && next !== prev) {
-      provCalAddTabAnim = {
-        fromInk: fromInk,
-        animate: true,
-        dir: next === "requests" ? 1 : -1,
-      };
-    }
+  function openDashVisits() {
+    window.AppState.dashListMode = "visits";
     saveState();
     renderAll();
-    if (next === "new") {
-      requestAnimationFrame(function () {
-        const input = document.querySelector('[data-role="prov-cal-add-client"]');
-        if (input) input.focus();
-      });
-    }
+    hapticTap(12);
   }
 
+  /** Prośby o termin na liście pulpitu (karty jak wizyty) — bez starej listy w panelu „+”. */
   function openProvCalAddRequests() {
     clearProvCalReplyMode();
-    markProvCalAddEnterAnim();
-    window.AppState.provCalAddTab = "requests";
-    window.AppState.provCalAddDraft = defaultProvCalAddDraft();
-    window.AppState.provCalAddOpen = true;
+    window.AppState.provCalAddOpen = false;
     window.AppState.provCalAddMinimized = false;
-    window.AppState.screen.provider = "calendar";
+    window.AppState.provCalAddDraft = null;
+    window.AppState.provCalAddTab = "requests";
+    window.AppState.dashListMode = "requests";
+    if (!usesDesktopLayout()) {
+      window.AppState.screen.provider = "dashboard";
+    } else if (window.AppState.screen.provider !== "calendar" && window.AppState.screen.provider !== "dashboard") {
+      window.AppState.screen.provider = "calendar";
+    }
     setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
     closeProvCalViewCloud();
     saveState();
@@ -9385,39 +9442,10 @@
       ? `Wyślij ${draft.proposals.length || ""} ${proposalCountLabel(draft.proposals.length)}`.replace(/\s+/g, " ").trim()
       : "Zapisz";
     const saveAttrs = isReply ? ` data-request-id="${escapeHtml(replyReq.id)}"` : "";
-    const showTabs = !isEdit;
-    const activeTab = isReply || window.AppState.provCalAddTab === "requests" ? "requests" : "new";
-    const showRequestsList = showTabs && activeTab === "requests" && !isReply;
-    const pendingBadge = providerPendingRequestCount();
-    const headCenter = showTabs
-      ? `<div class="prov-cal-add__head-main">
-            <div class="prov-cal-add__tabs" role="tablist" aria-label="Zakładki panelu" data-active="${escapeHtml(activeTab)}">
-              <button type="button" class="prov-cal-add__tab${activeTab === "new" ? " is-active" : ""}" role="tab"
-                data-action="prov-cal-add-tab" data-tab="new" aria-selected="${activeTab === "new" ? "true" : "false"}">Nowy termin</button>
-              <button type="button" class="prov-cal-add__tab${activeTab === "requests" ? " is-active" : ""}" role="tab"
-                data-action="prov-cal-add-tab" data-tab="requests" aria-selected="${activeTab === "requests" ? "true" : "false"}">
-                <span class="prov-cal-add__tab-label">Prośby o termin</span>
-                ${
-                  pendingBadge > 0
-                    ? `<span class="prov-cal-add__tab-badge" aria-label="${pendingBadge} ${
-                        pendingBadge === 1 ? "prośba" : pendingBadge < 5 ? "prośby" : "próśb"
-                      }">${pendingBadge}</span>`
-                    : ""
-                }
-              </button>
-              <span class="prov-cal-add__tab-ink" data-role="prov-cal-add-tab-ink" aria-hidden="true"></span>
-            </div>
-            <h3 class="visually-hidden" id="prov-cal-add-title">${escapeHtml(
-              activeTab === "requests" ? (isReply ? title : "Prośby o termin") : "Nowy termin"
-            )}</h3>
-          </div>`
-      : `<h3 class="prov-cal-add__title" id="prov-cal-add-title">${escapeHtml(title)}</h3>`;
+    const headCenter = `<h3 class="prov-cal-add__title" id="prov-cal-add-title">${escapeHtml(title)}</h3>`;
 
     window.AppState.provCalAddMinimized = false;
-    const requestsListHtml = showRequestsList ? renderProvCalAddRequestsList() : "";
-    const formBodyHtml = showRequestsList
-      ? ""
-      : `
+    const formBodyHtml = `
             <div class="prov-cal-add__field prov-cal-add__client-pick${
               clientPickOpen ? " is-open" : ""
             }" data-role="prov-cal-add-client-pick" aria-label="Klient">
@@ -9468,9 +9496,7 @@
               }
             </div>`;
 
-    const footHtml = showRequestsList
-      ? ""
-      : `<div class="prov-cal-add__foot booking-confirm-bar">
+    const footHtml = `<div class="prov-cal-add__foot booking-confirm-bar">
             <div class="bottom-nav__summary${hasSvc ? "" : " bottom-nav__summary--empty"}">
               <span class="bottom-nav__summary-label">${isReply ? "Wybrane:" : "Suma:"}</span>
               <div class="bottom-nav__summary-meta">
@@ -9495,88 +9521,19 @@
     provCalAddPlayEnterAnim = false;
 
     return `
-      <div class="prov-cal-add${isReply ? " prov-cal-add--reply" : ""}${
-        showRequestsList ? " prov-cal-add--requests" : ""
-      }${showTabs ? " prov-cal-add--tabs" : ""}${enterCls}" data-role="prov-cal-add">
+      <div class="prov-cal-add${isReply ? " prov-cal-add--reply" : ""}${enterCls}" data-role="prov-cal-add">
         <div class="prov-cal-add__sheet" role="dialog" aria-modal="false" aria-labelledby="prov-cal-add-title">
-          <header class="prov-cal-add__head${showTabs ? " prov-cal-add__head--tabs" : ""}">
+          <header class="prov-cal-add__head">
             <span class="prov-cal-add__head-spacer" aria-hidden="true"></span>
             ${headCenter}
             ${closeBtnHtml}
           </header>
           <div class="prov-cal-add__body">
-            ${requestsListHtml}
             ${formBodyHtml}
           </div>
           ${footHtml}
         </div>
       </div>`;
-  }
-
-  function renderProvCalAddRequestsList() {
-    const all = (window.AppState.requests || []).filter(function (r) {
-      return r && r.providerId === MY_PROVIDER_ID && (r.status === "pending" || r.status === "proposed");
-    });
-    const pending = all.filter(function (r) {
-      return r.status === "pending";
-    });
-    const proposed = all.filter(function (r) {
-      return r.status === "proposed";
-    });
-    function formatReqSuggestedDay(d) {
-      const date = new Date(String(d.dateISO) + "T12:00:00");
-      if (isNaN(date.getTime())) return String(d.dateISO || "");
-      const dow = String(WEEKDAYS[date.getDay()] || "").toUpperCase();
-      const part =
-        normalizeDayPart(d.part) === "am"
-          ? "przed południem"
-          : normalizeDayPart(d.part) === "pm"
-            ? "popołudniu"
-            : "dowolnie";
-      return `${dow} ${date.getDate()} ${MONTHS[date.getMonth()]}, ${part}`;
-    }
-    function row(r) {
-      const days = normalizeRequestDays(r.days);
-      const dayHint = days.length
-        ? days
-            .slice(0, 2)
-            .map(formatReqSuggestedDay)
-            .join(", ") + (days.length > 2 ? " +" + (days.length - 2) : "")
-        : "Bez wskazanych dni";
-      const services = (r.serviceNames || []).filter(Boolean);
-      const servicesLabel = services.length ? services.join(", ") : "Usługa";
-      return `
-        <div class="prov-cal-add__req">
-          <button type="button" class="prov-cal-add__req-body" data-action="propose-open" data-request-id="${escapeHtml(r.id)}">
-            <span class="prov-cal-add__req-main">
-              <span class="prov-cal-add__req-name">${escapeHtml(r.clientName || "Klient")}</span>
-              <span class="prov-cal-add__req-svc">${escapeHtml(servicesLabel)}</span>
-              <span class="prov-cal-add__req-meta">${escapeHtml(dayHint)}</span>
-            </span>
-          </button>
-          <button type="button" class="prov-cal-add__req-dismiss" data-action="reject-request" data-request-id="${escapeHtml(r.id)}"
-            aria-label="Odrzuć prośbę o termin" title="Odrzuć">×</button>
-        </div>`;
-    }
-    if (!all.length) {
-      return `<div class="prov-cal-add__requests" data-role="prov-cal-add-requests">
-        <p class="empty-note">Brak próśb o termin.</p>
-      </div>`;
-    }
-    return `<div class="prov-cal-add__requests" data-role="prov-cal-add-requests" aria-label="Osoby proszące o termin">
-      ${
-        pending.length
-          ? `<h4 class="prov-cal-add__requests-label">Nowe prośby</h4>
-             <div class="prov-cal-add__req-list">${pending.map(row).join("")}</div>`
-          : ""
-      }
-      ${
-        proposed.length
-          ? `<h4 class="prov-cal-add__requests-label">Czekają na wybór klienta</h4>
-             <div class="prov-cal-add__req-list">${proposed.map(row).join("")}</div>`
-          : ""
-      }
-    </div>`;
   }
 
   /**
@@ -9614,7 +9571,7 @@
             <div class="prov-cal-head">
               <div class="prov-cal-head__title-row">
                 ${backBtn}
-                <h2 class="screen-head__title">${isReply ? "Zaproponuj terminy" : "Kalendarz"}</h2>
+                <h2 class="screen-head__title">Kalendarz</h2>
               </div>
               <div class="prov-cal-head__actions">
                 <div class="prov-cal__tools" role="toolbar" aria-label="Narzędzia kalendarza">
@@ -12854,7 +12811,6 @@
     // Po layoutcie — inaczej przy flex itemach szerokość bywa jeszcze 0.
     requestAnimationFrame(function () {
       syncBottomNavIndicators(prevBottomNavTab);
-      finishProvCalAddTabAnim();
       if (prevScreens) playScreenEnterAnim(prevScreens);
     });
     document.querySelectorAll('[data-role="booking-date-strip"]').forEach(updateBookingMonthLabel);
@@ -13687,6 +13643,7 @@
 
     window.AppState.provCalReplyRequestId = req.id;
     window.AppState.provCalReplyShowAll = false;
+    window.AppState.dashListMode = "requests";
     markProvCalAddEnterAnim();
     window.AppState.provCalAddTab = "requests";
     window.AppState.provCalAddOpen = true;
@@ -14948,9 +14905,9 @@
         event.preventDefault();
         openProvCalAddRequests();
         break;
-      case "prov-cal-add-tab":
+      case "open-dash-visits":
         event.preventDefault();
-        setProvCalAddTab(d.tab);
+        openDashVisits();
         break;
       case "close-prov-cal-add":
         event.preventDefault();
