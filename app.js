@@ -10813,6 +10813,8 @@
   }
 
   function toggleAvailMonthPanel() {
+    // Na desktopie kalendarz jest stałą kolumną — nie chowamy go toggle’em.
+    if (usesDesktopLayout()) return;
     window.AppState.availMonthOpen = !window.AppState.availMonthOpen;
     saveState();
     renderAll();
@@ -10874,8 +10876,9 @@
     if (!applied) availWeekHlPrevTopPx = null;
   }
 
-  function renderAvailMonthPanel(provider, selectedISO, availByDate) {
-    if (!window.AppState.availMonthOpen) return "";
+  function renderAvailMonthPanel(provider, selectedISO, availByDate, opts) {
+    const forceOpen = !!(opts && opts.force);
+    if (!forceOpen && !window.AppState.availMonthOpen) return "";
     const pickerMonth = ensureAvailPickerMonth();
     const parts = pickerMonth.split("-");
     const year = Number(parts[0]) || 2026;
@@ -10952,11 +10955,11 @@
     const panels = document.querySelectorAll('[data-role="avail-month-panel"]');
     if (!panels.length) {
       if (!panelHtml) return;
-      document.querySelectorAll(".app-screen--avail .avail-top").forEach(function (top) {
+      document.querySelectorAll('.app-screen--avail [data-role="avail-cal"]').forEach(function (hostCol) {
         const host = document.createElement("div");
         host.innerHTML = panelHtml;
         const next = host.firstElementChild;
-        if (next) top.appendChild(next);
+        if (next) hostCol.appendChild(next);
       });
       requestAnimationFrame(function () {
         requestAnimationFrame(animateAvailWeekHighlight);
@@ -11050,7 +11053,10 @@
     const availByDate = collectAvailByDate(p);
     updateAvailMonthLabels(pickerMonth);
     availWeekHlPrevTopPx = null;
-    swapAvailMonthPanels(renderAvailMonthPanel(p, focusDate, availByDate), opts && opts.monthDir);
+    swapAvailMonthPanels(
+      renderAvailMonthPanel(p, focusDate, availByDate, { force: usesDesktopLayout() }),
+      opts && opts.monthDir
+    );
   }
 
   function initAvailStripScroll(grid) {
@@ -12409,7 +12415,10 @@
 
     // Zmiana miesiąca: slide zamiast twardego blink.
     availWeekHlPrevTopPx = null;
-    swapAvailMonthPanels(renderAvailMonthPanel(p, focusDate, availByDate), monthDir);
+    swapAvailMonthPanels(
+      renderAvailMonthPanel(p, focusDate, availByDate, { force: usesDesktopLayout() }),
+      monthDir
+    );
   }
 
   function renderAvailability() {
@@ -12419,14 +12428,15 @@
     window.AppState.availWeekStart = weekStart;
     const pickerMonth = ensureAvailPickerMonth();
     const availByDate = collectAvailByDate(p);
+    const desktop = usesDesktopLayout();
 
     const monthLabel = monthLabelFromISO(pickerMonth + "-01");
-    const monthOpen = !!window.AppState.availMonthOpen;
+    const monthOpen = desktop || !!window.AppState.availMonthOpen;
     const editDate = window.AppState.availEditDate || null;
     const list = renderAvailWeekListHtml(p, weekStart, availByDate, editDate);
 
     return `
-      <div class="app-screen app-screen--provider app-screen--avail">
+      <div class="app-screen app-screen--provider app-screen--avail${desktop ? " app-screen--avail-desktop" : ""}">
         <div class="avail-top">
           <header class="screen-head screen-head--prov-cal">
             <div class="prov-cal-head">
@@ -12438,9 +12448,9 @@
               </div>
               <div class="prov-cal-head__actions">
                 <div class="prov-cal__tools" role="toolbar" aria-label="Narzędzia dostępności">
-                  <button type="button" class="prov-cal__tool prov-cal__tool--month-label${monthOpen ? " is-on" : ""}"
+                  <button type="button" class="prov-cal__tool prov-cal__tool--month-label${monthOpen ? " is-on" : ""}${desktop ? " prov-cal__tool--month-static" : ""}"
                     data-action="avail-month-toggle"
-                    aria-label="${escapeHtml(monthLabel)}" aria-pressed="${monthOpen ? "true" : "false"}">
+                    aria-label="${escapeHtml(monthLabel)}" aria-pressed="${monthOpen ? "true" : "false"}"${desktop ? " disabled" : ""}>
                     <span class="prov-cal__month-name" data-role="avail-week-month">${escapeHtml(monthLabel)}</span>
                     <span class="prov-cal__month-chevron" aria-hidden="true"></span>
                   </button>
@@ -12449,14 +12459,18 @@
               </div>
             </div>
           </header>
-          ${renderAvailMonthPanel(p, focusDate, availByDate)}
         </div>
-        <div class="avail-body" data-role="avail-body">
-          <div class="avail-list__head">
-            <h3 class="avail-list__heading">Godziny dostępności</h3>
-          </div>
-          <div class="avail-list-viewport" data-role="avail-list-viewport">
-            <div class="avail-list" data-role="avail-list">${list}</div>
+        <div class="avail-main" data-role="avail-main">
+          <aside class="avail-cal" data-role="avail-cal" aria-label="Kalendarz dostępności">
+            ${renderAvailMonthPanel(p, focusDate, availByDate, { force: desktop })}
+          </aside>
+          <div class="avail-body" data-role="avail-body">
+            <div class="avail-list__head">
+              <h3 class="avail-list__heading">Godziny dostępności</h3>
+            </div>
+            <div class="avail-list-viewport" data-role="avail-list-viewport">
+              <div class="avail-list" data-role="avail-list">${list}</div>
+            </div>
           </div>
         </div>
         ${providerBottomNav("availability")}
