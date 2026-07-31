@@ -6661,39 +6661,105 @@ a.provider-info-pop__loc:hover .provider-info-pop__loc-addr {
   margin: 0;
 }
 
-.my-cal-status-filters {
+.my-cal-status-tabs {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin: 0.45rem 0 0.55rem;
+  flex-wrap: nowrap;
+  gap: 0.1rem;
+  margin: 0.35rem 0 0.65rem;
+  padding: 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
 
-.my-cal-status-chip {
+.my-cal-status-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.my-cal-status-tab {
   appearance: none;
   -webkit-appearance: none;
+  position: relative;
+  flex: 0 0 auto;
   margin: 0;
-  padding: 0.32rem 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
+  padding: 0.55rem 0.7rem 0.5rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
   font: inherit;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   font-weight: 600;
   line-height: 1.2;
+  white-space: nowrap;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  transition: color 0.14s ease;
 }
 
-.my-cal-status-chip:hover {
-  border-color: color-mix(in srgb, var(--accent-client) 35%, var(--border));
+.my-cal-status-tab:hover {
   color: var(--text);
 }
 
-.my-cal-status-chip.is-on {
-  border-color: color-mix(in srgb, var(--accent-client) 45%, var(--border));
-  background: color-mix(in srgb, var(--accent-client) 10%, var(--surface));
+.my-cal-status-tab.is-active {
   color: var(--accent-client);
+  font-weight: 700;
+}
+
+.my-cal-status-tab.is-active::after {
+  content: "";
+  position: absolute;
+  left: 0.45rem;
+  right: 0.45rem;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent-client);
+}
+
+.my-cal-status-tab__badge {
+  margin-left: 0.35rem;
+  vertical-align: middle;
+}
+
+.app-screen--my-cal-desktop .my-cal-status-tabs {
+  margin-top: 0.15rem;
+}
+
+/* Standardowy licznik oczekujących (zakładki / menu) */
+.count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.32rem;
+  border-radius: 999px;
+  background: #e11d48;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 750;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.bottom-nav__badge {
+  position: absolute;
+  top: 0.15rem;
+  right: 0.2rem;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.28rem;
+  font-size: 0.62rem;
+  pointer-events: none;
+}
+
+.site-nav__link {
+  gap: 0.35rem;
+}
+
+.site-nav__badge {
+  flex: 0 0 auto;
 }
 
 .app-screen--my-cal .my-cal-body,

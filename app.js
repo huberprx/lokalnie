@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.125";
+  const APP_VERSION = "1.0.129";
 
   const PWA = {
     registration: null,
@@ -92,7 +92,7 @@
       myCalMonth: null,
       myCalDate: null,
       myCalMonthOpen: false,
-      /** Filtry statusów wizyt w Mój kalendarz: confirmed|cancelled|rejected (puste = wszystkie). */
+      /** Filtr statusu wizyt w Mój kalendarz (tab): [] = wszystkie; albo jeden z confirmed|pending|cancelled|rejected. */
       myCalStatusFilters: [],
       provCalDate: null,
       /** Pierwszy widoczny dzień okna (2–6 dni); przy 7 = poniedziałek tygodnia. */
@@ -2425,7 +2425,13 @@
         myCalMonthOpen: typeof stored.myCalMonthOpen === "boolean" ? stored.myCalMonthOpen : base.myCalMonthOpen,
         myCalStatusFilters: Array.isArray(stored.myCalStatusFilters)
           ? stored.myCalStatusFilters.filter(function (s) {
-              return s === "confirmed" || s === "pending" || s === "cancelled" || s === "rejected";
+              return (
+                s === "upcoming" ||
+                s === "confirmed" ||
+                s === "pending" ||
+                s === "cancelled" ||
+                s === "rejected"
+              );
             })
           : base.myCalStatusFilters,
         provCalDate: typeof stored.provCalDate === "string" ? stored.provCalDate : base.provCalDate,
@@ -2747,10 +2753,17 @@
           </button>`;
             }
             const isActive = active === it.tab && !(withHome && it.tab === "search") && !menuOpen;
+            const pendingCount = it.tab === "myCalendar" ? clientPendingAttentionCount() : 0;
+            const badge = renderCountBadge(pendingCount, "count-badge bottom-nav__badge");
+            const aria =
+              pendingCount > 0
+                ? `${it.label}, ${pendingCount} oczekując${pendingCount === 1 ? "e" : "ych"}`
+                : it.label;
             return `
           <button type="button" class="bottom-nav__item${isActive ? " bottom-nav__item--active" : ""}"
-            data-action="go-screen" data-screen="${it.tab}" aria-label="${it.label}" ${isActive ? 'aria-current="page"' : ""}>
+            data-action="go-screen" data-screen="${it.tab}" aria-label="${escapeHtml(aria)}" ${isActive ? 'aria-current="page"' : ""}>
             <span class="bottom-nav__icon bottom-nav__icon--${it.icon}" aria-hidden="true"></span>
+            ${badge}
           </button>`;
           })
           .join("")}`;
@@ -3941,16 +3954,14 @@
     renderAll();
   }
 
-  function toggleMyCalStatusFilter(status) {
-    const allowed = { confirmed: 1, pending: 1, cancelled: 1, rejected: 1 };
-    if (!allowed[status]) return;
-    const cur = Array.isArray(window.AppState.myCalStatusFilters)
-      ? window.AppState.myCalStatusFilters.slice()
-      : [];
-    const i = cur.indexOf(status);
-    if (i === -1) cur.push(status);
-    else cur.splice(i, 1);
-    window.AppState.myCalStatusFilters = cur;
+  function setMyCalStatusFilter(status) {
+    if (status === "all" || !status) {
+      window.AppState.myCalStatusFilters = [];
+    } else {
+      const allowed = { upcoming: 1, confirmed: 1, pending: 1, cancelled: 1, rejected: 1 };
+      if (!allowed[status]) return;
+      window.AppState.myCalStatusFilters = [status];
+    }
     saveState();
     renderAll();
   }
@@ -3960,6 +3971,11 @@
     if (!statusFilters || !statusFilters.length) return true;
     return statusFilters.some(function (f) {
       if (f === "pending") return b.status === "pending" || b.status === "proposed";
+      if (f === "upcoming") {
+        const today = demoTodayISO();
+        if (!b.dateISO || b.dateISO < today) return false;
+        return b.status === "confirmed" || b.status === "pending" || b.status === "proposed";
+      }
       return b.status === f;
     });
   }
@@ -3968,20 +3984,29 @@
     const active = Array.isArray(window.AppState.myCalStatusFilters)
       ? window.AppState.myCalStatusFilters
       : [];
-    const chips = [
+    const current = active.length === 1 ? active[0] : "all";
+    const pendingCount = clientPendingAttentionCount();
+    const tabs = [
+      { id: "upcoming", label: "Nadchodzące" },
+      { id: "all", label: "Wszystkie" },
       { id: "confirmed", label: "Potwierdzone" },
-      { id: "pending", label: "Czeka na potwierdzenie" },
+      { id: "pending", label: "Nie potwierdzone", count: pendingCount },
       { id: "cancelled", label: "Odwołane" },
       { id: "rejected", label: "Odrzucone" },
     ];
     return `
-      <div class="my-cal-status-filters" role="group" aria-label="Filtr statusów wizyt">
-        ${chips
-          .map(function (chip) {
-            const on = active.indexOf(chip.id) !== -1;
-            return `<button type="button" class="my-cal-status-chip${on ? " is-on" : ""}"
-              data-action="my-cal-status-filter" data-status="${chip.id}"
-              aria-pressed="${on ? "true" : "false"}">${escapeHtml(chip.label)}</button>`;
+      <div class="my-cal-status-tabs" role="tablist" aria-label="Filtr statusów wizyt">
+        ${tabs
+          .map(function (tab) {
+            const on = current === tab.id;
+            const badge = renderCountBadge(tab.count, "count-badge my-cal-status-tab__badge");
+            const aria =
+              tab.count > 0
+                ? `${tab.label}, ${tab.count} oczekując${tab.count === 1 ? "e" : "ych"}`
+                : tab.label;
+            return `<button type="button" class="my-cal-status-tab${on ? " is-active" : ""}"
+              role="tab" data-action="my-cal-status-filter" data-status="${tab.id}"
+              aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(aria)}">${escapeHtml(tab.label)}${badge}</button>`;
           })
           .join("")}
       </div>`;
@@ -3991,6 +4016,25 @@
     return (window.AppState.requests || []).filter(function (r) {
       return r && (r.status === "pending" || r.status === "proposed");
     });
+  }
+
+  /** Wizyty klienta czekające na potwierdzenie / akceptację propozycji. */
+  function clientPendingVisits() {
+    return (window.AppState.bookings || []).filter(function (b) {
+      return b && b.side === "client" && (b.status === "pending" || b.status === "proposed");
+    });
+  }
+
+  /** Licznik oczekujących: zapytania o termin + wizyty niepotwierdzone. */
+  function clientPendingAttentionCount() {
+    return clientOpenRequests().length + clientPendingVisits().length;
+  }
+
+  function renderCountBadge(count, className) {
+    const n = Number(count) || 0;
+    if (n < 1) return "";
+    const label = n > 99 ? "99+" : String(n);
+    return `<span class="${className}" aria-hidden="true">${escapeHtml(label)}</span>`;
   }
 
   function renderClientRequestCard(r) {
@@ -4060,7 +4104,9 @@
       : [];
     const waitingOnly =
       statusFilters.length === 1 && statusFilters[0] === "pending";
-    // Oczekujące bez daty (prośba o termin) — przy filtrze „Czeka na potwierdzenie”.
+    const upcomingOnly =
+      statusFilters.length === 1 && statusFilters[0] === "upcoming";
+    // Oczekujące bez daty (prośba o termin) — przy filtrze „Nie potwierdzone”.
     const waitingUndated = waitingOnly
       ? (window.AppState.bookings || []).filter(function (b) {
           return (
@@ -4073,11 +4119,13 @@
       : [];
     const filtered = list
       .filter(function (b) {
-        if (b.dateISO !== selectedDate) return false;
+        if (!upcomingOnly && b.dateISO !== selectedDate) return false;
         return visitMatchesMyCalStatusFilters(b, statusFilters);
       })
       .concat(waitingUndated);
-    const listTitle = `Wizyty · ${formatDateLong(selectedDate)}`;
+    const listTitle = upcomingOnly
+      ? "Nadchodzące wizyty"
+      : `Wizyty · ${formatDateLong(selectedDate)}`;
     const monthSide = desktop
       ? renderMyCalMonthPanel(selectedDate, visitSet, { force: true, side: true })
       : "";
@@ -4119,19 +4167,26 @@
             </aside>
             <div class="my-cal-layout__main">
               ${renderMyCalWeekStrip(selectedDate, visitSet)}
+              ${desktop ? "" : renderMyCalStatusFilters()}
               ${renderNotificationsBlock("client", "Powiadomienia")}
-              ${renderClientRequestsSection()}
+              ${desktop ? renderMyCalStatusFilters() : ""}
+              ${
+                statusFilters.length === 1 && statusFilters[0] === "pending"
+                  ? renderClientRequestsSection()
+                  : ""
+              }
               <section class="my-cal-visits" aria-label="${escapeHtml(listTitle)}">
                 <h3 class="booking__label booking__label--caps">${escapeHtml(listTitle)}</h3>
-                ${renderMyCalStatusFilters()}
                 <div class="visit-list">
                   ${
                     filtered.length
                       ? filtered.map(renderClientVisitCard).join("")
                       : `<p class="empty-note">${
-                          statusFilters.length
-                            ? "Brak wizyt o wybranym statusie w tym dniu."
-                            : "Brak wizyt w tym dniu."
+                          upcomingOnly
+                            ? "Brak nadchodzących wizyt."
+                            : statusFilters.length
+                              ? "Brak wizyt o wybranym statusie w tym dniu."
+                              : "Brak wizyt w tym dniu."
                         }</p>`
                   }
                 </div>
@@ -13916,10 +13971,17 @@
     }
     const screen = window.AppState.screen.client;
     const onMarket = screen === "search" || screen === "booking" || screen === "profile";
+    const pendingCount = clientPendingAttentionCount();
     return [
       { label: "Szukaj", action: "go-screen", screen: "search", active: !menuOpen && onMarket },
       { label: "Ulubione", action: "go-screen", screen: "favorites", active: !menuOpen && screen === "favorites" },
-      { label: "Kalendarz", action: "go-screen", screen: "myCalendar", active: !menuOpen && screen === "myCalendar" },
+      {
+        label: "Kalendarz",
+        action: "go-screen",
+        screen: "myCalendar",
+        active: !menuOpen && screen === "myCalendar",
+        count: pendingCount,
+      },
     ];
   }
 
@@ -13934,10 +13996,15 @@
         const attrs = [];
         if (it.screen) attrs.push(`data-screen="${it.screen}"`);
         if (it.tab) attrs.push(`data-tab="${it.tab}"`);
+        const badge = renderCountBadge(it.count, "count-badge site-nav__badge");
+        const aria =
+          it.count > 0
+            ? `${it.label}, ${it.count} oczekując${it.count === 1 ? "e" : "ych"}`
+            : it.label;
         return `<button type="button" class="site-nav__link${it.active ? " site-nav__link--active" : ""}"
-          data-action="${it.action}" ${attrs.join(" ")}${
+          data-action="${it.action}" ${attrs.join(" ")} aria-label="${escapeHtml(aria)}"${
             it.active ? ' aria-current="page"' : ""
-          }>${it.label}</button>`;
+          }><span class="site-nav__link-label">${escapeHtml(it.label)}</span>${badge}</button>`;
       })
       .join("");
   }
@@ -14470,7 +14537,7 @@
       case "my-cal-pick-date": pickMyCalDate(d.date); break;
       case "my-cal-status-filter":
         event.preventDefault();
-        toggleMyCalStatusFilter(d.status);
+        setMyCalStatusFilter(d.status);
         break;
       case "avail-week-prev":
         event.preventDefault();
