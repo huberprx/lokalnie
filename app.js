@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.129";
+  const APP_VERSION = "1.0.136";
 
   const PWA = {
     registration: null,
@@ -92,8 +92,8 @@
       myCalMonth: null,
       myCalDate: null,
       myCalMonthOpen: false,
-      /** Filtr statusu wizyt w Mój kalendarz (tab): [] = wszystkie; albo jeden z confirmed|pending|cancelled|rejected. */
-      myCalStatusFilters: [],
+      /** Filtr statusu wizyt w Mój kalendarz (tab): upcoming|past|confirmed|pending|cancelled|rejected. */
+      myCalStatusFilters: ["upcoming"],
       provCalDate: null,
       /** Pierwszy widoczny dzień okna (2–6 dni); przy 7 = poniedziałek tygodnia. */
       provCalWindowStart: null,
@@ -2423,17 +2423,20 @@
         myCalMonth: typeof stored.myCalMonth === "string" ? stored.myCalMonth : base.myCalMonth,
         myCalDate: typeof stored.myCalDate === "string" ? stored.myCalDate : base.myCalDate,
         myCalMonthOpen: typeof stored.myCalMonthOpen === "boolean" ? stored.myCalMonthOpen : base.myCalMonthOpen,
-        myCalStatusFilters: Array.isArray(stored.myCalStatusFilters)
-          ? stored.myCalStatusFilters.filter(function (s) {
-              return (
-                s === "upcoming" ||
-                s === "confirmed" ||
-                s === "pending" ||
-                s === "cancelled" ||
-                s === "rejected"
-              );
-            })
-          : base.myCalStatusFilters,
+        myCalStatusFilters: (function () {
+          const raw = Array.isArray(stored.myCalStatusFilters) ? stored.myCalStatusFilters : null;
+          if (!raw || !raw.length) return base.myCalStatusFilters.slice();
+          const next = raw.filter(function (s) {
+            return (
+              s === "upcoming" ||
+              s === "past" ||
+              s === "pending" ||
+              s === "cancelled" ||
+              s === "rejected"
+            );
+          });
+          return next.length ? next : base.myCalStatusFilters.slice();
+        })(),
         provCalDate: typeof stored.provCalDate === "string" ? stored.provCalDate : base.provCalDate,
         provCalWindowStart:
           typeof stored.provCalWindowStart === "string" ? stored.provCalWindowStart : base.provCalWindowStart,
@@ -3955,18 +3958,14 @@
   }
 
   function setMyCalStatusFilter(status) {
-    if (status === "all" || !status) {
-      window.AppState.myCalStatusFilters = [];
-    } else {
-      const allowed = { upcoming: 1, confirmed: 1, pending: 1, cancelled: 1, rejected: 1 };
-      if (!allowed[status]) return;
-      window.AppState.myCalStatusFilters = [status];
-    }
+    const allowed = { upcoming: 1, past: 1, pending: 1, cancelled: 1, rejected: 1 };
+    if (!allowed[status]) return;
+    window.AppState.myCalStatusFilters = [status];
     saveState();
     renderAll();
   }
 
-  /** Filtr „Czeka na potwierdzenie” obejmuje pending i proposed. */
+  /** Filtr „Czekające na potwierdzenie” obejmuje pending i proposed. */
   function visitMatchesMyCalStatusFilters(b, statusFilters) {
     if (!statusFilters || !statusFilters.length) return true;
     return statusFilters.some(function (f) {
@@ -3976,6 +3975,11 @@
         if (!b.dateISO || b.dateISO < today) return false;
         return b.status === "confirmed" || b.status === "pending" || b.status === "proposed";
       }
+      if (f === "past") {
+        const today = demoTodayISO();
+        if (!b.dateISO || b.dateISO >= today) return false;
+        return b.status === "confirmed";
+      }
       return b.status === f;
     });
   }
@@ -3984,32 +3988,120 @@
     const active = Array.isArray(window.AppState.myCalStatusFilters)
       ? window.AppState.myCalStatusFilters
       : [];
-    const current = active.length === 1 ? active[0] : "all";
+    const current = active.length === 1 ? active[0] : "upcoming";
     const pendingCount = clientPendingAttentionCount();
+    // Hierarchia wartości dla klienta: przyszłość → akcja → historia → negatywne.
     const tabs = [
       { id: "upcoming", label: "Nadchodzące" },
-      { id: "all", label: "Wszystkie" },
-      { id: "confirmed", label: "Potwierdzone" },
-      { id: "pending", label: "Nie potwierdzone", count: pendingCount },
+      { id: "pending", label: "Czekające na potwierdzenie", count: pendingCount },
+      { id: "past", label: "Odbyte" },
       { id: "cancelled", label: "Odwołane" },
       { id: "rejected", label: "Odrzucone" },
     ];
     return `
-      <div class="my-cal-status-tabs" role="tablist" aria-label="Filtr statusów wizyt">
-        ${tabs
-          .map(function (tab) {
-            const on = current === tab.id;
-            const badge = renderCountBadge(tab.count, "count-badge my-cal-status-tab__badge");
-            const aria =
-              tab.count > 0
-                ? `${tab.label}, ${tab.count} oczekując${tab.count === 1 ? "e" : "ych"}`
-                : tab.label;
-            return `<button type="button" class="my-cal-status-tab${on ? " is-active" : ""}"
-              role="tab" data-action="my-cal-status-filter" data-status="${tab.id}"
-              aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(aria)}">${escapeHtml(tab.label)}${badge}</button>`;
-          })
-          .join("")}
+      <div class="my-cal-status-rail" data-my-cal-status-rail>
+        <button type="button" class="my-cal-status-rail__btn my-cal-status-rail__btn--prev"
+          data-action="my-cal-status-scroll" data-dir="-1" aria-label="Przewiń w lewo" hidden>‹</button>
+        <div class="my-cal-status-tabs" role="tablist" aria-label="Filtr statusów wizyt" data-my-cal-status-scroll>
+          ${tabs
+            .map(function (tab) {
+              const on = current === tab.id;
+              const badge = renderCountBadge(tab.count, "count-badge my-cal-status-tab__badge");
+              const aria =
+                tab.count > 0
+                  ? `${tab.label}, ${tab.count} oczekując${tab.count === 1 ? "e" : "ych"}`
+                  : tab.label;
+              return `<button type="button" class="my-cal-status-tab${on ? " is-active" : ""}"
+                role="tab" data-action="my-cal-status-filter" data-status="${tab.id}"
+                aria-selected="${on ? "true" : "false"}" aria-label="${escapeHtml(aria)}">${escapeHtml(tab.label)}${badge}</button>`;
+            })
+            .join("")}
+        </div>
+        <button type="button" class="my-cal-status-rail__btn my-cal-status-rail__btn--next"
+          data-action="my-cal-status-scroll" data-dir="1" aria-label="Przewiń w prawo" hidden>›</button>
       </div>`;
+  }
+
+  function syncMyCalStatusRail(rail) {
+    if (!rail) return;
+    const scroller = rail.querySelector("[data-my-cal-status-scroll]");
+    if (!scroller) return;
+    const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+    const left = scroller.scrollLeft;
+    const canLeft = max > 2 && left > 2;
+    const canRight = max > 2 && left < max - 2;
+    rail.classList.toggle("can-scroll-left", canLeft);
+    rail.classList.toggle("can-scroll-right", canRight);
+    rail.classList.toggle("is-overflowing", max > 2);
+    const prev = rail.querySelector(".my-cal-status-rail__btn--prev");
+    const next = rail.querySelector(".my-cal-status-rail__btn--next");
+    if (prev) {
+      prev.hidden = !canLeft;
+      prev.disabled = !canLeft;
+    }
+    if (next) {
+      next.hidden = !canRight;
+      next.disabled = !canRight;
+    }
+  }
+
+  function ensureMyCalStatusActiveVisible(scroller) {
+    if (!scroller) return;
+    const active = scroller.querySelector(".my-cal-status-tab.is-active");
+    if (!active) return;
+    const pad = 28;
+    const left = active.offsetLeft;
+    const right = left + active.offsetWidth;
+    const viewL = scroller.scrollLeft;
+    const viewR = viewL + scroller.clientWidth;
+    if (left < viewL + pad) {
+      scroller.scrollLeft = Math.max(0, left - pad);
+    } else if (right > viewR - pad) {
+      scroller.scrollLeft = Math.max(0, right - scroller.clientWidth + pad);
+    }
+  }
+
+  function syncAllMyCalStatusRails(opts) {
+    const bringActive = !!(opts && opts.bringActive);
+    document.querySelectorAll("[data-my-cal-status-rail]").forEach(function (rail) {
+      const scroller = rail.querySelector("[data-my-cal-status-scroll]");
+      if (bringActive) ensureMyCalStatusActiveVisible(scroller);
+      syncMyCalStatusRail(rail);
+    });
+  }
+
+  function scrollMyCalStatusRail(dir, fromEl) {
+    const rail = fromEl && fromEl.closest("[data-my-cal-status-rail]");
+    const scroller = rail && rail.querySelector("[data-my-cal-status-scroll]");
+    if (!scroller) return;
+    const amount = Math.max(160, Math.floor(scroller.clientWidth * 0.65));
+    const step = (Number(dir) || 1) >= 0 ? amount : -amount;
+    if (typeof scroller.scrollBy === "function") {
+      scroller.scrollBy({ left: step, behavior: "smooth" });
+    } else {
+      scroller.scrollLeft += step;
+    }
+    window.setTimeout(function () {
+      syncMyCalStatusRail(rail);
+    }, 220);
+  }
+
+  function bindMyCalStatusRail() {
+    if (bindMyCalStatusRail.done) return;
+    bindMyCalStatusRail.done = true;
+    document.addEventListener(
+      "scroll",
+      function (event) {
+        const t = event.target;
+        if (!t || !t.getAttribute || t.getAttribute("data-my-cal-status-scroll") == null) return;
+        const rail = t.closest("[data-my-cal-status-rail]");
+        if (rail) syncMyCalStatusRail(rail);
+      },
+      true
+    );
+    window.addEventListener("resize", function () {
+      syncAllMyCalStatusRails();
+    });
   }
 
   function clientOpenRequests() {
@@ -4037,43 +4129,139 @@
     return `<span class="${className}" aria-hidden="true">${escapeHtml(label)}</span>`;
   }
 
+  function renderVisitCardDateBlock(dateISO) {
+    const day = dateISO ? new Date(String(dateISO).slice(0, 10) + "T12:00:00") : null;
+    const dayOk = day && !isNaN(day.getTime());
+    if (!dayOk) {
+      return `<div class="visit-card__date visit-card__date--empty" aria-hidden="true">
+          <span class="visit-card__dow">—</span>
+          <span class="visit-card__daynum">·</span>
+          <span class="visit-card__month">termin</span>
+        </div>`;
+    }
+    const dow =
+      typeof PROV_CAL_DOW_SHORT !== "undefined" ? PROV_CAL_DOW_SHORT[day.getDay()] : "";
+    return `<div class="visit-card__date" aria-label="${escapeHtml(formatDateLong(dateISO))}">
+        <span class="visit-card__dow">${escapeHtml(dow)}</span>
+        <span class="visit-card__daynum">${escapeHtml(String(day.getDate()))}</span>
+        <span class="visit-card__month">${escapeHtml(MONTHS[day.getMonth()])}</span>
+      </div>`;
+  }
+
+  function renderClientVisitQuickActions(opts) {
+    const o = opts || {};
+    const address = o.address || "";
+    const phone = o.phone || "";
+    const slug = o.slug || "";
+    const bookingId = o.bookingId || "";
+    const canAddToCalendar = !!(o.canAddToCalendar && bookingId);
+    const showRebook = o.showRebook !== false && !!slug;
+    const calendarChip = canAddToCalendar
+      ? `<button type="button" class="visit-card__chip" data-action="add-visit-calendar" data-booking-id="${escapeHtml(bookingId)}">
+            <span class="visit-card__chip-icon visit-card__chip-icon--calendar" aria-hidden="true"></span>
+            Dodaj do kalendarza
+          </button>`
+      : "";
+    const rebookChip = showRebook
+      ? `<button type="button" class="visit-card__chip" data-action="${
+          bookingId ? "rebook-visit" : "open-profile"
+        }" ${bookingId ? `data-booking-id="${escapeHtml(bookingId)}"` : `data-slug="${escapeHtml(slug)}"`}>
+            <span class="visit-card__chip-icon visit-card__chip-icon--rebook" aria-hidden="true"></span>
+            Umów ponownie
+          </button>`
+      : "";
+    if (!address && !phone && !calendarChip && !rebookChip && !slug) return "";
+    return `<div class="visit-card__quick" role="group" aria-label="Szybkie akcje">
+            ${
+              address
+                ? `<a class="visit-card__chip" href="${escapeHtml(mapsSearchUrl(address))}" target="_blank" rel="noopener noreferrer">
+                    <span class="visit-card__chip-icon visit-card__chip-icon--nav" aria-hidden="true"></span>
+                    Nawiguj
+                  </a>`
+                : ""
+            }
+            ${
+              phone
+                ? `<a class="visit-card__chip" href="tel:${escapeHtml(phone)}">
+                    <span class="visit-card__chip-icon visit-card__chip-icon--call" aria-hidden="true"></span>
+                    Zadzwoń
+                  </a>`
+                : slug
+                  ? `<button type="button" class="visit-card__chip" data-action="call-provider" data-slug="${escapeHtml(slug)}">
+                      <span class="visit-card__chip-icon visit-card__chip-icon--call" aria-hidden="true"></span>
+                      Zadzwoń
+                    </button>`
+                  : ""
+            }
+            ${calendarChip}
+            ${rebookChip}
+          </div>`;
+  }
+
   function renderClientRequestCard(r) {
     const days = normalizeRequestDays(r.days);
     const proposals = Array.isArray(r.proposals) ? r.proposals : [];
     const waiting = r.status !== "proposed" || !proposals.length;
+    const provider = getProviderById(r.providerId);
+    const slug = provider ? provider.slug : "";
+    const address = providerNavAddress(provider);
+    const phone = provider && provider.phone ? String(provider.phone).replace(/\s/g, "") : "";
+    const firstDay = days[0] || null;
+    const dateISO = firstDay ? firstDay.dateISO : "";
+    const timeLabel = firstDay
+      ? DAY_PART_LABEL[normalizeDayPart(firstDay.part)] || "Do ustalenia"
+      : "Do ustalenia";
+    const statusKey = waiting ? "pending" : "proposed";
+    const statusLabel = waiting ? "Czeka na propozycje" : "Wybierz termin";
+    const servicesLabel = (r.serviceNames || []).join(", ");
+    const placeLine = (provider && provider.locations && provider.locations[0] && provider.locations[0].label) || "";
     const cancelBtn = `<button type="button" class="btn btn--ghost btn--sm" data-action="cancel-client-request" data-request-id="${escapeHtml(r.id)}">Anuluj prośbę</button>`;
+    const extra = waiting
+      ? `${days.length ? renderRequestDayBadges(days) : ""}
+         <p class="request-card__note">Usługodawca odeśle konkretne godziny do wyboru.</p>`
+      : `<p class="request-card__note">Wybierz jeden termin — pozostałe propozycje przepadną.</p>
+         <ul class="proposal-list proposal-list--pick">
+           ${proposals
+             .map(function (c) {
+               return `<li>
+                 <button type="button" class="proposal-pick" data-action="accept-request-proposal"
+                   data-request-id="${escapeHtml(r.id)}" data-proposal-id="${escapeHtml(c.id)}">
+                   <span class="proposal-pick__range">${escapeHtml(proposalRangeLabel(c))}</span>
+                   ${c.locationLabel ? `<span class="proposal-pick__place">${escapeHtml(c.locationLabel)}</span>` : ""}
+                   <span class="proposal-pick__cta">Rezerwuj</span>
+                 </button>
+               </li>`;
+             })
+             .join("")}
+         </ul>`;
+    const actions = waiting
+      ? `<div class="visit-card__actions">${cancelBtn}</div>`
+      : `<div class="visit-card__actions">
+           <button type="button" class="btn btn--ghost btn--sm" data-action="decline-request-proposals" data-request-id="${escapeHtml(r.id)}">Poproś o inne terminy</button>
+           ${cancelBtn}
+         </div>`;
     return `
-      <div class="client-request-card" data-request-id="${escapeHtml(r.id)}">
-        <div class="visit-card__top">
-          <span class="visit-card__name">${escapeHtml(r.providerName || "")}</span>
-          <span class="status-badge" data-status="${waiting ? "pending" : "proposed"}">${waiting ? "Czeka na propozycje" : "Wybierz termin"}</span>
+      <div class="visit-card visit-card--client visit-card--request" data-request-id="${escapeHtml(r.id)}" data-status="${statusKey}">
+        <div class="visit-card__main">
+          ${renderVisitCardDateBlock(dateISO)}
+          <div class="visit-card__body">
+            <div class="visit-card__time-row">
+              <span class="visit-card__hours visit-card__hours--soft">${escapeHtml(timeLabel)}</span>
+              <span class="status-badge" data-status="${statusKey}">${escapeHtml(statusLabel)}</span>
+            </div>
+            <div class="visit-card__name">${escapeHtml(r.providerName || "")}</div>
+            ${servicesLabel ? `<div class="visit-card__svc">${escapeHtml(servicesLabel)}</div>` : ""}
+            ${placeLine ? `<div class="visit-card__place">${escapeHtml(placeLine)}</div>` : ""}
+          </div>
         </div>
-        <div class="visit-card__svc">${escapeHtml((r.serviceNames || []).join(", "))}</div>
-        ${
-          waiting
-            ? `${renderRequestDayBadges(days)}
-               <p class="request-card__note">Usługodawca odeśle konkretne godziny do wyboru.</p>
-               <div class="visit-card__actions">${cancelBtn}</div>`
-            : `<p class="request-card__note">Wybierz jeden termin — pozostałe propozycje przepadną.</p>
-               <ul class="proposal-list proposal-list--pick">
-                 ${proposals
-                   .map(function (c) {
-                     return `<li>
-                       <button type="button" class="proposal-pick" data-action="accept-request-proposal"
-                         data-request-id="${escapeHtml(r.id)}" data-proposal-id="${escapeHtml(c.id)}">
-                         <span class="proposal-pick__range">${escapeHtml(proposalRangeLabel(c))}</span>
-                         ${c.locationLabel ? `<span class="proposal-pick__place">${escapeHtml(c.locationLabel)}</span>` : ""}
-                         <span class="proposal-pick__cta">Rezerwuj</span>
-                       </button>
-                     </li>`;
-                   })
-                   .join("")}
-               </ul>
-               <div class="visit-card__actions">
-                 <button type="button" class="btn btn--ghost btn--sm" data-action="decline-request-proposals" data-request-id="${escapeHtml(r.id)}">Poproś o inne terminy</button>
-                 ${cancelBtn}
-               </div>`
-        }
+        ${renderClientVisitQuickActions({
+          address: address,
+          phone: phone,
+          slug: slug,
+          showRebook: false,
+        })}
+        <div class="visit-card__extra">${extra}</div>
+        ${actions}
       </div>`;
   }
 
@@ -4106,7 +4294,9 @@
       statusFilters.length === 1 && statusFilters[0] === "pending";
     const upcomingOnly =
       statusFilters.length === 1 && statusFilters[0] === "upcoming";
-    // Oczekujące bez daty (prośba o termin) — przy filtrze „Nie potwierdzone”.
+    const pastOnly = statusFilters.length === 1 && statusFilters[0] === "past";
+    const rangeOnly = upcomingOnly || pastOnly;
+    // Oczekujące bez daty (prośba o termin) — przy filtrze „Czekające na potwierdzenie”.
     const waitingUndated = waitingOnly
       ? (window.AppState.bookings || []).filter(function (b) {
           return (
@@ -4119,13 +4309,20 @@
       : [];
     const filtered = list
       .filter(function (b) {
-        if (!upcomingOnly && b.dateISO !== selectedDate) return false;
+        if (!rangeOnly && b.dateISO !== selectedDate) return false;
         return visitMatchesMyCalStatusFilters(b, statusFilters);
       })
       .concat(waitingUndated);
     const listTitle = upcomingOnly
       ? "Nadchodzące wizyty"
-      : `Wizyty · ${formatDateLong(selectedDate)}`;
+      : pastOnly
+        ? "Odbyte wizyty"
+        : waitingOnly
+          ? "Wizyty oczekujące"
+          : `Wizyty · ${formatDateLong(selectedDate)}`;
+    const requestsHtml = waitingOnly ? renderClientRequestsSection() : "";
+    // Na „Czekające…” pusta lista wizyt jest zbędna, gdy widać już zapytania o termin.
+    const showVisitsSection = filtered.length > 0 || !(waitingOnly && requestsHtml);
     const monthSide = desktop
       ? renderMyCalMonthPanel(selectedDate, visitSet, { force: true, side: true })
       : "";
@@ -4170,12 +4367,10 @@
               ${desktop ? "" : renderMyCalStatusFilters()}
               ${renderNotificationsBlock("client", "Powiadomienia")}
               ${desktop ? renderMyCalStatusFilters() : ""}
+              ${requestsHtml}
               ${
-                statusFilters.length === 1 && statusFilters[0] === "pending"
-                  ? renderClientRequestsSection()
-                  : ""
-              }
-              <section class="my-cal-visits" aria-label="${escapeHtml(listTitle)}">
+                showVisitsSection
+                  ? `<section class="my-cal-visits" aria-label="${escapeHtml(listTitle)}">
                 <h3 class="booking__label booking__label--caps">${escapeHtml(listTitle)}</h3>
                 <div class="visit-list">
                   ${
@@ -4184,13 +4379,19 @@
                       : `<p class="empty-note">${
                           upcomingOnly
                             ? "Brak nadchodzących wizyt."
-                            : statusFilters.length
-                              ? "Brak wizyt o wybranym statusie w tym dniu."
-                              : "Brak wizyt w tym dniu."
+                            : pastOnly
+                              ? "Brak odbytych wizyt."
+                              : waitingOnly
+                                ? "Brak wizyt czekających na potwierdzenie."
+                                : statusFilters.length
+                                  ? "Brak wizyt o wybranym statusie w tym dniu."
+                                  : "Brak wizyt w tym dniu."
                         }</p>`
                   }
                 </div>
-              </section>
+              </section>`
+                  : ""
+              }
             </div>
           </div>
         </div>
@@ -4541,6 +4742,18 @@
     return provider.address ? String(provider.address) : "";
   }
 
+  function resolveClientVisitDisplayDate(b) {
+    if (b && b.dateISO) return String(b.dateISO).slice(0, 10);
+    if (b && b.requestId) {
+      const req = (window.AppState.requests || []).find(function (r) {
+        return r && r.id === b.requestId;
+      });
+      const days = req ? normalizeRequestDays(req.days) : [];
+      if (days[0] && days[0].dateISO) return String(days[0].dateISO).slice(0, 10);
+    }
+    return "";
+  }
+
   function renderClientVisitCard(b) {
     const canReschedule = b.status === "rejected" || b.status === "cancelled";
     const canAccept = b.status === "proposed";
@@ -4549,68 +4762,16 @@
     const address = resolveVisitNavAddress(b, provider);
     const phone = provider && provider.phone ? String(provider.phone).replace(/\s/g, "") : "";
     const placeLine = b.locationLabel || address || "";
-    const canAddToCalendar = !!(b.dateISO && b.from);
-    const calendarChip = canAddToCalendar
-      ? `<button type="button" class="visit-card__chip" data-action="add-visit-calendar" data-booking-id="${escapeHtml(b.id)}">
-            <span class="visit-card__chip-icon visit-card__chip-icon--calendar" aria-hidden="true"></span>
-            Dodaj do kalendarza
-          </button>`
-      : "";
-    const rebookChip = slug
-      ? `<button type="button" class="visit-card__chip" data-action="rebook-visit" data-booking-id="${escapeHtml(b.id)}">
-            <span class="visit-card__chip-icon visit-card__chip-icon--rebook" aria-hidden="true"></span>
-            Umów ponownie
-          </button>`
-      : "";
-    const quickActions =
-      address || phone || calendarChip || rebookChip
-        ? `<div class="visit-card__quick" role="group" aria-label="Szybkie akcje">
-            ${
-              address
-                ? `<a class="visit-card__chip" href="${escapeHtml(mapsSearchUrl(address))}" target="_blank" rel="noopener noreferrer">
-                    <span class="visit-card__chip-icon visit-card__chip-icon--nav" aria-hidden="true"></span>
-                    Nawiguj
-                  </a>`
-                : ""
-            }
-            ${
-              phone
-                ? `<a class="visit-card__chip" href="tel:${escapeHtml(phone)}">
-                    <span class="visit-card__chip-icon visit-card__chip-icon--call" aria-hidden="true"></span>
-                    Zadzwoń
-                  </a>`
-                : slug
-                  ? `<button type="button" class="visit-card__chip" data-action="call-provider" data-slug="${escapeHtml(slug)}">
-                      <span class="visit-card__chip-icon visit-card__chip-icon--call" aria-hidden="true"></span>
-                      Zadzwoń
-                    </button>`
-                  : ""
-            }
-            ${calendarChip}
-            ${rebookChip}
-          </div>`
-        : "";
-    const day = b.dateISO ? new Date(b.dateISO + "T12:00:00") : null;
-    const dayOk = day && !isNaN(day.getTime());
-    const dow =
-      dayOk && typeof PROV_CAL_DOW_SHORT !== "undefined" ? PROV_CAL_DOW_SHORT[day.getDay()] : "";
-    const dayNum = dayOk ? String(day.getDate()) : "";
-    const monthName = dayOk ? MONTHS[day.getMonth()] : "";
+    const displayDate = resolveClientVisitDisplayDate(b);
     const timeRange = b.from && b.to ? `${b.from}–${b.to}` : b.from || "";
+    const timeLabel = timeRange || (b.status === "pending" || b.status === "proposed" ? "Do ustalenia" : "");
     const servicesLabel = (b.serviceNames || []).join(", ");
-    const dateBlock =
-      dayOk
-        ? `<div class="visit-card__date" aria-label="${escapeHtml(formatDateLong(b.dateISO))}">
-            <span class="visit-card__dow">${escapeHtml(dow)}</span>
-            <span class="visit-card__daynum">${escapeHtml(dayNum)}</span>
-            <span class="visit-card__month">${escapeHtml(monthName)}</span>
-          </div>`
-        : "";
+    const statusLabel = STATUS_LABEL[b.status] || b.status;
 
     return `
       <div class="visit-card visit-card--client" data-booking-id="${escapeHtml(b.id)}" data-status="${escapeHtml(b.status)}">
         <div class="visit-card__main">
-          ${dateBlock}
+          ${renderVisitCardDateBlock(displayDate)}
           <div class="visit-card__body">
             <div class="visit-card__time-row">
               ${
@@ -4618,16 +4779,25 @@
                   ? `<time class="visit-card__hours" datetime="${escapeHtml(
                       (b.dateISO || "") + (b.from ? "T" + b.from : "")
                     )}">${escapeHtml(timeRange)}</time>`
-                  : ""
+                  : timeLabel
+                    ? `<span class="visit-card__hours visit-card__hours--soft">${escapeHtml(timeLabel)}</span>`
+                    : `<span class="visit-card__hours visit-card__hours--soft">—</span>`
               }
-              <span class="status-badge" data-status="${escapeHtml(b.status)}">${escapeHtml(STATUS_LABEL[b.status] || b.status)}</span>
+              <span class="status-badge" data-status="${escapeHtml(b.status)}">${escapeHtml(statusLabel)}</span>
             </div>
             <div class="visit-card__name">${escapeHtml(b.providerName)}</div>
             ${servicesLabel ? `<div class="visit-card__svc">${escapeHtml(servicesLabel)}</div>` : ""}
             ${placeLine ? `<div class="visit-card__place">${escapeHtml(placeLine)}</div>` : ""}
           </div>
         </div>
-        ${quickActions}
+        ${renderClientVisitQuickActions({
+          address: address,
+          phone: phone,
+          slug: slug,
+          bookingId: b.id,
+          canAddToCalendar: !!(b.dateISO && b.from),
+          showRebook: !!slug,
+        })}
         ${
           canAccept
             ? `<div class="visit-card__actions">
@@ -12663,6 +12833,12 @@
         return el.scrollLeft;
       }
     );
+    const prevMyCalTabScrolls = Array.prototype.map.call(
+      document.querySelectorAll("[data-my-cal-status-scroll]"),
+      function (el) {
+        return el.scrollLeft;
+      }
+    );
     INSTANCES.forEach(render);
     renderFullscreen();
     // Przywróć od razu (sync), zanim scheduleScroll zrobi short-nudge.
@@ -12684,7 +12860,11 @@
     });
     document.querySelectorAll('[data-role="booking-date-strip"]').forEach(updateBookingMonthLabel);
     document.querySelectorAll(".filter-scroll--dates").forEach(updateSearchFilterMonthLabel);
+    document.querySelectorAll("[data-my-cal-status-scroll]").forEach(function (el, i) {
+      if (typeof prevMyCalTabScrolls[i] === "number") el.scrollLeft = prevMyCalTabScrolls[i];
+    });
     requestAnimationFrame(function () {
+      syncAllMyCalStatusRails({ bringActive: true });
       const availGrid = document.querySelector('[data-role="avail-week-grid"]');
       if (availGrid) initAvailStripScroll(availGrid);
       const bodies = document.querySelectorAll('[data-role="prov-cal-body"]');
@@ -14538,6 +14718,10 @@
       case "my-cal-status-filter":
         event.preventDefault();
         setMyCalStatusFilter(d.status);
+        break;
+      case "my-cal-status-scroll":
+        event.preventDefault();
+        scrollMyCalStatusRail(d.dir, btn);
         break;
       case "avail-week-prev":
         event.preventDefault();
@@ -16989,6 +17173,7 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     bindFilterScroll();
+    bindMyCalStatusRail();
     bindProvCalEmptyTap();
     bindProvCalDraftResize();
     bindProvCalEventDrag();

@@ -6661,16 +6661,54 @@ a.provider-info-pop__loc:hover .provider-info-pop__loc-addr {
   margin: 0;
 }
 
+/* YouTube-style tab rail: swipe always; arrows + edge fade on desktop */
+.my-cal-status-rail {
+  position: relative;
+  margin: 0.35rem 0 0.65rem;
+  min-width: 0;
+}
+
+.my-cal-status-rail::before,
+.my-cal-status-rail::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 1px;
+  width: 2.4rem;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.my-cal-status-rail::before {
+  left: 0;
+  background: linear-gradient(to right, var(--surface) 18%, transparent);
+}
+
+.my-cal-status-rail::after {
+  right: 0;
+  background: linear-gradient(to left, var(--surface) 18%, transparent);
+}
+
+.my-cal-status-rail.can-scroll-left::before,
+.my-cal-status-rail.can-scroll-right::after {
+  opacity: 1;
+}
+
 .my-cal-status-tabs {
   display: flex;
   flex-wrap: nowrap;
   gap: 0.1rem;
-  margin: 0.35rem 0 0.65rem;
+  margin: 0;
   padding: 0;
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
   scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 .my-cal-status-tabs::-webkit-scrollbar {
@@ -6722,8 +6760,117 @@ a.provider-info-pop__loc:hover .provider-info-pop__loc-addr {
   vertical-align: middle;
 }
 
-.app-screen--my-cal-desktop .my-cal-status-tabs {
+.my-cal-status-rail__btn {
+  display: none;
+}
+
+.app-screen--my-cal-desktop .my-cal-status-rail {
   margin-top: 0.15rem;
+}
+
+/* Desktop / desktop preview: circular side arrows (YouTube-style) */
+@media (min-width: 900px) {
+  .my-cal-status-rail.is-overflowing {
+    padding: 0 1.85rem;
+  }
+
+  .my-cal-status-rail.is-overflowing::before {
+    left: 1.85rem;
+    width: 2.8rem;
+  }
+
+  .my-cal-status-rail.is-overflowing::after {
+    right: 1.85rem;
+    width: 2.8rem;
+  }
+
+  .my-cal-status-rail__btn {
+    appearance: none;
+    -webkit-appearance: none;
+    position: absolute;
+    top: 50%;
+    z-index: 3;
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 1.15rem;
+    line-height: 1;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
+    cursor: pointer;
+    transform: translateY(calc(-50% - 0.5px));
+  }
+
+  .my-cal-status-rail__btn:hover {
+    background: var(--surface-2);
+  }
+
+  .my-cal-status-rail__btn:disabled,
+  .my-cal-status-rail__btn[hidden] {
+    display: none;
+  }
+
+  .my-cal-status-rail__btn--prev {
+    left: 0;
+  }
+
+  .my-cal-status-rail__btn--next {
+    right: 0;
+  }
+}
+
+.device-frame[data-view="mobile"] .my-cal-status-rail {
+  padding: 0;
+}
+
+.device-frame[data-view="mobile"] .my-cal-status-rail__btn {
+  display: none !important;
+}
+
+.device-frame[data-view="desktop"] .my-cal-status-rail.is-overflowing {
+  padding: 0 1.85rem;
+}
+
+.device-frame[data-view="desktop"] .my-cal-status-rail__btn {
+  appearance: none;
+  -webkit-appearance: none;
+  position: absolute;
+  top: 50%;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1.15rem;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
+  cursor: pointer;
+  transform: translateY(calc(-50% - 0.5px));
+}
+
+.device-frame[data-view="desktop"] .my-cal-status-rail__btn:disabled,
+.device-frame[data-view="desktop"] .my-cal-status-rail__btn[hidden] {
+  display: none;
+}
+
+.device-frame[data-view="desktop"] .my-cal-status-rail__btn--prev {
+  left: 0;
+}
+
+.device-frame[data-view="desktop"] .my-cal-status-rail__btn--next {
+  right: 0;
 }
 
 /* Standardowy licznik oczekujących (zakładki / menu) */
@@ -11738,6 +11885,11 @@ body.prov-cal-resizing * {
   letter-spacing: -0.01em;
 }
 
+.visit-card--client .visit-card__hours--soft {
+  font-weight: 650;
+  color: var(--text-muted);
+}
+
 .visit-card--client .visit-card__name {
   font-size: 0.9rem;
   font-weight: 650;
@@ -11756,14 +11908,29 @@ body.prov-cal-resizing * {
   color: var(--text-muted);
 }
 
-.visit-card--client .visit-card__quick {
+.visit-card--client .visit-card__quick,
+.visit-card--client .visit-card__extra,
+.visit-card--client .visit-card__actions {
   margin-top: 0.45rem;
   padding-left: calc(3.35rem + 0.75rem);
 }
 
-.visit-card--client .visit-card__actions {
-  margin-top: 0.45rem;
-  padding-left: calc(3.35rem + 0.75rem);
+.visit-card--client .visit-card__extra .request-card__days,
+.visit-card--client .visit-card__extra .request-card__note,
+.visit-card--client .visit-card__extra .proposal-list {
+  margin-top: 0.35rem;
+}
+
+.visit-card--client .visit-card__extra .request-card__days:first-child,
+.visit-card--client .visit-card__extra .request-card__note:first-child,
+.visit-card--client .visit-card__extra .proposal-list:first-child {
+  margin-top: 0;
+}
+
+.visit-card--client .visit-card__date--empty .visit-card__daynum {
+  font-size: 1.2rem;
+  font-weight: 500;
+  color: var(--text-muted);
 }
 
 .visit-card--client .status-badge {
@@ -14941,15 +15108,13 @@ body.prov-cal-resizing * {
   margin: 0.75rem 0 1rem;
 }
 
-.client-request-card {
-  padding: 0.8rem;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+.client-requests .request-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
-.client-request-card .visit-card__actions {
-  margin-top: 0.55rem;
+.visit-card--request .visit-card__actions {
   flex-wrap: wrap;
 }
 
