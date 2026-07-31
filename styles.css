@@ -5822,9 +5822,17 @@ body.service-photo-preview-open {
 }
 
 .provider-info-pop {
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  box-sizing: border-box;
+  padding:
+    max(0.45rem, env(safe-area-inset-top, 0px))
+    var(--app-pad-x, 0.75rem)
+    calc(5.1rem + env(safe-area-inset-bottom, 0px));
   pointer-events: none;
 }
 
@@ -5832,25 +5840,24 @@ body.service-photo-preview-open {
   appearance: none;
   -webkit-appearance: none;
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 100vh;
+  inset: 0;
   margin: 0;
   padding: 0;
   border: none;
-  background: rgba(15, 23, 42, 0.14);
+  background: rgba(15, 23, 42, 0.18);
   cursor: default;
   pointer-events: auto;
 }
 
 .provider-info-pop__card {
   pointer-events: auto;
-  position: absolute;
-  top: calc(100% + 0.45rem);
-  right: var(--app-pad-x, 0.75rem);
-  width: min(22.5rem, calc(100vw - (var(--app-pad-x, 0.75rem) * 2)));
-  max-height: min(30rem, calc(100vh - 7rem));
+  position: relative;
+  top: auto;
+  right: auto;
+  left: auto;
+  width: 100%;
+  max-width: 26rem;
+  max-height: 100%;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 0.8rem 0.8rem 0.5rem;
@@ -6169,7 +6176,7 @@ button.provider-info-pop__line {
 }
 
 .provider-hours-week {
-  --hours-week-h: 11.5rem;
+  --hours-week-h: 13rem;
   display: block;
   width: 100%;
   min-width: 0;
@@ -6237,25 +6244,26 @@ button.provider-info-pop__line {
   justify-content: space-between;
   align-items: center;
   min-height: 0.7rem;
-  padding: 0.22rem 0 0.12rem;
+  padding: 0.28rem 0 0.14rem;
   box-sizing: border-box;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--loc) 26%, var(--surface));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--loc) 55%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--loc) 38%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--loc) 28%, transparent);
   overflow: hidden;
 }
 
 .provider-hours-week__slot-time {
-  font-size: 0.62rem;
-  font-weight: 600;
+  font-size: 0.72rem;
+  font-weight: 700;
   line-height: 1.05;
-  color: color-mix(in srgb, var(--loc) 78%, var(--text));
+  color: color-mix(in srgb, var(--loc) 55%, #0a1f16 45%);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  letter-spacing: -0.01em;
 }
 
 .provider-hours-week__slot-time:first-child {
-  margin-top: 0.05rem;
+  margin-top: 0.08rem;
 }
 
 .provider-hours-week__closed-mark {
@@ -6270,32 +6278,44 @@ button.provider-info-pop__line {
 
 @media (max-width: 400px) {
   .provider-hours-week {
-    --hours-week-h: 12.5rem;
+    --hours-week-h: 14rem;
   }
 
   .provider-hours-week__slot-time {
-    font-size: 0.58rem;
+    font-size: 0.68rem;
   }
 }
 
-@media (max-width: 899px) {
+@media (min-width: 900px) {
+  .provider-info-pop {
+    align-items: center;
+    padding: 1.25rem;
+  }
+
   .provider-info-pop__card {
-    left: var(--app-pad-x, 0.75rem);
-    right: var(--app-pad-x, 0.75rem);
-    width: auto;
-    /* Zostaw miejsce na stopkę Suma/Rezerwuj + safe-area, żeby panel nie chował się pod menu. */
-    max-height: min(
-      30rem,
-      calc(100dvh - 10.5rem - env(safe-area-inset-bottom, 0px))
-    );
+    width: min(24rem, calc(100vw - 2.5rem));
+    max-height: min(42rem, calc(100dvh - 2.5rem));
   }
 }
 
-.device-frame[data-view="mobile"] .provider-info-pop__card {
-  left: var(--app-pad-x, 0.75rem);
-  right: var(--app-pad-x, 0.75rem);
-  width: auto;
-  max-height: min(30rem, calc(var(--frame-h, 100dvh) - 10.5rem));
+/* W ramce symulatora: overlay wewnątrz ekranu (fixed uciekłby poza telefon). */
+.device-frame .app-screen--booking > .booking__provider-card.booking__provider-card--info-open {
+  position: absolute;
+  inset: 0;
+}
+
+.device-frame .provider-info-pop {
+  position: absolute;
+}
+
+.device-frame[data-view="desktop"] .provider-info-pop {
+  align-items: center;
+  padding: 1rem;
+}
+
+.device-frame[data-view="mobile"] .provider-info-pop {
+  align-items: flex-start;
+  padding: 0.45rem var(--app-pad-x, 0.75rem) 5.1rem;
 }
 
 @media (prefers-reduced-motion: reduce) {
