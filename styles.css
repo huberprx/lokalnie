@@ -6183,6 +6183,17 @@ button.provider-info-pop__line {
   padding: 0.55rem 0 0.15rem;
 }
 
+/* Miesiąc nad kolumnami — kotwiczy tydzień w konkretnym czasie. */
+.provider-hours-week__month {
+  margin: 0 0 0.35rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--text-muted);
+}
+
 .provider-hours-week__cols {
   display: flex;
   width: 100%;
@@ -13722,6 +13733,288 @@ body.prov-cal-resizing * {
   font-size: 0.95rem;
   font-weight: 550;
   color: var(--text-muted);
+}
+
+/* ——————————————————————————————————————————————————————————
+   Edytor dnia — karta przedziału
+   Każdy przedział to osobna karta z trzema wierszami (godziny /
+   lokalizacja / powtarzanie) rozdzielonymi hairline'em, jak w
+   pogrupowanych listach iOS. Stan błędu i długość przedziału są
+   pokazywane w miejscu, bez przeładowania listy.
+   —————————————————————————————————————————————————————————— */
+.avail-edit--day .avail-edit__slots {
+  gap: 0.55rem;
+}
+
+.avail-edit--day .avail-edit__slot {
+  --avail-slot-border: color-mix(in srgb, var(--border) 85%, transparent);
+  gap: 0;
+  padding: 0.1rem 0.75rem 0.15rem;
+  border: 1px solid var(--avail-slot-border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.avail-edit--day .avail-edit__slot + .avail-edit__slot {
+  padding-top: 0.1rem;
+  border-top: 1px solid var(--avail-slot-border);
+}
+
+.avail-edit--day .avail-edit__slot:focus-within {
+  border-color: color-mix(in srgb, var(--accent-provider) 55%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-provider) 14%, transparent);
+}
+
+.avail-edit--day .avail-edit__slot.is-invalid {
+  --avail-slot-border: color-mix(in srgb, var(--danger, #e25555) 45%, var(--border));
+}
+
+.avail-edit--day .avail-edit__slot.is-invalid:focus-within {
+  border-color: color-mix(in srgb, var(--danger, #e25555) 60%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger, #e25555) 14%, transparent);
+}
+
+.avail-edit--day .avail-edit__slot-row {
+  min-height: 2.75rem;
+  gap: 0.35rem;
+}
+
+.avail-edit--day .avail-edit__slot-times {
+  flex: 0 1 auto;
+}
+
+/* Hairline między wierszami — czytelny podział bez ciężkich ramek. */
+.avail-edit--day .avail-edit__slot-loc,
+.avail-edit--day .avail-edit__slot-meta {
+  min-height: 2.75rem;
+  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+/* Długość przedziału — natychmiastowe potwierdzenie tego, co wybrano. */
+.avail-edit__duration {
+  flex: 0 0 auto;
+  margin-left: 0.15rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.avail-edit__duration[hidden] {
+  display: none;
+}
+
+.avail-edit--day .avail-edit__slot.is-invalid .avail-edit__duration {
+  display: none;
+}
+
+/* Komunikat walidacji — pod godzinami, których dotyczy. */
+.avail-edit__alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin: 0 0 0.5rem;
+  padding: 0 0 0 calc(var(--avail-lead) + var(--avail-gap));
+  color: var(--danger, #e25555);
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.avail-edit__alert[hidden] {
+  display: none;
+}
+
+.avail-edit__alert-icon {
+  flex: 0 0 0.9rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  margin-top: 0.1rem;
+}
+
+.avail-edit__alert-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Usuwanie — ikona zamiast glifu ×, stały cel dotykowy 44 px. */
+.avail-edit--day .avail-edit__icon-btn {
+  --avail-trail: 2.75rem;
+  border-radius: 10px;
+}
+
+/* Usuń trzyma się prawej krawędzi niezależnie od tego, czy widać długość. */
+.avail-edit--day .avail-edit__icon-btn--remove {
+  margin-left: auto;
+}
+
+.avail-edit--day .avail-edit__icon-btn--remove svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  display: block;
+}
+
+.avail-edit__icon-btn:focus-visible,
+.avail-edit__add:focus-visible,
+.avail-loc-pick__btn:focus-visible,
+.avail-loc-pick__opt:focus-visible {
+  outline: 2px solid var(--accent-provider);
+  outline-offset: 2px;
+}
+
+.avail-edit__time:focus-visible {
+  outline: 2px solid var(--accent-provider);
+  outline-offset: 1px;
+  border-radius: 6px;
+}
+
+/* Dodawanie przedziału — jedna, opisana akcja zamiast samotnego „+”. */
+.avail-edit__add {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  width: 100%;
+  min-height: 2.75rem;
+  margin: 0;
+  padding: 0.5rem 0.9rem;
+  border: 1px dashed color-mix(in srgb, var(--accent-provider) 45%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent-provider) 7%, transparent);
+  color: var(--accent-provider);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 650;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.avail-edit__add:hover {
+  background: color-mix(in srgb, var(--accent-provider) 13%, transparent);
+  border-color: color-mix(in srgb, var(--accent-provider) 70%, transparent);
+}
+
+.avail-edit__add:active {
+  transform: scale(0.99);
+}
+
+.avail-edit__add-icon {
+  font-size: 1.15rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.avail-edit__limit {
+  margin: 0;
+  padding: 0.15rem 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Dzień wolny — nazwany stan zamiast surowego „Niedostępne”. */
+.avail-edit__empty {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.avail-edit__empty-icon {
+  flex: 0 0 1.35rem;
+  width: 1.35rem;
+  height: 1.35rem;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.avail-edit__empty-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.avail-edit__empty-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.avail-edit__empty-title {
+  font-size: 0.92rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.avail-edit__empty-sub {
+  font-size: 0.76rem;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-muted);
+}
+
+.avail-edit__empty .avail-edit__add {
+  width: auto;
+  flex: 0 0 auto;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.84rem;
+}
+
+@media (max-width: 380px) {
+  .avail-edit__empty {
+    flex-wrap: wrap;
+  }
+
+  .avail-edit__empty .avail-edit__add {
+    width: 100%;
+  }
+}
+
+/* Lista rozwijana wyrównana do etykiety, nie do dalekiej prawej krawędzi. */
+.avail-edit--day .avail-loc-pick--compact .avail-loc-pick__menu,
+.avail-edit--day .avail-repeat-pick .avail-loc-pick__menu {
+  left: -0.25rem;
+  right: auto;
+  min-width: min(14rem, calc(100% + 0.5rem));
+}
+
+.avail-edit--day .avail-loc-pick__opt {
+  min-height: 2.75rem;
+}
+
+/* Na szerokich ekranach pola nie rozjeżdżają się na całą szerokość —
+   szerokość kontrolki powinna sugerować oczekiwaną treść. */
+@media (min-width: 720px) {
+  .avail-edit--day .avail-edit__slots,
+  .avail-edit--day .avail-edit__add,
+  .avail-edit--day .avail-edit__empty,
+  .avail-edit--day .avail-edit__limit {
+    max-width: 32rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .avail-edit--day .avail-edit__slot,
+  .avail-edit__add {
+    transition: none;
+  }
 }
 
 .avail-edit__bar {

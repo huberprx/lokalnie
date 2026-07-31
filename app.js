@@ -1580,8 +1580,62 @@
     document.body.classList.add("avatar-preview-open");
   }
 
+  /**
+   * Godziny otwarcia liczone z realnej dostępności usługodawcy, dzięki czemu
+   * edycja w ekranie „Dostępności” jest od razu widoczna po stronie klienta.
+   * Każda kolumna pn–nd pokazuje najbliższe wystąpienie tego dnia (dziś lub
+   * dalej), więc nigdy nie pokazujemy „Zamknięte” dla dnia, który już minął.
+   * Statyczny grafik z data.js działa tylko jako fallback dla usługodawców
+   * bez żadnej dostępności.
+   */
+  function providerWeekHoursDays(provider) {
+    const todayISO = demoTodayISO();
+    const todayDow = new Date(todayISO + "T12:00:00").getDay();
+    const seed =
+      (data().WEEKLY_HOURS &&
+        provider &&
+        (data().WEEKLY_HOURS[provider.id] || data().WEEKLY_HOURS[provider.slug])) ||
+      {};
+    const hasAvail = !!(
+      provider &&
+      Array.isArray(provider.availability) &&
+      provider.availability.length
+    );
+    return [1, 2, 3, 4, 5, 6, 0].map(function (dow) {
+      const dateISO = addDaysISO(todayISO, (dow - todayDow + 7) % 7);
+      return {
+        dateISO: dateISO,
+        dow: dow,
+        blocks: hasAvail ? providerDayAvailBlocks(provider, dateISO) : seed[dow] || [],
+      };
+    });
+  }
+
   function providerWeeklyHours(provider) {
-    return (data().WEEKLY_HOURS && provider && (data().WEEKLY_HOURS[provider.id] || data().WEEKLY_HOURS[provider.slug])) || {};
+    const weekly = {};
+    providerWeekHoursDays(provider).forEach(function (d) {
+      weekly[d.dow] = d.blocks;
+    });
+    return weekly;
+  }
+
+  /** „Godziny dziś” z aktualnej dostępności; seed z data.js tylko jako fallback. */
+  function providerTodayHoursLabel(p) {
+    if (!p) return "";
+    if (!Array.isArray(p.availability) || !p.availability.length) {
+      return p.openHoursToday || "Brak grafiku";
+    }
+    const blocks = providerDayAvailBlocks(p, demoTodayISO());
+    if (!blocks.length) return "Zamknięte dziś";
+    return blocks
+      .slice()
+      .sort(function (a, b) {
+        return timeToMin(a.from) - timeToMin(b.from);
+      })
+      .map(function (b) {
+        return b.from + "–" + b.to;
+      })
+      .join(", ");
   }
 
   function providerDayAvailBlocks(provider, dateISO) {
@@ -1727,7 +1781,7 @@
             </div>`;
           })
           .join("")}</div>`
-      : `<p class="provider-hours__today-line">${escapeHtml(p.openHoursToday || "Brak grafiku")}</p>`;
+      : `<p class="provider-hours__today-line">${escapeHtml(providerTodayHoursLabel(p) || "Brak grafiku")}</p>`;
 
     const locsSection =
       expanded && locs.length > 1
@@ -1771,9 +1825,30 @@
    * Tygodniowy grafik jako kolumny dni ze slotami rozłożonymi na wspólnej osi czasu —
    * dzięki temu widać, że w danym dniu praca zaczyna się wcześniej / kończy później.
    */
-  function renderProviderHoursWeekHtml(p, weekly, order, todayDow) {
-    const dayBlocks = order.map(function (dow) {
-      const blocks = (weekly[dow] || [])
+  /** Miesiąc (lub zakres miesięcy) obejmowany przez pokazywane dni. */
+  function providerHoursMonthLabel(days) {
+    const isos = (days || [])
+      .map(function (d) {
+        return d && d.dateISO;
+      })
+      .filter(Boolean)
+      .sort();
+    if (!isos.length) return "";
+    const a = new Date(isos[0] + "T12:00:00");
+    const b = new Date(isos[isos.length - 1] + "T12:00:00");
+    if (isNaN(a.getTime()) || isNaN(b.getTime())) return "";
+    const aM = MONTHS_NOM[a.getMonth()];
+    const bM = MONTHS_NOM[b.getMonth()];
+    if (a.getFullYear() !== b.getFullYear())
+      return aM + " " + a.getFullYear() + " – " + bM + " " + b.getFullYear();
+    if (a.getMonth() !== b.getMonth()) return aM + " – " + bM + " " + b.getFullYear();
+    return aM + " " + a.getFullYear();
+  }
+
+  function renderProviderHoursWeekHtml(p, days, todayDow) {
+    const dayBlocks = days.map(function (day) {
+      const dow = day.dow;
+      const blocks = (day.blocks || [])
         .map(function (b) {
           return { from: timeToMin(b.from), to: timeToMin(b.to), locationId: b.locationId || null, raw: b };
         })
@@ -1848,7 +1923,9 @@
       })
       .join("");
 
+    const monthLabel = providerHoursMonthLabel(days);
     return `<div class="provider-hours-week">
+      ${monthLabel ? `<p class="provider-hours-week__month">${escapeHtml(monthLabel)}</p>` : ""}
       <div class="provider-hours-week__cols">${cols}</div>
     </div>`;
   }
@@ -1860,9 +1937,8 @@
     const locs = (Array.isArray(p.locations) ? p.locations : []).filter(function (l) {
       return l && (l.address || l.label);
     });
-    const weekly = providerWeeklyHours(p);
+    const hoursDays = providerWeekHoursDays(p);
     const todayDow = new Date(demoTodayISO() + "T12:00:00").getDay();
-    const order = [1, 2, 3, 4, 5, 6, 0];
     const closeAttrs = `data-action="toggle-booking-provider-info" data-slug="${escapeHtml(p.slug)}"`;
 
     let addrRows = "";
@@ -1912,7 +1988,7 @@
       </div>`
       : "";
 
-    const hoursWeek = renderProviderHoursWeekHtml(p, weekly, order, todayDow);
+    const hoursWeek = renderProviderHoursWeekHtml(p, hoursDays, todayDow);
 
     const shareUrl = providerShareUrl(p.slug);
     const shareSection = `<div class="provider-info-pop__section provider-info-pop__section--share">
@@ -1961,6 +2037,23 @@
     const p = getProviderBySlug(slug);
     if (!p) return;
     closeProviderCardMenu();
+    const onBooking =
+      window.AppState.screen.client === "booking" &&
+      window.AppState.draft &&
+      window.AppState.draft.slug === p.slug;
+    const listOpen = window.AppState.searchOpenSlug === p.slug;
+    // Z listy (karta zamknięta) — wejdź w booking z otwartym panelem info, jak ⓘ w nagłówku.
+    if (!onBooking && !listOpen) {
+      initDraftForProvider(p);
+      window.AppState.draft.providerInfoOpen = true;
+      window.AppState.params.client = { slug: slug };
+      window.AppState.activeRole = "client";
+      window.AppState.searchOpenSlug = null;
+      window.AppState.screen.client = "booking";
+      saveState();
+      renderAll();
+      return;
+    }
     if (!window.AppState.draft || window.AppState.draft.slug !== p.slug) initDraftForProvider(p);
     window.AppState.draft.providerInfoOpen = !window.AppState.draft.providerInfoOpen;
     saveState();
@@ -2018,7 +2111,7 @@
   }
 
   function renderProviderCardHoursMeta(p) {
-    const hours = p.openHoursToday || "";
+    const hours = providerTodayHoursLabel(p);
     if (!hours) return "";
     if (hours === "Brak grafiku" || hours === "Zamknięte dziś") {
       return `<span class="provider-card__meta">${escapeHtml(hours)}</span>`;
@@ -2063,12 +2156,12 @@
     const infoAction = opts.bookingHeader ? "toggle-booking-provider-info" : "toggle-provider-card-info";
     const infoBtn = `<button type="button" class="provider-card__action provider-card__info${infoOpen ? " provider-card__info--open" : ""}" data-action="${infoAction}" data-slug="${escapeHtml(p.slug)}" aria-expanded="${infoOpen ? "true" : "false"}" aria-controls="booking-provider-info" aria-label="Informacje o ${escapeHtml(p.name)}" title="Informacje"><span class="provider-card__action-icon provider-card__info-icon" aria-hidden="true"></span></button>`;
     const menuBtn = `<button type="button" class="provider-card__action provider-card__menu" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Więcej opcji dla ${escapeHtml(p.name)}" title="Więcej opcji"><span class="provider-card__action-icon provider-card__menu-icon" aria-hidden="true"></span></button>`;
-    // Desktop + otwarta karta: ⓘ + ⋯; mobile/zamknięta: tylko ⋯ (albo ⓘ w nagłówku bookingu).
+    // ⓘ otwiera panel info (jak w bookingu); na otwartej karcie dodatkowo ⋯ z menu.
     const menuSlotHtml = opts.bookingHeader
       ? infoBtn
       : isOpen
         ? infoBtn + menuBtn
-        : menuBtn;
+        : infoBtn;
     const openAttrs =
       opts.staticMain || opts.bookingHeader
         ? ""
@@ -11195,6 +11288,27 @@
     };
   }
 
+  /**
+   * Kolejny przedział startuje tam, gdzie kończy się ostatni — dzięki temu
+   * dodanie nie tworzy od razu konfliktu, a lokalizacja i rytm są dziedziczone.
+   */
+  function nextAvailBlock(p, blocks) {
+    const base = defaultAvailBlock(p);
+    const last = (blocks || [])[(blocks || []).length - 1];
+    if (!last || !last.to) return base;
+    const start = timeToMinutes(last.to);
+    if (isNaN(start) || start >= 23 * 60 + 30) return base;
+    const end = Math.min(start + 120, 23 * 60 + 59);
+    const repeat = normalizeAvailRepeat(last);
+    return {
+      from: minToTime(start),
+      to: minToTime(end),
+      locationId: last.locationId || base.locationId,
+      repeat: repeat,
+      recurring: repeat !== "none",
+    };
+  }
+
   function buildAvailDraftFromProvider(p, dateISO) {
     const day = (p.availability || []).find(function (d) {
       return d.dateISO === dateISO;
@@ -11259,11 +11373,39 @@
     refreshAvailListOnly();
   }
 
-  function toggleAvailDayEdit(dateISO) {
+  /**
+   * Zwróć formularz z widoku, w którym użytkownik wykonał akcję.
+   * Aplikacja renderuje równolegle symulator i fullscreen, więc globalne
+   * querySelector może wskazać ukrytą kopię formularza ze starymi wartościami.
+   */
+  function availEditFormForDate(dateISO, source) {
+    if (!dateISO) return null;
+    const selector = '[data-role="avail-edit-form"][data-date="' + dateISO + '"]';
+    if (source && source.closest) {
+      const direct = source.matches && source.matches(selector) ? source : source.closest(selector);
+      if (direct) return direct;
+      const scope = source.closest(".avail-day-group, .app-screen, .app-mount");
+      const scoped = scope && scope.querySelector(selector);
+      if (scoped) return scoped;
+    }
+    const forms = Array.prototype.slice.call(document.querySelectorAll(selector));
+    return (
+      forms.find(function (form) {
+        return form.offsetParent !== null;
+      }) ||
+      forms.find(function (form) {
+        return form.closest("#app-fullscreen");
+      }) ||
+      forms[0] ||
+      null
+    );
+  }
+
+  function toggleAvailDayEdit(dateISO, source) {
     if (!dateISO) return;
     if (window.AppState.availEditDate === dateISO) {
       // Przycisk w stanie otwartym = Zapisz i zamknij.
-      saveAvailDayEdit(dateISO, { quiet: true });
+      saveAvailDayEdit(dateISO, { quiet: true, source: source });
       window.AppState.availEditDate = null;
       saveState();
       refreshAvailListOnly();
@@ -11273,10 +11415,10 @@
     openAvailDayEdit(dateISO);
   }
 
-  function syncAvailDraftFromForm(dateISO) {
+  function syncAvailDraftFromForm(dateISO, source) {
     const draft = ensureAvailDraft(dateISO);
     if (!draft) return null;
-    const form = document.querySelector('[data-role="avail-edit-form"][data-date="' + dateISO + '"]');
+    const form = availEditFormForDate(dateISO, source);
     if (!form) return draft;
     const rows = form.querySelectorAll("[data-avail-block]");
     const blocks = [];
@@ -11401,10 +11543,10 @@
     });
   }
 
-  function blocksFromAvailForm(dateISO) {
+  function blocksFromAvailForm(dateISO, source) {
     const p = myProvider();
     if (!p || !dateISO) return [];
-    const form = document.querySelector('[data-role="avail-edit-form"][data-date="' + dateISO + '"]');
+    const form = availEditFormForDate(dateISO, source);
     if (!form) return [];
     const blocks = [];
     form.querySelectorAll("[data-avail-block]").forEach(function (row, idx) {
@@ -11451,21 +11593,21 @@
     writeAvailDayBlocks(dateISO, blocks);
   }
 
-  function addAvailEditBlock(dateISO) {
+  function addAvailEditBlock(dateISO, source) {
     const p = myProvider();
     if (!p || !dateISO) return;
     window.AppState.availEditDate = dateISO;
-    const draft = syncAvailDraftFromForm(dateISO) || ensureAvailDraft(dateISO);
+    const draft = syncAvailDraftFromForm(dateISO, source) || ensureAvailDraft(dateISO);
     if (!draft) return;
     if ((draft.blocks || []).length >= AVAIL_MAX_BLOCKS_PER_DAY) return;
-    draft.blocks.push(defaultAvailBlock(p));
+    draft.blocks.push(nextAvailBlock(p, draft.blocks));
     persistAvailDraft(dateISO);
     saveState();
     refreshAvailListOnly();
   }
 
-  function removeAvailEditBlock(dateISO, index) {
-    const draft = syncAvailDraftFromForm(dateISO) || ensureAvailDraft(dateISO);
+  function removeAvailEditBlock(dateISO, index, source) {
+    const draft = syncAvailDraftFromForm(dateISO, source) || ensureAvailDraft(dateISO);
     if (!draft || !draft.blocks) return;
     const i = Number(index);
     if (isNaN(i) || i < 0 || i >= draft.blocks.length) return;
@@ -11671,7 +11813,7 @@
     const opts = options || {};
     if (!dateISO) return;
     ensureAvailDraft(dateISO);
-    const blocks = blocksFromAvailForm(dateISO);
+    const blocks = blocksFromAvailForm(dateISO, opts.source);
     writeAvailDayBlocks(dateISO, blocks);
     expandAvailRepeats(dateISO, blocks);
     // Po ekspansji przywróć draft/edycję źródłowego dnia (expand pisał inne daty).
@@ -11679,6 +11821,9 @@
       window.AppState.availEditDraft = window.AppState.availEditDrafts[dateISO] || null;
     }
     window.AppState.availEditDate = dateISO;
+    // Draft trzyma też bloki niepoprawne (np. koniec przed startem), żeby wpisana
+    // godzina nie znikała użytkownikowi z pola przy najbliższym re-renderze.
+    syncAvailDraftFromForm(dateISO, opts.source);
     saveState();
     // Zmiana godziny: NIE przebudowujemy edytora, bo podmiana <input> w trakcie
     // potwierdzania natywnego pickera (iOS/Android) gubi właśnie wybraną wartość.
@@ -11777,10 +11922,10 @@
     if (menu) menu.hidden = !open;
   }
 
-  function setAvailBlockLocation(dateISO, index, locationId) {
+  function setAvailBlockLocation(dateISO, index, locationId, source) {
     const p = myProvider();
     if (!p || !dateISO || !locationId) return;
-    const form = document.querySelector('[data-role="avail-edit-form"][data-date="' + dateISO + '"]');
+    const form = availEditFormForDate(dateISO, source);
     if (!form) return;
     const row = form.querySelector('[data-avail-block][data-index="' + index + '"]');
     if (!row) return;
@@ -11810,13 +11955,13 @@
         opt.setAttribute("aria-selected", on ? "true" : "false");
       });
     closeAvailPickMenus();
-    saveAvailDayEdit(dateISO, { quiet: true });
+    saveAvailDayEdit(dateISO, { quiet: true, source: form });
   }
 
-  function setAvailBlockRepeat(dateISO, index, repeatId) {
+  function setAvailBlockRepeat(dateISO, index, repeatId, source) {
     if (!dateISO) return;
     const repeat = normalizeAvailRepeat({ repeat: repeatId });
-    const form = document.querySelector('[data-role="avail-edit-form"][data-date="' + dateISO + '"]');
+    const form = availEditFormForDate(dateISO, source);
     if (!form) return;
     const row = form.querySelector('[data-avail-block][data-index="' + index + '"]');
     if (!row) return;
@@ -11832,7 +11977,73 @@
         opt.setAttribute("aria-selected", on ? "true" : "false");
       });
     closeAvailPickMenus();
-    saveAvailDayEdit(dateISO, { quiet: true });
+    saveAvailDayEdit(dateISO, { quiet: true, source: form });
+  }
+
+  /** Długość przedziału w minutach; null gdy godziny są niepoprawne. */
+  function availBlockDurationMin(block) {
+    if (!block || !block.from || !block.to) return null;
+    const from = timeToMinutes(block.from);
+    const to = timeToMinutes(block.to);
+    if (isNaN(from) || isNaN(to) || to <= from) return null;
+    return to - from;
+  }
+
+  /**
+   * Zwraca komunikat walidacji dla bloku o indeksie `index` (albo "" gdy OK).
+   * Kolejność: własny zakres godzin → nakładanie na inny blok tego dnia.
+   */
+  function availBlockIssue(blocks, index) {
+    const list = blocks || [];
+    const b = list[index];
+    if (!b || !b.from || !b.to) return "Uzupełnij godzinę rozpoczęcia i zakończenia.";
+    const from = timeToMinutes(b.from);
+    const to = timeToMinutes(b.to);
+    if (isNaN(from) || isNaN(to)) return "Uzupełnij godzinę rozpoczęcia i zakończenia.";
+    if (to <= from) return "Koniec musi być późniejszy niż początek.";
+    for (let i = 0; i < list.length; i++) {
+      if (i === index) continue;
+      const other = list[i];
+      if (!other || !other.from || !other.to) continue;
+      const oFrom = timeToMinutes(other.from);
+      const oTo = timeToMinutes(other.to);
+      if (isNaN(oFrom) || isNaN(oTo) || oTo <= oFrom) continue;
+      if (from < oTo && oFrom < to) return "Ten przedział nakłada się na inny w tym dniu.";
+    }
+    return "";
+  }
+
+  /**
+   * Odświeża w miejscu długość przedziału i komunikaty walidacji — bez re-renderu,
+   * żeby natywny picker godzin nie gubił właśnie wybranej wartości.
+   */
+  function refreshAvailEditMeta(form) {
+    if (!form) return;
+    const rows = Array.prototype.slice.call(form.querySelectorAll("[data-avail-block]"));
+    const blocks = rows.map(function (row) {
+      const fromEl = row.querySelector('[name="from"]');
+      const toEl = row.querySelector('[name="to"]');
+      return { from: fromEl ? fromEl.value : "", to: toEl ? toEl.value : "" };
+    });
+    rows.forEach(function (row, i) {
+      const durEl = row.querySelector('[data-role="avail-duration"]');
+      const alertEl = row.querySelector('[data-role="avail-slot-alert"]');
+      const min = availBlockDurationMin(blocks[i]);
+      if (durEl) {
+        durEl.textContent = min == null ? "" : formatDuration(min);
+        durEl.hidden = min == null;
+      }
+      const issue = availBlockIssue(blocks, i);
+      row.classList.toggle("is-invalid", !!issue);
+      if (alertEl) {
+        const textEl = alertEl.querySelector('[data-role="avail-slot-alert-text"]') || alertEl;
+        textEl.textContent = issue;
+        alertEl.hidden = !issue;
+      }
+      row.querySelectorAll("input.avail-edit__time").forEach(function (input) {
+        input.setAttribute("aria-invalid", issue ? "true" : "false");
+      });
+    });
   }
 
   /** Edytor dnia w stylu Calendly: [od]–[do] ×  +  oraz miejsce / powtarzaj. */
@@ -11844,10 +12055,20 @@
     if (!blockList.length) {
       return `
       <form class="avail-edit avail-edit--day" data-role="avail-edit-form" data-date="${dateAttr}" onsubmit="return false;">
-        <div class="avail-edit__unavailable">
-          <span class="avail-edit__unavailable-label">Niedostępne</span>
-          <button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--add" data-action="add-avail-block" data-date="${dateAttr}" aria-label="Dodaj godziny dostępności" title="Dodaj">
-            <span aria-hidden="true">+</span>
+        <div class="avail-edit__empty">
+          <span class="avail-edit__empty-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3.2 1.8" />
+            </svg>
+          </span>
+          <span class="avail-edit__empty-text">
+            <span class="avail-edit__empty-title">Dzień wolny</span>
+            <span class="avail-edit__empty-sub">Klienci nie mogą tu nic zarezerwować.</span>
+          </span>
+          <button type="button" class="avail-edit__add" data-action="add-avail-block" data-date="${dateAttr}">
+            <span class="avail-edit__add-icon" aria-hidden="true">+</span>
+            <span>Dodaj godziny</span>
           </button>
         </div>
       </form>`;
@@ -11858,7 +12079,8 @@
         const locTone = locationToneClass(p, b.locationId);
         const hasLoc = !!(b.locationId && locationLabel(p, b.locationId));
         const locLabel = hasLoc ? locationLabel(p, b.locationId) : "wybierz lokalizację";
-        const isLast = i === blockList.length - 1;
+        const issue = availBlockIssue(blockList, i);
+        const durationMin = availBlockDurationMin(b);
         const locMenu = (locs.length ? locs : [{ id: b.locationId || "", label: locLabel }])
           .map(function (l) {
             const tone = locationToneClass(p, l.id);
@@ -11872,7 +12094,7 @@
           })
           .join("");
         return `
-        <div class="avail-edit__slot" data-avail-block data-index="${i}">
+        <div class="avail-edit__slot${issue ? " is-invalid" : ""}" data-avail-block data-index="${i}">
           <div class="avail-edit__slot-row">
             <div class="avail-edit__slot-times ${locTone}" data-role="avail-edit-times">
               <span class="avail-edit__time-icon" aria-hidden="true">
@@ -11881,22 +12103,29 @@
                   <path d="M12 7v5l3.2 1.8" />
                 </svg>
               </span>
-              ${renderAvailTimeField("from", b.from || "09:00", "Od")}
+              ${renderAvailTimeField("from", b.from || "09:00", "Godzina rozpoczęcia")}
               <span class="avail-edit__dash" aria-hidden="true">–</span>
-              ${renderAvailTimeField("to", b.to || "17:00", "Do")}
+              ${renderAvailTimeField("to", b.to || "17:00", "Godzina zakończenia")}
             </div>
+            <span class="avail-edit__duration" data-role="avail-duration"${durationMin == null ? " hidden" : ""}>${durationMin == null ? "" : escapeHtml(formatDuration(durationMin))}</span>
             <button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--remove" data-action="open-avail-remove-cloud" data-date="${dateAttr}" data-index="${i}"
-              aria-label="Usuń" title="Usuń dzień lub serię" aria-haspopup="menu">
-              <span aria-hidden="true">×</span>
+              aria-label="Usuń przedział ${escapeHtml(b.from || "")}–${escapeHtml(b.to || "")}" title="Usuń dzień lub serię" aria-haspopup="menu">
+              <span aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <path d="M7 7l10 10M17 7L7 17" />
+                </svg>
+              </span>
             </button>
-            ${
-              isLast && blockList.length < AVAIL_MAX_BLOCKS_PER_DAY
-                ? `<button type="button" class="avail-edit__icon-btn avail-edit__icon-btn--add" data-action="add-avail-block" data-date="${dateAttr}" aria-label="Dodaj godziny dostępności" title="Dodaj">
-              <span aria-hidden="true">+</span>
-            </button>`
-                : `<span class="avail-edit__icon-spacer" aria-hidden="true"></span>`
-            }
           </div>
+          <p class="avail-edit__alert" data-role="avail-slot-alert" role="status" aria-live="polite"${issue ? "" : " hidden"}>
+            <span class="avail-edit__alert-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 8v5M12 16h.01" />
+              </svg>
+            </span>
+            <span data-role="avail-slot-alert-text">${escapeHtml(issue)}</span>
+          </p>
           <div class="avail-edit__slot-loc">
             <div class="avail-loc-pick avail-loc-pick--compact" data-role="avail-loc-pick">
               <input type="hidden" name="locationId" value="${escapeHtml(b.locationId || "")}" />
@@ -11955,9 +12184,18 @@
       })
       .join("");
 
+    const canAdd = blockList.length < AVAIL_MAX_BLOCKS_PER_DAY;
     return `
       <form class="avail-edit avail-edit--day" data-role="avail-edit-form" data-date="${dateAttr}" onsubmit="return false;">
         <div class="avail-edit__slots">${slots}</div>
+        ${
+          canAdd
+            ? `<button type="button" class="avail-edit__add" data-action="add-avail-block" data-date="${dateAttr}">
+          <span class="avail-edit__add-icon" aria-hidden="true">+</span>
+          <span>Dodaj przedział</span>
+        </button>`
+            : `<p class="avail-edit__limit">Maksymalnie ${AVAIL_MAX_BLOCKS_PER_DAY} przedziały w jednym dniu.</p>`
+        }
       </form>`;
   }
 
@@ -14798,7 +15036,7 @@
         break;
       case "toggle-avail-day-edit":
         event.preventDefault();
-        toggleAvailDayEdit(d.date);
+        toggleAvailDayEdit(d.date, btn);
         if (d.date && window.AppState.availEditDate === d.date) {
           scrollAvailListToDate(d.date);
         }
@@ -14807,7 +15045,7 @@
         event.preventDefault();
         {
           const dateISO = d.date || ensureAvailFocusDate();
-          addAvailEditBlock(dateISO);
+          addAvailEditBlock(dateISO, btn);
           scrollAvailListToDate(dateISO);
         }
         break;
@@ -14818,7 +15056,7 @@
       case "remove-avail-block":
         event.preventDefault();
         closeAvailSeriesCloud();
-        removeAvailEditBlock(d.date, d.index);
+        removeAvailEditBlock(d.date, d.index, btn);
         break;
       case "clear-avail-recurring-series":
         event.preventDefault();
@@ -14826,7 +15064,7 @@
         break;
       case "save-avail-day":
         event.preventDefault();
-        saveAvailDayEdit(d.date);
+        saveAvailDayEdit(d.date, { source: btn });
         break;
       case "toggle-avail-loc":
         event.preventDefault();
@@ -14834,7 +15072,7 @@
         break;
       case "pick-avail-loc":
         event.preventDefault();
-        setAvailBlockLocation(d.date, d.index, d.locationId);
+        setAvailBlockLocation(d.date, d.index, d.locationId, btn);
         break;
       case "toggle-avail-repeat":
         event.preventDefault();
@@ -14842,7 +15080,7 @@
         break;
       case "pick-avail-repeat":
         event.preventDefault();
-        setAvailBlockRepeat(d.date, d.index, d.repeat);
+        setAvailBlockRepeat(d.date, d.index, d.repeat, btn);
         break;
       case "clear-avail-day":
         event.preventDefault();
@@ -15482,9 +15720,65 @@
       if (dateISO) {
         // Godziny: zapis bez przebudowy DOM (mobile picker gubi wartość przy re-renderze).
         const isTime = availField.matches && availField.matches("input.avail-edit__time");
-        saveAvailDayEdit(dateISO, { quiet: true, noRender: isTime });
+        saveAvailDayEdit(dateISO, { quiet: true, noRender: isTime, source: form });
+        if (isTime) refreshAvailEditMeta(form);
       }
     }
+  });
+
+  // Długość przedziału i walidacja aktualizują się w trakcie wpisywania godzin.
+  document.addEventListener("input", function (event) {
+    const timeField =
+      event.target.closest && event.target.closest("input.avail-edit__time");
+    if (!timeField) return;
+    refreshAvailEditMeta(timeField.closest('[data-role="avail-edit-form"]'));
+  });
+
+  // Klawiatura w listach wyboru (lokalizacja / powtarzanie): Esc, strzałki, Home/End.
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") {
+      const openPick = document.querySelector(
+        '[data-role="avail-loc-pick"].is-open, [data-role="avail-repeat-pick"].is-open'
+      );
+      if (!openPick) return;
+      event.preventDefault();
+      const openTrigger = openPick.querySelector(
+        '[data-action="toggle-avail-loc"], [data-action="toggle-avail-repeat"]'
+      );
+      closeAvailPickMenus();
+      if (openTrigger) openTrigger.focus();
+      return;
+    }
+    const pick =
+      event.target.closest &&
+      event.target.closest('[data-role="avail-loc-pick"], [data-role="avail-repeat-pick"]');
+    if (!pick) return;
+    const isOpen = pick.classList.contains("is-open");
+    const trigger = pick.querySelector(
+      '[data-action="toggle-avail-loc"], [data-action="toggle-avail-repeat"]'
+    );
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Home" && event.key !== "End")
+      return;
+    const options = Array.prototype.slice.call(
+      pick.querySelectorAll("[data-action=pick-avail-loc], [data-action=pick-avail-repeat]")
+    );
+    if (!options.length) return;
+    event.preventDefault();
+    if (!isOpen) {
+      if (trigger) trigger.click();
+      const selected = options.find(function (opt) {
+        return opt.classList.contains("is-selected");
+      });
+      (selected || options[0]).focus();
+      return;
+    }
+    const current = options.indexOf(document.activeElement);
+    let next = current;
+    if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = options.length - 1;
+    else if (event.key === "ArrowDown") next = current < 0 ? 0 : (current + 1) % options.length;
+    else next = current <= 0 ? options.length - 1 : current - 1;
+    options[next].focus();
   });
 
   document.addEventListener(
