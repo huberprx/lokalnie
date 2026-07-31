@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.136";
+  const APP_VERSION = "1.0.140";
 
   const PWA = {
     registration: null,
@@ -2792,28 +2792,32 @@
     const editIcon = `<span class="app-menu__profile-edit-icon" aria-hidden="true"></span>`;
 
     const providerBlock = provider
-      ? `<div class="app-menu__profile app-menu__profile--provider${providerActive ? " app-menu__profile--active" : ""}">
-           <button type="button" class="app-menu__profile-main" data-action="switch-role" data-role="provider" aria-pressed="${providerActive ? "true" : "false"}">
-             <span class="app-menu__avatar app-menu__avatar--provider">${
-               provider.avatarUrl
-                 ? `<img class="app-menu__avatar-img" src="${escapeHtml(provider.avatarUrl)}" alt="" />`
-                 : `<span class="app-menu__avatar-initials">${escapeHtml(provider.avatarInitials || "?")}</span>`
-             }</span>
+      ? `<div class="app-menu__profile-group">
+           <p class="app-menu__profiles-label">Profil usługodawcy</p>
+           <div class="app-menu__profile app-menu__profile--provider${providerActive ? " app-menu__profile--active" : ""}">
+             <button type="button" class="app-menu__profile-main" data-action="switch-role" data-role="provider" aria-pressed="${providerActive ? "true" : "false"}">
+               <span class="app-menu__avatar app-menu__avatar--provider">${
+                 provider.avatarUrl
+                   ? `<img class="app-menu__avatar-img" src="${escapeHtml(provider.avatarUrl)}" alt="" />`
+                   : `<span class="app-menu__avatar-initials">${escapeHtml(provider.avatarInitials || "?")}</span>`
+               }</span>
+               <span class="app-menu__profile-text">
+                 <span class="app-menu__profile-name">${escapeHtml(provider.name)}</span>
+               </span>
+             </button>
+             <button type="button" class="app-menu__profile-edit" data-action="edit-provider-profile"
+               aria-label="Edytuj profil usługodawcy" title="Edytuj profil">${editIcon}</button>
+           </div>
+         </div>`
+      : `<div class="app-menu__profile-group">
+           <p class="app-menu__profiles-label">Profil usługodawcy</p>
+           <button type="button" class="app-menu__profile app-menu__profile--add" data-action="add-provider-profile">
+             <span class="app-menu__avatar app-menu__avatar--add" aria-hidden="true">+</span>
              <span class="app-menu__profile-text">
-               <span class="app-menu__profile-label">Usługodawca</span>
-               <span class="app-menu__profile-name">${escapeHtml(provider.name)}</span>
+               <span class="app-menu__profile-name">Dodaj profil</span>
              </span>
            </button>
-           <button type="button" class="app-menu__profile-edit" data-action="edit-provider-profile"
-             aria-label="Edytuj profil usługodawcy" title="Edytuj profil">${editIcon}</button>
-         </div>`
-      : `<button type="button" class="app-menu__profile app-menu__profile--add" data-action="add-provider-profile">
-           <span class="app-menu__avatar app-menu__avatar--add" aria-hidden="true">+</span>
-           <span class="app-menu__profile-text">
-             <span class="app-menu__profile-label">Usługodawca</span>
-             <span class="app-menu__profile-name">Dodaj profil</span>
-           </span>
-         </button>`;
+         </div>`;
 
     // Markup zawsze w stanie „zamknięty” — klasę --open dokładamy w JS,
     // żeby zadziałała animacja wysuwania z boku.
@@ -2835,28 +2839,23 @@
           </div>
 
           <div class="app-menu__profiles" role="group" aria-label="Przełącz profil">
-            <p class="app-menu__profiles-label">Profile</p>
-            <div class="app-menu__profile app-menu__profile--client${clientActive ? " app-menu__profile--active" : ""}">
-              <button type="button" class="app-menu__profile-main" data-action="switch-role" data-role="client" aria-pressed="${clientActive ? "true" : "false"}">
-                <span class="app-menu__avatar app-menu__avatar--client">${renderClientMenuAvatar()}</span>
-                <span class="app-menu__profile-text">
-                  <span class="app-menu__profile-label">Klient</span>
-                  <span class="app-menu__profile-name">${escapeHtml(cp.name || "Użytkownik")}</span>
-                </span>
-              </button>
-              <button type="button" class="app-menu__profile-edit" data-action="edit-client-profile"
-                aria-label="Edytuj profil klienta" title="Edytuj profil">${editIcon}</button>
+            <div class="app-menu__profile-group">
+              <p class="app-menu__profiles-label">Profil klienta</p>
+              <div class="app-menu__profile app-menu__profile--client${clientActive ? " app-menu__profile--active" : ""}">
+                <button type="button" class="app-menu__profile-main" data-action="switch-role" data-role="client" aria-pressed="${clientActive ? "true" : "false"}">
+                  <span class="app-menu__avatar app-menu__avatar--client">${renderClientMenuAvatar()}</span>
+                  <span class="app-menu__profile-text">
+                    <span class="app-menu__profile-name">${escapeHtml(cp.name || "Użytkownik")}</span>
+                  </span>
+                </button>
+                <button type="button" class="app-menu__profile-edit" data-action="edit-client-profile"
+                  aria-label="Edytuj profil klienta" title="Edytuj profil">${editIcon}</button>
+              </div>
             </div>
-            <label class="app-menu__photo-btn">
-              <span class="app-menu__photo-btn-label">Zmień zdjęcie profilu klienta</span>
-              <input type="file" class="app-menu__file" accept="image/*" data-action="change-client-avatar" tabindex="-1" />
-            </label>
             ${providerBlock}
           </div>
 
           <nav class="app-menu__links" aria-label="Informacje">
-            <button type="button" class="app-menu__link" data-action="go-screen" data-screen="account">Konto i ustawienia</button>
-            <button type="button" class="app-menu__link" data-action="go-screen" data-screen="favorites">Ulubione</button>
             ${
               isPwaInstalled()
                 ? ""
