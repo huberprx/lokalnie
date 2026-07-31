@@ -5261,19 +5261,6 @@
       </div>`;
   }
 
-  /** Etykieta lokalizacji ma sens tylko wtedy, gdy usługodawca pracuje w kilku miejscach. */
-  function providerVisitLocationHtml(p, locId) {
-    if (!locId || !p || !Array.isArray(p.locations) || p.locations.length < 2) return "";
-    const loc = p.locations.find(function (l) {
-      return l && l.id === locId;
-    });
-    if (!loc || !loc.label) return "";
-    return `<span class="visit-card__place">
-          <span class="visit-card__place-dot" aria-hidden="true"></span>
-          ${escapeHtml(loc.label)}
-        </span>`;
-  }
-
   function renderProviderVisitCard(b) {
     const durationMin = Math.max(0, timeToMin(b.to) - timeToMin(b.from));
     const services = (b.serviceNames || []).length ? b.serviceNames : ["Usługa"];
@@ -5310,12 +5297,9 @@
           }
         </div>
         <div class="visit-card__name">${escapeHtml(b.clientName || "Klient")}</div>
-        <div class="visit-card__meta">
-          <ul class="visit-card__services" aria-label="Zamówione usługi">
-            ${services.map((serviceName) => `<li>${escapeHtml(serviceName)}</li>`).join("")}
-          </ul>
-          ${providerVisitLocationHtml(p, locId)}
-        </div>
+        <ul class="visit-card__services" aria-label="Zamówione usługi">
+          ${services.map((serviceName) => `<li>${escapeHtml(serviceName)}</li>`).join("")}
+        </ul>
         ${
           b.status === "confirmed"
             ? `<div class="visit-card__actions">
