@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.145";
+  const APP_VERSION = "1.0.161";
 
   const PWA = {
     registration: null,
@@ -557,18 +557,12 @@
 
   function refreshBookingPanelElement(panel, p, ctx) {
     const mode = draftBookingMode(p);
-    const isApproval = mode === "approval";
-    panel.setAttribute("data-booking-mode", isApproval ? "approval" : "auto");
-    panel.classList.toggle("provider-booking-panel--approval", isApproval);
+    const isRequestStyle = isOfferRequestMode(mode);
+    panel.setAttribute("data-booking-mode", isRequestStyle ? mode : "auto");
+    panel.classList.toggle("provider-booking-panel--approval", isRequestStyle);
     const layout = panel.querySelector(".booking-layout");
-    if (layout) layout.classList.toggle("booking-layout--approval", isApproval);
-
-    const servicesAside = panel.querySelector(".booking__services");
-    if (servicesAside) {
-      const head = servicesAside.querySelector(".booking__panel-head");
-      const headHtml = renderServicesPanelHead(p, ctx.draft);
-      if (head) head.outerHTML = headHtml;
-      else servicesAside.insertAdjacentHTML("afterbegin", headHtml);
+    if (layout) {
+      layout.outerHTML = renderBookingLayoutBlock(p, ctx);
     }
 
     const servicesList = panel.querySelector(".booking__services-list");
@@ -576,50 +570,6 @@
     if (servicesList) {
       servicesList.innerHTML = ctx.services;
       restoreScrollTop(servicesList, svcScroll);
-    }
-
-    const calendar = panel.querySelector(".booking__calendar");
-    const times = panel.querySelector(".booking__times");
-    if (calendar) calendar.classList.toggle("booking__request-days", isApproval);
-    if (times) times.classList.toggle("booking__request-parts", isApproval);
-    if (isApproval) {
-      if (calendar) {
-        calendar.innerHTML = `
-        <h3 class="booking__panel-label">Wybierz dni</h3>
-        ${
-          ctx.availDates.length
-            ? ctx.requestCalendarGrid
-            : `<p class="empty-note">Brak dostępnych terminów.</p>`
-        }
-        <p class="booking__request-hint">Zaznacz jeden lub kilka pasujących dni — usługodawca odeśle konkretne godziny.</p>`;
-      }
-      if (times) {
-        const partsEl = times.querySelector(".request-day-list");
-        const partsScroll = partsEl ? partsEl.scrollTop : 0;
-        times.innerHTML = `
-        <h3 class="booking__panel-label">Pora dnia</h3>
-        <div class="request-day-list" data-role="booking-request-parts">${renderRequestPartsBody(ctx)}</div>`;
-        restoreScrollTop(times.querySelector(".request-day-list"), partsScroll);
-      }
-    } else {
-      if (calendar) {
-        calendar.innerHTML = `
-        <h3 class="booking__panel-label">Wybierz dzień</h3>
-        ${ctx.availDates.length ? ctx.calendarGrid : `<p class="empty-note">Brak dostępnych terminów.</p>`}`;
-      }
-      if (times) {
-        const timesScroll = (times.querySelector(".time-list--vertical") || {}).scrollTop || 0;
-        times.innerHTML = `
-        <h3 class="booking__panel-label">${escapeHtml(bookingTimesPanelTitle(p, ctx.activeDate))}</h3>
-        <div class="time-list time-list--vertical">
-          ${
-            ctx.activeDate
-              ? ctx.timeList || `<p class="empty-note">${escapeHtml(bookingTimesEmptyNote(p))}</p>`
-              : `<p class="empty-note">Wybierz dzień w kalendarzu.</p>`
-          }
-        </div>`;
-        restoreScrollTop(times.querySelector(".time-list--vertical"), timesScroll);
-      }
     }
 
     const summary = panel.querySelector(".selection-summary--inline");
@@ -770,8 +720,9 @@
   }
 
   function refreshMobileBookingScreen(screen, p, ctx) {
-    const isApproval = draftBookingMode(p) === "approval";
-    screen.setAttribute("data-booking-mode", isApproval ? "approval" : "auto");
+    const mode = draftBookingMode(p);
+    const scheduleKind = mode === "approval" ? "days" : mode === "request" ? "open" : "slots";
+    screen.setAttribute("data-booking-mode", isOfferRequestMode(mode) ? mode : "auto");
 
     const providerWrap = screen.querySelector(".booking__provider-card");
     if (providerWrap) {
@@ -798,12 +749,19 @@
     const split = screen.querySelector(".booking--mobile-split");
     const schedule = split && split.querySelector(".booking__schedule, .booking__schedule--request");
     if (split && schedule) {
-      const wantRequest = isApproval;
-      const isRequest = schedule.classList.contains("booking__schedule--request");
-      if (wantRequest !== isRequest) {
-        schedule.outerHTML = wantRequest
-          ? renderRequestSchedule(ctx)
-          : `<div class="booking__schedule" data-role="booking-mobile-schedule">
+      const currentKind = schedule.getAttribute("data-schedule-kind") ||
+        (schedule.classList.contains("booking__schedule--request-open")
+          ? "open"
+          : schedule.classList.contains("booking__schedule--request")
+            ? "days"
+            : "slots");
+      if (currentKind !== scheduleKind) {
+        schedule.outerHTML =
+          scheduleKind === "days"
+            ? renderRequestSchedule(ctx)
+            : scheduleKind === "open"
+              ? renderOpenRequestSchedule()
+              : `<div class="booking__schedule" data-role="booking-mobile-schedule" data-schedule-kind="slots">
               <div class="booking__label-row">
                 <h3 class="booking__label booking__label--caps">Wybierz datę</h3>
                 <span class="booking__month" data-role="booking-mobile-month">${escapeHtml(monthLabelFromISO(ctx.activeDate || ctx.availDates[0]))}</span>
@@ -821,7 +779,7 @@
       }
     }
 
-    if (isApproval) {
+    if (isOfferRequestMode(mode)) {
       updateBookingBottomNav(screen, ctx.draft);
       return;
     }
@@ -888,7 +846,7 @@
 
     if (window.AppState.screen.client === "booking") {
       document.querySelectorAll(".app-screen--booking").forEach(function (bookingScreen) {
-        bookingScreen.setAttribute("data-booking-mode", mode === "approval" ? "approval" : "auto");
+        bookingScreen.setAttribute("data-booking-mode", isOfferRequestMode(mode) ? mode : "auto");
         if (clientUsesDesktopBookingLayout()) {
           const layout = bookingScreen.querySelector(".booking-layout");
           if (layout) {
@@ -1137,7 +1095,10 @@
       calMonth: calMonth,
       slots: slots,
       requestDays: draft.requestDays,
-      canSendRequest: !!(totals.count && draft.requestDays.length),
+      canSendRequest: !!(
+        totals.count &&
+        (draftBookingMode(p) === "request" || (draft.requestDays && draft.requestDays.length))
+      ),
       timeList: renderTimeSlots(slots, draft),
       timeListMobile: renderTimeSlots(slots, draft, { mobile: true }),
       services: renderBookingServiceRows(p, draft.serviceIds || []),
@@ -1214,11 +1175,28 @@
   /** Ten sam wybór dni/pory w układzie mobilnym. */
   function renderRequestSchedule(ctx) {
     return `
-      <div class="booking__schedule booking__schedule--request">
+      <div class="booking__schedule booking__schedule--request" data-schedule-kind="days">
         <h3 class="booking__label booking__label--caps">Wybierz dni</h3>
         <div class="date-strip date-strip--booking" data-role="booking-request-days">${renderRequestDaysBody(ctx)}</div>
         <h3 class="booking__label booking__label--caps">Pora dnia</h3>
         <div class="request-day-list" data-role="booking-request-parts">${renderRequestPartsBody(ctx)}</div>
+      </div>`;
+  }
+
+  /** Prośba bez wyboru dnia/pory — tylko informacja + CTA. */
+  function renderOpenRequestSections() {
+    return `
+      <section class="booking__calendar booking__request-days booking__request-open">
+        <h3 class="booking__panel-label">Prośba o termin</h3>
+        <p class="booking__request-hint">Wyślij prośbę — usługodawca zaproponuje wolne terminy. Nie wybierasz dnia ani pory.</p>
+      </section>`;
+  }
+
+  function renderOpenRequestSchedule() {
+    return `
+      <div class="booking__schedule booking__schedule--request booking__schedule--request-open" data-schedule-kind="open">
+        <h3 class="booking__label booking__label--caps">Prośba o termin</h3>
+        <p class="booking__request-hint">Wyślij prośbę — usługodawca zaproponuje wolne terminy. Nie wybierasz dnia ani pory.</p>
       </div>`;
   }
 
@@ -1232,7 +1210,7 @@
         ? "wycena indyw."
         : totals.price + " zł";
 
-    if (mode === "approval") {
+    if (isOfferRequestMode(mode)) {
       return `
         <div class="selection-summary selection-summary--inline${hasSelection ? "" : " selection-summary--empty"}">
           <div class="selection-summary__info">
@@ -1253,18 +1231,21 @@
   }
 
   function renderBookingLayoutBlock(p, ctx) {
-    const isApproval = draftBookingMode(p) === "approval";
+    const mode = draftBookingMode(p);
+    const isRequestStyle = isOfferRequestMode(mode);
     return `
-      <div class="booking-layout${isApproval ? " booking-layout--approval" : ""}">
+      <div class="booking-layout${isRequestStyle ? " booking-layout--approval" : ""}">
         <aside class="booking__services">
           ${renderServicesPanelHead(p, ctx.draft)}
           <div class="booking__services-list service-list">${ctx.services}</div>
         </aside>
 
         ${
-          isApproval
+          mode === "approval"
             ? renderRequestDaysSections(ctx)
-            : `<section class="booking__calendar">
+            : mode === "request"
+              ? renderOpenRequestSections()
+              : `<section class="booking__calendar">
           <h3 class="booking__panel-label">Wybierz dzień</h3>
           ${ctx.availDates.length ? ctx.calendarGrid : `<p class="empty-note">Brak dostępnych terminów.</p>`}
         </section>
@@ -1287,11 +1268,12 @@
     const ctx = buildBookingContext(p);
     if (!ctx) return "";
 
-    const isApproval = draftBookingMode(p) === "approval";
+    const mode = draftBookingMode(p);
+    const isRequestStyle = isOfferRequestMode(mode);
     return `
-      <div class="provider-booking-panel${isApproval ? " provider-booking-panel--approval" : ""}${window.AppState.bookingPanelEnterSlug === p.slug ? " provider-booking-panel--enter" : ""}" data-booking-mode="${isApproval ? "approval" : "auto"}">
+      <div class="provider-booking-panel${isRequestStyle ? " provider-booking-panel--approval" : ""}${window.AppState.bookingPanelEnterSlug === p.slug ? " provider-booking-panel--enter" : ""}" data-booking-mode="${isRequestStyle ? mode : "auto"}">
         ${renderBookingLayoutBlock(p, ctx)}
-        ${renderSelectionSummaryBar(p, ctx, isApproval ? "approval" : "auto")}
+        ${renderSelectionSummaryBar(p, ctx, mode)}
       </div>`;
   }
 
@@ -2332,15 +2314,33 @@
     return "loc-tone-" + locationToneIndex(provider, locId);
   }
 
-  /** Normalizuje tryb oferty: auto | approval | queue. */
+  /** Normalizuje tryb oferty: auto | approval | queue | request. */
   function normalizeBookingMode(mode) {
-    if (mode === "approval" || mode === "queue") return mode;
+    if (mode === "approval" || mode === "queue" || mode === "request") return mode;
     return "auto";
   }
 
-  /** Tryb rezerwacji oferty: auto | approval | queue (fallback: stary bookingMode profilu). */
+  /** Prośba o termin (z wyborem dnia albo bez) — wspólny flow CTA / grupowania. */
+  function isOfferRequestMode(mode) {
+    return mode === "approval" || mode === "request";
+  }
+
+  /** Rodzina trybu do koszyka multi-select: auto | queue | request. */
+  function bookingModeFamily(mode) {
+    if (mode === "approval" || mode === "request") return "request";
+    if (mode === "queue") return "queue";
+    return "auto";
+  }
+
+  /** Tryb rezerwacji oferty: auto | approval | queue | request (fallback: stary bookingMode profilu). */
   function serviceBookingMode(service, provider) {
-    if (service && (service.bookingMode === "approval" || service.bookingMode === "queue" || service.bookingMode === "auto")) {
+    if (
+      service &&
+      (service.bookingMode === "approval" ||
+        service.bookingMode === "queue" ||
+        service.bookingMode === "request" ||
+        service.bookingMode === "auto")
+    ) {
       return service.bookingMode;
     }
     return provider && provider.bookingMode === "approval" ? "approval" : "auto";
@@ -2351,7 +2351,12 @@
     const fallback = provider.bookingMode === "approval" ? "approval" : "auto";
     provider.services.forEach(function (s) {
       if (!s || typeof s !== "object") return;
-      if (s.bookingMode !== "auto" && s.bookingMode !== "approval" && s.bookingMode !== "queue") {
+      if (
+        s.bookingMode !== "auto" &&
+        s.bookingMode !== "approval" &&
+        s.bookingMode !== "queue" &&
+        s.bookingMode !== "request"
+      ) {
         s.bookingMode = fallback;
       }
     });
@@ -2363,6 +2368,7 @@
     if (!provider || !ids.length) return "auto";
     ensureServicesBookingMode(provider);
     let sawQueue = false;
+    let sawRequest = false;
     for (let i = 0; i < ids.length; i++) {
       const svc = (provider.services || []).find(function (s) {
         return s && s.id === ids[i];
@@ -2370,14 +2376,17 @@
       if (!svc) continue;
       const mode = serviceBookingMode(svc, provider);
       if (mode === "approval") return "approval";
+      if (mode === "request") sawRequest = true;
       if (mode === "queue") sawQueue = true;
     }
+    if (sawRequest) return "request";
     return sawQueue ? "queue" : "auto";
   }
 
   function bookingModeLabel(mode) {
-    if (mode === "approval") return "Na prośbę o termin";
-    if (mode === "queue") return "Automatyczne potwierdzenie — kolejka";
+    if (mode === "approval") return "Prośba o termin — wybór dnia";
+    if (mode === "request") return "Prośba o termin";
+    if (mode === "queue") return "Kolejny wolny termin";
     return "Wybór terminu";
   }
 
@@ -2385,10 +2394,83 @@
     if (mode === "approval") {
       return "Klient zaznacza pasujące dni i porę dnia → Ty proponujesz godziny w jego dostępności → klient wybiera jedną → wizyta ląduje w kalendarzu";
     }
+    if (mode === "request") {
+      return "Klient tylko pyta o ofertę — bez wyboru dnia i pory → Ty podajesz wolne terminy → klient wybiera jeden";
+    }
     if (mode === "queue") {
       return "Klient widzi tylko pierwszy wolny termin — a jeśli masz kilka dostępności w dniu, po jednym na każdą";
     }
     return "Klient sam wybiera godzinę — po rezerwacji wizyta zapisuje się u Ciebie i u niego w kalendarzu";
+  }
+
+  /** Koszyk listy ofert: confirm = klient potwierdza, ask = klient pyta. */
+  function bookingModeGroup(mode) {
+    return isOfferRequestMode(mode) ? "ask" : "confirm";
+  }
+
+  function servicesInBookingGroup(provider, group) {
+    ensureServicesBookingMode(provider);
+    return ((provider && provider.services) || []).filter(function (s) {
+      return bookingModeGroup(serviceBookingMode(s, provider)) === group;
+    });
+  }
+
+  /** Jednolity tryb w grupie albo null, gdy oferty mają różne warianty. */
+  function uniformBookingModeInGroup(provider, group) {
+    const list = servicesInBookingGroup(provider, group);
+    if (!list.length) return null;
+    const first = serviceBookingMode(list[0], provider);
+    for (let i = 1; i < list.length; i++) {
+      if (serviceBookingMode(list[i], provider) !== first) return null;
+    }
+    return first;
+  }
+
+  function defaultModeForBookingGroup(provider, group) {
+    const uniform = uniformBookingModeInGroup(provider, group);
+    if (uniform) return uniform;
+    return group === "ask" ? "approval" : "auto";
+  }
+
+  /** Ustawia wariant rezerwacji dla wszystkich ofert w koszyku (confirm|ask). */
+  function setProviderServicesGroupMode(group, mode) {
+    const p = myProvider();
+    if (!p || !Array.isArray(p.services)) return;
+    mode = normalizeBookingMode(mode);
+    if (bookingModeGroup(mode) !== group) return;
+    let changed = 0;
+    p.services.forEach(function (s) {
+      if (!s) return;
+      if (bookingModeGroup(serviceBookingMode(s, p)) !== group) return;
+      if (s.bookingMode !== mode) {
+        s.bookingMode = mode;
+        changed += 1;
+      }
+    });
+    const params = window.AppState.params.provider || {};
+    if (params.editServiceDraft && params.editServiceId && params.editServiceId !== "__new__") {
+      const editing = getProviderService(params.editServiceId);
+      if (editing && bookingModeGroup(serviceBookingMode(editing, p)) === group) {
+        params.editServiceDraft.bookingMode = mode;
+      }
+    }
+    window.AppState.params.provider = params;
+    saveState();
+    renderAll();
+    if (!changed) {
+      showToast("Wszystkie oferty w grupie mają już ten tryb.");
+      return;
+    }
+    showToast(
+      group === "ask"
+        ? mode === "approval"
+          ? "Na prośbę: z wyborem dnia."
+          : "Na prośbę: bez wyboru dnia."
+        : mode === "queue"
+          ? "Klient wybiera termin: kolejka."
+          : "Klient wybiera termin: dowolny wybór."
+    );
+    hapticTap(12);
   }
 
   function bookingTimesPanelTitle(provider, activeDate) {
@@ -3525,13 +3607,13 @@
   }
 
   function bookingConfirmCTA(p, draft, totals) {
-    const isApproval = draftBookingMode(p) === "approval";
-    if (isApproval) {
+    const mode = draftBookingMode(p);
+    if (isOfferRequestMode(mode)) {
       const days = (draft && draft.requestDays) || [];
       return {
         action: "send-request",
         label: "Wyślij prośbę",
-        enabled: !!(totals && totals.count && days.length),
+        enabled: !!(totals && totals.count && (mode === "request" || days.length)),
         slugAttr: p ? ` data-slug="${escapeHtml(p.slug)}"` : "",
       };
     }
@@ -4743,11 +4825,11 @@
     ensureDraftServiceVariants(draft);
     ensureServicesBookingMode(p);
 
-    // Klient: kolejka wygląda jak zwykły wybór terminu; osobno tylko „na prośbę”.
+    // Klient: kolejka jak wybór terminu; osobno prośby (z dniem i bez).
     const openBook = [];
-    const approval = [];
+    const requests = [];
     (p.services || []).forEach(function (s) {
-      if (serviceBookingMode(s, p) === "approval") approval.push(s);
+      if (isOfferRequestMode(serviceBookingMode(s, p))) requests.push(s);
       else openBook.push(s);
     });
 
@@ -4766,10 +4848,10 @@
           <h4 class="service-list__group-title">Wybór terminu</h4>
         </div>${rowsHtml(openBook)}`;
     }
-    if (approval.length) {
+    if (requests.length) {
       html += `<div class="service-list__sep${openBook.length ? " service-list__sep--divider" : ""}">
-          <h4 class="service-list__group-title">Na prośbę o termin</h4>
-        </div>${rowsHtml(approval)}`;
+          <h4 class="service-list__group-title">Na prośbę</h4>
+        </div>${rowsHtml(requests)}`;
     }
     return html || `<p class="empty-note">Brak usług w ofercie.</p>`;
   }
@@ -5106,9 +5188,9 @@
     const selectedIds = (window.AppState.draft && window.AppState.draft.serviceIds) || [];
     const services = renderBookingServiceRows(p, selectedIds);
 
-    const isApproval = draftBookingMode(p) === "approval";
-    // W trybie „na prośbę” klient najpierw wskazuje dni i porę dnia — dlatego przechodzimy do ekranu rezerwacji.
-    const ctaLabel = isApproval ? "Poproś o termin" : "Rezerwuj termin";
+    const isRequestStyle = isOfferRequestMode(draftBookingMode(p));
+    // W trybie prośby przechodzimy do ekranu rezerwacji (z wyborem dni albo od razu do wysyłki).
+    const ctaLabel = isRequestStyle ? "Poproś o termin" : "Rezerwuj termin";
     const ctaAction = "start-booking";
 
     return `
@@ -5163,7 +5245,7 @@
 
     const ctx = buildBookingContext(p);
     if (!ctx) return renderSearch();
-    const isApproval = draftBookingMode(p) === "approval";
+    const mode = draftBookingMode(p);
     // Nagłówek poza .booking-mobile — na desktopie ten blok jest ukrywany,
     // a bez karty usługodawcy ekran rezerwacji wygląda na „pusty”.
     const providerHead = `
@@ -5171,21 +5253,12 @@
           ${renderProviderCard(p, false, { staticMain: true, bookingHeader: true, showBack: true })}
           ${ctx.draft.providerInfoOpen ? renderProviderInfoPopover(p) : ""}
         </div>`;
-
-    return `
-      <div class="app-screen app-screen--client app-screen--booking" data-booking-mode="${isApproval ? "approval" : "auto"}">
-        ${providerHead}
-        <div class="booking-mobile">
-          <div class="booking booking--mobile-split">
-            <div class="booking__main">
-              ${renderServicesPanelHead(p, ctx.draft, { mobile: true })}
-              <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
-            </div>
-
-            ${
-              isApproval
-                ? renderRequestSchedule(ctx)
-                : `<div class="booking__schedule" data-role="booking-mobile-schedule">
+    const mobileSchedule =
+      mode === "approval"
+        ? renderRequestSchedule(ctx)
+        : mode === "request"
+          ? renderOpenRequestSchedule()
+          : `<div class="booking__schedule" data-role="booking-mobile-schedule" data-schedule-kind="slots">
               <div class="booking__label-row">
                 <h3 class="booking__label booking__label--caps">Wybierz datę</h3>
                 <span class="booking__month" data-role="booking-mobile-month">${escapeHtml(monthLabelFromISO(ctx.activeDate || ctx.availDates[0]))}</span>
@@ -5198,8 +5271,19 @@
                   ? ctx.timeListMobile || `<p class="empty-note">${escapeHtml(bookingTimesEmptyNote(p))}</p>`
                   : ""
               }</div>
-            </div>`
-            }
+            </div>`;
+
+    return `
+      <div class="app-screen app-screen--client app-screen--booking" data-booking-mode="${isOfferRequestMode(mode) ? mode : "auto"}">
+        ${providerHead}
+        <div class="booking-mobile">
+          <div class="booking booking--mobile-split">
+            <div class="booking__main">
+              ${renderServicesPanelHead(p, ctx.draft, { mobile: true })}
+              <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
+            </div>
+
+            ${mobileSchedule}
           </div>
         </div>
 
@@ -9569,23 +9653,14 @@
         return computeSlots(p, dateISO, duration, slotOpts).length > 0;
       });
     const requestDays = isReply ? normalizeRequestDays(replyReq.days) : [];
-    const requestDaySet = new Set(
-      requestDays.map(function (d) {
-        return d.dateISO;
-      })
-    );
-    const showAll = !isReply || !!window.AppState.provCalReplyShowAll;
-    const stripDates = !isReply
+    // null = brak ograniczenia dni (prośba bez wyboru dnia).
+    const requestDaySet = isReply ? replyRequestDaySet() : null;
+    const showAll = !isReply || !requestDaySet || !!window.AppState.provCalReplyShowAll;
+    const stripDates = !isReply || showAll
       ? allAvailDates
-      : showAll
-        ? allAvailDates
-        : requestDays
-            .map(function (d) {
-              return d.dateISO;
-            })
-            .filter(function (dateISO) {
-              return allAvailDates.indexOf(dateISO) !== -1 || true;
-            });
+      : requestDays.map(function (d) {
+          return d.dateISO;
+        });
     let activeDate = draft.dateISO;
     if (stripDates.length && stripDates.indexOf(activeDate) === -1) {
       activeDate = stripDates[0];
@@ -9596,7 +9671,7 @@
     }
     const hasSvc = selected.length > 0;
     const dayPart = isReply ? replyDayPartForDate(activeDate) : "any";
-    const inRequestDay = !isReply || requestDaySet.has(activeDate);
+    const inRequestDay = !isReply || !requestDaySet || requestDaySet.has(activeDate);
     let slots = hasSvc ? computeSlots(p, activeDate, duration, slotOpts) : [];
     if (isReply && inRequestDay) {
       slots = slots.filter(function (s) {
@@ -10425,36 +10500,28 @@
           <span class="service-edit__label">Opis</span>
         </label>
         <div class="service-edit__field" data-field="bookingMode">
-          <span class="service-edit__label">Typ rezerwacji oferty</span>
-          <div class="service-edit__mode-list" data-role="service-booking-mode-panel">
+          <span class="service-edit__label">Jak klient rezerwuje</span>
+          <div class="service-edit__mode-list service-edit__mode-list--category" data-role="service-booking-mode-panel">
             <div class="settings-contact__toggle service-edit__mode-toggle">
               <div class="settings__toggle-text">
-                <span class="settings__hint">Wybór terminu</span>
-                <span class="settings-contact__toggle-hint">${escapeHtml(bookingModeDescription("auto"))}</span>
+                <span class="settings__hint">Klient rezerwuje jeden z dostępnych terminów</span>
               </div>
-              <label class="settings__toggle" title="Wybór terminu">
+              <label class="settings__toggle" title="Klient rezerwuje jeden z dostępnych terminów">
                 <input type="checkbox" class="avail-edit__switch" data-role="service-booking-mode-switch"
-                  data-mode="auto" ${mode === "auto" ? "checked" : ""} aria-label="Wybór terminu" />
+                  data-mode="confirm" data-group="confirm" ${
+                    bookingModeGroup(mode) === "confirm" ? "checked" : ""
+                  } aria-label="Klient rezerwuje jeden z dostępnych terminów" />
               </label>
             </div>
             <div class="settings-contact__toggle service-edit__mode-toggle">
               <div class="settings__toggle-text">
-                <span class="settings__hint">Automatyczne potwierdzenie — kolejka</span>
-                <span class="settings-contact__toggle-hint">${escapeHtml(bookingModeDescription("queue"))}</span>
+                <span class="settings__hint">Klient prosi o podanie terminu</span>
               </div>
-              <label class="settings__toggle" title="Automatyczne potwierdzenie — kolejka">
+              <label class="settings__toggle" title="Klient prosi o podanie terminu">
                 <input type="checkbox" class="avail-edit__switch" data-role="service-booking-mode-switch"
-                  data-mode="queue" ${mode === "queue" ? "checked" : ""} aria-label="Automatyczne potwierdzenie — kolejka" />
-              </label>
-            </div>
-            <div class="settings-contact__toggle service-edit__mode-toggle">
-              <div class="settings__toggle-text">
-                <span class="settings__hint">Na prośbę o termin</span>
-                <span class="settings-contact__toggle-hint">${escapeHtml(bookingModeDescription("approval"))}</span>
-              </div>
-              <label class="settings__toggle" title="Na prośbę o termin">
-                <input type="checkbox" class="avail-edit__switch" data-role="service-booking-mode-switch"
-                  data-mode="approval" ${mode === "approval" ? "checked" : ""} aria-label="Na prośbę o termin" />
+                  data-mode="ask" data-group="ask" ${
+                    bookingModeGroup(mode) === "ask" ? "checked" : ""
+                  } aria-label="Klient prosi o podanie terminu" />
               </label>
             </div>
           </div>
@@ -10467,27 +10534,86 @@
           <button type="button" class="btn btn--primary" data-action="save-service" data-service-id="${escapeHtml(serviceId)}">${isNew ? "Dodaj" : "Zapisz"}</button>
           <button type="button" class="btn btn--ghost" data-action="cancel-edit-service">Anuluj</button>
         </div>
+        ${
+          isNew
+            ? ""
+            : `<div class="service-edit__danger">
+          <button type="button" class="btn btn--quiet btn--quiet-danger service-edit__delete" data-action="delete-service" data-service-id="${escapeHtml(
+            serviceId
+          )}">Usuń usługę</button>
+        </div>`
+        }
       </form>`;
+  }
+
+  function renderProviderServicesGroupSeg(group, options, activeMode, pickMode) {
+    if (pickMode) return "";
+    const descHtml = activeMode
+      ? `<p class="service-list__group-desc">${escapeHtml(bookingModeDescription(activeMode))}</p>`
+      : `<div class="service-list__group-desc-list">
+          ${options
+            .map(function (opt) {
+              return `<p class="service-list__group-desc">
+                <span class="service-list__group-desc-label">${escapeHtml(opt.label)}</span>
+                ${escapeHtml(bookingModeDescription(opt.mode))}
+              </p>`;
+            })
+            .join("")}
+        </div>`;
+    return `<div class="service-list__mode-seg" role="group" aria-label="Typ rezerwacji">
+      ${options
+        .map(function (opt) {
+          const on = activeMode === opt.mode;
+          return `<button type="button" class="service-list__mode-seg-btn${on ? " is-on" : ""}" data-action="set-services-group-mode" data-group="${escapeHtml(
+            group
+          )}" data-mode="${escapeHtml(opt.mode)}" aria-pressed="${on ? "true" : "false"}">${escapeHtml(opt.label)}</button>`;
+        })
+        .join("")}
+    </div>
+    ${descHtml}
+    <p class="service-list__group-hint">Dotyczy wszystkich ofert w tej grupie</p>`;
   }
 
   function renderProviderServicesListHtml(p, editId) {
     ensureServicesBookingMode(p);
-    const list = (p ? p.services : [])
-      .map(function (s) {
-        const thumb = servicePhotos(s)[0];
-        const variants = serviceVariants(s);
-        const defId = defaultServiceVariantId(s);
-        const resolved = resolveServiceVariant(s, defId);
-        const mode = serviceBookingMode(s, p);
-        const modeLabel = bookingModeLabel(mode);
-        const locLabel = serviceLocationSummary(s, p);
-        const selected = editId && editId === s.id;
-        return `
+    const openBook = servicesInBookingGroup(p, "confirm");
+    const requests = servicesInBookingGroup(p, "ask");
+    const confirmMode = uniformBookingModeInGroup(p, "confirm");
+    const askMode = uniformBookingModeInGroup(p, "ask");
+    const pickMode = providerServicesPickMode();
+    const pickIds = providerServicesPickIds();
+    const pickCount = pickIds.length;
+    const totalCount = (p && p.services ? p.services.length : 0) || 0;
+
+    function rowHtml(s) {
+      const thumb = servicePhotos(s)[0];
+      const variants = serviceVariants(s);
+      const defId = defaultServiceVariantId(s);
+      const resolved = resolveServiceVariant(s, defId);
+      const mode = serviceBookingMode(s, p);
+      const modeLabel = bookingModeLabel(mode);
+      const locLabel = serviceLocationSummary(s, p);
+      const selected = !pickMode && editId && editId === s.id;
+      const picked = pickMode && pickIds.indexOf(s.id) !== -1;
+      const rowAction = pickMode ? "toggle-service-pick" : "edit-service";
+      const rowLabel = pickMode
+        ? (picked ? "Odznacz" : "Zaznacz") + " " + (s.name || "usługę")
+        : "Edytuj " + (s.name || "usługę");
+      return `
       <div class="service-row service-row--static${variants.length ? " service-row--has-variants" : ""}${
         selected ? " is-selected" : ""
-      }" data-action="edit-service" data-service-id="${escapeHtml(s.id)}" role="button" tabindex="0"
-        aria-pressed="${selected ? "true" : "false"}" aria-label="Edytuj ${escapeHtml(s.name)}">
+      }${pickMode ? " service-row--pick" : ""}${picked ? " is-picked" : ""}" data-action="${rowAction}" data-service-id="${escapeHtml(
+        s.id
+      )}" role="button" tabindex="0"
+        aria-pressed="${pickMode ? (picked ? "true" : "false") : selected ? "true" : "false"}" aria-label="${escapeHtml(rowLabel)}">
         <div class="service-row__top">
+          ${
+            pickMode
+              ? `<span class="service-row__select service-row__select--checkbox${
+                  picked ? " service-row__select--on" : ""
+                }" aria-hidden="true"><span class="service-row__select-mark"></span></span>`
+              : ""
+          }
           ${
             thumb
               ? `<img class="service-row__thumb" src="${escapeHtml(thumb)}" alt="" loading="lazy" />`
@@ -10505,21 +10631,89 @@
               <span class="service-row__price">${escapeHtml(formatPrice(resolved.price))}</span>
             </span>
           </div>
-          <button type="button" class="service-row__edit" data-action="edit-service" data-service-id="${escapeHtml(s.id)}" aria-label="Edytuj ${escapeHtml(s.name)}" title="Edytuj">
+          ${
+            pickMode
+              ? ""
+              : `<button type="button" class="service-row__edit" data-action="edit-service" data-service-id="${escapeHtml(
+                  s.id
+                )}" aria-label="Edytuj ${escapeHtml(s.name)}" title="Edytuj">
             <span class="service-row__edit-icon" aria-hidden="true"></span>
-          </button>
+          </button>`
+          }
         </div>
         ${renderServiceVariantCarousel(s, null, { interactive: false })}
       </div>`;
-      })
-      .join("");
+    }
+
+    function groupAddBtn(group) {
+      if (pickMode) return "";
+      return `<button type="button" class="btn btn--primary service-list__add" data-action="add-service" data-group="${escapeHtml(
+        group
+      )}">Dodaj usługę</button>`;
+    }
+
+    let list = "";
+    list += `<div class="service-list__group-head">
+          <h4 class="service-list__group-title">Typ rezerwacji — klient wybiera termin</h4>
+          ${renderProviderServicesGroupSeg(
+            "confirm",
+            [
+              { mode: "auto", label: "Dowolny wybór" },
+              { mode: "queue", label: "Kolejka" },
+            ],
+            confirmMode,
+            pickMode
+          )}
+        </div>${
+          openBook.length
+            ? openBook.map(rowHtml).join("")
+            : `<p class="empty-note service-list__group-empty">Brak ofert w tej grupie.</p>`
+        }${groupAddBtn("confirm")}`;
+    list += `<div class="service-list__sep service-list__sep--divider">
+          <h4 class="service-list__group-title">Typ rezerwacji — na prośbę</h4>
+          ${renderProviderServicesGroupSeg(
+            "ask",
+            [
+              { mode: "approval", label: "Z wyborem dnia" },
+              { mode: "request", label: "Bez wyboru dnia" },
+            ],
+            askMode,
+            pickMode
+          )}
+        </div>${
+          requests.length
+            ? requests.map(rowHtml).join("")
+            : `<p class="empty-note service-list__group-empty">Brak ofert w tej grupie.</p>`
+        }${groupAddBtn("ask")}`;
+
+    const pickBtn =
+      totalCount > 0
+        ? `<button type="button" class="screen-head__text-btn" data-action="toggle-services-pick">${
+            pickMode ? "Anuluj" : "Wybierz"
+          }</button>`
+        : "";
+
+    const foot = pickMode
+      ? `<div class="service-list__pick-bar" role="toolbar" aria-label="Akcje zaznaczenia">
+            <span class="service-list__pick-count">${
+              pickCount ? escapeHtml(String(pickCount) + " zazn.") : "Zaznacz oferty"
+            }</span>
+            <button type="button" class="btn btn--danger service-list__pick-delete" data-action="delete-selected-services"${
+              pickCount ? "" : " disabled"
+            }>Usuń${pickCount ? " (" + pickCount + ")" : ""}</button>
+          </div>`
+      : "";
+
     return `
-          <header class="screen-head">
-            <h2 class="screen-head__title">Usługi</h2>
-            <p class="screen-head__sub">Oferta i tryb rezerwacji widoczne dla klientów.</p>
+          <header class="screen-head screen-head--services">
+            <div class="screen-head__text">
+              <h2 class="screen-head__title">Usługi</h2>
+              <p class="screen-head__sub">Oferty w dwóch koszykach — wariant rezerwacji ustawiasz dla całej grupy.</p>
+            </div>
+            ${pickBtn}
           </header>
-          <div class="service-list">${list || `<p class="empty-note">Brak usług w ofercie.</p>`}</div>
-          <button type="button" class="btn btn--primary service-list__add" data-action="add-service">Dodaj usługę</button>`;
+          <div class="service-list${pickMode ? " service-list--pick" : ""}">${list}</div>
+          ${foot}`;
   }
 
   function renderServices() {
@@ -10577,25 +10771,70 @@
       </div>`;
   }
 
+  function providerServicesPickMode() {
+    const params = window.AppState.params.provider || {};
+    return !!params.servicesPickMode;
+  }
+
+  function providerServicesPickIds() {
+    const params = window.AppState.params.provider || {};
+    return Array.isArray(params.servicesPickIds) ? params.servicesPickIds.slice() : [];
+  }
+
+  function setProviderServicesPickMode(on) {
+    const params = Object.assign({}, window.AppState.params.provider || {});
+    if (on) {
+      params.servicesPickMode = true;
+      if (!Array.isArray(params.servicesPickIds)) params.servicesPickIds = [];
+    } else {
+      delete params.servicesPickMode;
+      delete params.servicesPickIds;
+    }
+    window.AppState.params.provider = params;
+  }
+
+  function toggleProviderServicePick(serviceId) {
+    if (!serviceId) return;
+    const params = Object.assign({}, window.AppState.params.provider || {});
+    const ids = Array.isArray(params.servicesPickIds) ? params.servicesPickIds.slice() : [];
+    const idx = ids.indexOf(serviceId);
+    if (idx === -1) ids.push(serviceId);
+    else ids.splice(idx, 1);
+    params.servicesPickMode = true;
+    params.servicesPickIds = ids;
+    window.AppState.params.provider = params;
+    saveState();
+    renderAll();
+  }
+
   function openEditService(serviceId) {
     const s = getProviderService(serviceId);
     if (!s) return;
+    if (providerServicesPickMode()) {
+      toggleProviderServicePick(serviceId);
+      return;
+    }
     window.AppState.params.provider = Object.assign({}, window.AppState.params.provider || {}, {
       editServiceId: serviceId,
       editServicePhotos: Array.isArray(s.photos) ? s.photos.slice() : [],
       editServiceDraft: null,
     });
+    setProviderServicesPickMode(false);
     window.AppState.screen.provider = "services";
     saveState();
     renderAll();
   }
 
-  function openAddService() {
+  function openAddService(group) {
+    const p = myProvider();
+    const g = group === "ask" || group === "confirm" ? group : "confirm";
+    const mode = defaultModeForBookingGroup(p, g);
     window.AppState.params.provider = Object.assign({}, window.AppState.params.provider || {}, {
       editServiceId: "__new__",
       editServicePhotos: [],
-      editServiceDraft: null,
+      editServiceDraft: { bookingMode: mode },
     });
+    setProviderServicesPickMode(false);
     window.AppState.screen.provider = "services";
     saveState();
     renderAll();
@@ -10783,6 +11022,96 @@
     saveState();
     renderAll();
     showToast(isNew ? "Usługa dodana." : "Usługa zapisana.");
+  }
+
+  function ensureDeleteServiceDialog() {
+    let el = document.getElementById("delete-service-dialog");
+    if (el) return el;
+    el = document.createElement("div");
+    el.id = "delete-service-dialog";
+    el.className = "cancel-visit-dialog delete-service-dialog";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-labelledby", "delete-service-title");
+    el.hidden = true;
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function closeDeleteServiceDialog() {
+    const el = document.getElementById("delete-service-dialog");
+    if (!el || el.hidden) return;
+    el.hidden = true;
+    el.innerHTML = "";
+    delete el.dataset.serviceIds;
+    document.body.classList.remove("cancel-visit-dialog-open");
+  }
+
+  function openDeleteServiceDialog(serviceIds) {
+    const ids = (Array.isArray(serviceIds) ? serviceIds : [serviceIds]).filter(Boolean);
+    if (!ids.length) return;
+    const p = myProvider();
+    const names = ids
+      .map(function (id) {
+        const s = getProviderService(id);
+        return s && s.name ? s.name : "";
+      })
+      .filter(Boolean);
+    const count = ids.length;
+    const title = count === 1 ? "Usunąć usługę?" : "Usunąć " + count + " usługi?";
+    const lead =
+      count === 1
+        ? names[0]
+          ? "„" + names[0] + "” zniknie z oferty widocznej dla klientów."
+          : "Ta usługa zniknie z oferty widocznej dla klientów."
+        : "Wybrane oferty znikną z listy widocznej dla klientów.";
+    const el = ensureDeleteServiceDialog();
+    el.dataset.serviceIds = ids.join(",");
+    el.innerHTML = `
+      <button type="button" class="cancel-visit-dialog__backdrop" data-action="close-delete-service" aria-label="Zamknij"></button>
+      <div class="cancel-visit-dialog__panel">
+        <h2 class="cancel-visit-dialog__title" id="delete-service-title">${escapeHtml(title)}</h2>
+        <p class="cancel-visit-dialog__lead">${escapeHtml(lead)}</p>
+        <div class="cancel-visit-dialog__actions">
+          <button type="button" class="btn btn--ghost" data-action="close-delete-service">Anuluj</button>
+          <button type="button" class="btn btn--danger" data-action="confirm-delete-service">Usuń</button>
+        </div>
+      </div>`;
+    el.hidden = false;
+    document.body.classList.add("cancel-visit-dialog-open");
+  }
+
+  function deleteServices(serviceIds) {
+    const p = myProvider();
+    if (!p || !Array.isArray(p.services)) return;
+    const ids = (Array.isArray(serviceIds) ? serviceIds : [serviceIds]).filter(Boolean);
+    if (!ids.length) return;
+    const idSet = {};
+    ids.forEach(function (id) {
+      idSet[id] = true;
+    });
+    p.services = p.services.filter(function (s) {
+      return s && !idSet[s.id];
+    });
+    const params = window.AppState.params.provider || {};
+    if (params.editServiceId && idSet[params.editServiceId]) {
+      delete params.editServiceId;
+      delete params.editServicePhotos;
+      delete params.editServiceDraft;
+    }
+    params.servicesPickIds = (params.servicesPickIds || []).filter(function (id) {
+      return !idSet[id];
+    });
+    if (!params.servicesPickIds.length) {
+      delete params.servicesPickMode;
+      delete params.servicesPickIds;
+    }
+    window.AppState.params.provider = params;
+    closeDeleteServiceDialog();
+    saveState();
+    renderAll();
+    showToast(ids.length === 1 ? "Usługa usunięta." : "Usunięto " + ids.length + " usługi.");
+    hapticTap(16);
   }
 
   function mondayISOFrom(dateISO) {
@@ -13082,14 +13411,26 @@
     });
   }
 
-  function setServiceBookingMode(mode, fromEl) {
+  function setServiceBookingMode(modeOrGroup, fromEl) {
     withServiceEditScroll(fromEl, function (form) {
       if (!form) return;
-      const next = normalizeBookingMode(mode);
+      const p = myProvider();
+      const current = readServiceEditBookingMode(form);
+      let next;
+      if (modeOrGroup === "confirm" || modeOrGroup === "ask") {
+        next =
+          bookingModeGroup(current) === modeOrGroup
+            ? current
+            : defaultModeForBookingGroup(p, modeOrGroup);
+      } else {
+        next = normalizeBookingMode(modeOrGroup);
+      }
       const hidden = form.querySelector('[data-role="service-booking-mode-value"]') || form.elements.bookingMode;
       if (hidden) hidden.value = next;
+      const group = bookingModeGroup(next);
       form.querySelectorAll('[data-role="service-booking-mode-switch"]').forEach(function (sw) {
-        sw.checked = sw.getAttribute("data-mode") === next;
+        const g = sw.getAttribute("data-group") || bookingModeGroup(sw.getAttribute("data-mode"));
+        sw.checked = g === group;
       });
       captureServiceEditDraft(form);
       saveState();
@@ -13722,25 +14063,23 @@
       if (idx === -1) selectedVariantIdForService(draft, svc);
       if (idx !== -1) delete draft.serviceVariants[serviceId];
     } else if (idx === -1) {
+      const nextFamily = bookingModeFamily(nextMode);
       const compatible = ids.filter(function (id) {
         const other = (p.services || []).find(function (s) {
           return s && s.id === id;
         });
-        return other && serviceBookingMode(other, p) === nextMode;
+        return other && bookingModeFamily(serviceBookingMode(other, p)) === nextFamily;
       });
       if (compatible.length !== ids.length) {
-        compatible.forEach(function (id) {
-          /* keep */
-        });
         ids.forEach(function (id) {
           if (compatible.indexOf(id) === -1 && draft.serviceVariants) {
             delete draft.serviceVariants[id];
           }
         });
         showToast(
-          nextMode === "approval"
+          nextFamily === "request"
             ? "Oferty na prośbę — usunięto inne tryby z koszyka."
-            : nextMode === "queue"
+            : nextFamily === "queue"
               ? "Oferty w kolejce — usunięto inne tryby z koszyka."
               : "Oferty automatyczne — usunięto inne tryby z koszyka."
         );
@@ -13974,9 +14313,14 @@
       showToast("Wybierz co najmniej jedną usługę.");
       return;
     }
-    const days = normalizeRequestDays(draft.requestDays);
-    if (!days.length) {
+    const mode = draftBookingMode(p);
+    const days = mode === "request" ? [] : normalizeRequestDays(draft.requestDays);
+    if (mode === "approval" && !days.length) {
       showToast("Zaznacz co najmniej jeden pasujący dzień.");
+      return;
+    }
+    if (!isOfferRequestMode(mode)) {
+      showToast("Wybierz ofertę na prośbę o termin.");
       return;
     }
     const svcs = draftServices(p);
@@ -13992,6 +14336,7 @@
       serviceIds: svcs.map((s) => s.id),
       serviceNames: svcs.map((s) => s.name),
       days: days,
+      requestMode: mode === "request" ? "request" : "approval",
       proposals: [],
       acceptedProposalId: null,
       status: "pending",
@@ -14769,6 +15114,12 @@
       }
     }
     if (event.key === "Escape") {
+      const deleteSvcDlg = document.getElementById("delete-service-dialog");
+      if (deleteSvcDlg && !deleteSvcDlg.hidden) {
+        event.preventDefault();
+        closeDeleteServiceDialog();
+        return;
+      }
       const installHelp = document.getElementById("pwa-install-help");
       if (installHelp && !installHelp.hidden) {
         event.preventDefault();
@@ -15488,7 +15839,7 @@
         break;
       case "add-service":
         event.preventDefault();
-        openAddService();
+        openAddService(d.group);
         break;
       case "remove-service-photo":
         event.preventDefault();
@@ -15511,6 +15862,48 @@
         {
           const form = btn.closest("form.service-edit");
           saveService(d.serviceId, form);
+        }
+        break;
+      case "delete-service":
+        event.preventDefault();
+        openDeleteServiceDialog(d.serviceId || btn.getAttribute("data-service-id"));
+        break;
+      case "toggle-services-pick":
+        event.preventDefault();
+        setProviderServicesPickMode(!providerServicesPickMode());
+        saveState();
+        renderAll();
+        break;
+      case "set-services-group-mode":
+        event.preventDefault();
+        setProviderServicesGroupMode(
+          d.group || btn.getAttribute("data-group"),
+          d.mode || btn.getAttribute("data-mode")
+        );
+        break;
+      case "toggle-service-pick":
+        event.preventDefault();
+        toggleProviderServicePick(d.serviceId || btn.getAttribute("data-service-id"));
+        break;
+      case "delete-selected-services":
+        event.preventDefault();
+        openDeleteServiceDialog(providerServicesPickIds());
+        break;
+      case "close-delete-service":
+        event.preventDefault();
+        closeDeleteServiceDialog();
+        break;
+      case "confirm-delete-service":
+        event.preventDefault();
+        {
+          const dlg = document.getElementById("delete-service-dialog");
+          const raw = (dlg && dlg.dataset.serviceIds) || "";
+          const ids = raw
+            ? raw.split(",").map(function (x) {
+                return x.trim();
+              }).filter(Boolean)
+            : [];
+          deleteServices(ids);
         }
         break;
       case "select-provider-visit":
@@ -15754,9 +16147,10 @@
 
     const bookingModeSwitch = event.target.closest('[data-role="service-booking-mode-switch"]');
     if (bookingModeSwitch) {
-      const picked = normalizeBookingMode(bookingModeSwitch.getAttribute("data-mode"));
-      // Jedna opcja aktywna naraz; wyłączenie wraca do automatycznego.
-      const next = bookingModeSwitch.checked ? picked : "auto";
+      const group = bookingModeSwitch.getAttribute("data-group");
+      const picked = group || normalizeBookingMode(bookingModeSwitch.getAttribute("data-mode"));
+      // Jedna kategoria aktywna naraz; wyłączenie wraca do „klient potwierdza”.
+      const next = bookingModeSwitch.checked ? picked : "confirm";
       setServiceBookingMode(next, bookingModeSwitch);
       return;
     }

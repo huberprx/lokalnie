@@ -4296,12 +4296,21 @@ body.avatar-preview-open {
   color: var(--accent-provider);
 }
 
-.service-row__mode--approval {
+.service-row__mode--approval,
+.service-row__mode--request {
   color: var(--warning, #c9851a);
 }
 
 .service-row__mode--queue {
   color: var(--accent-client, #5b8def);
+}
+
+.booking__schedule--request-open .booking__request-hint,
+.booking__request-open .booking__request-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  color: var(--text-muted);
 }
 
 
@@ -4357,8 +4366,114 @@ body.avatar-preview-open {
   pointer-events: none;
 }
 
-.service-row--static:last-child::after {
+.service-row--static:last-child::after,
+.service-row--static:has(+ .service-list__sep)::after {
   display: none;
+}
+
+/* Separator grup trybu rezerwacji na liście ofert usługodawcy. */
+.service-list:has(.service-row--static) > .service-list__group-head {
+  margin-top: 0.15rem;
+}
+
+.service-list:has(.service-row--static) > .service-list__sep--divider {
+  margin-top: 0.55rem;
+  padding-top: 0.75rem;
+}
+
+.service-list__group-label {
+  margin: 0.2rem 0 0.45rem;
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: var(--text);
+}
+
+.service-list__mode-seg {
+  display: flex;
+  gap: 0.35rem;
+  margin: 0 0 0.2rem;
+  padding: 0.2rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 88%, var(--border));
+}
+
+.service-list__mode-seg-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0.42rem 0.45rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.service-list__mode-seg-btn.is-on {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.service-list__mode-seg-btn:hover:not(.is-on) {
+  color: var(--text);
+}
+
+.service-list__group-desc,
+.service-list__group-desc-list {
+  margin: 0.4rem 0 0;
+}
+
+.service-list__group-desc {
+  margin: 0;
+  font-size: 0.74rem;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.service-list__group-desc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.service-list__group-desc-list .service-list__group-desc + .service-list__group-desc {
+  padding-top: 0.35rem;
+  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.service-list__group-desc-label {
+  display: block;
+  margin-bottom: 0.1rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.service-list__group-hint {
+  margin: 0.35rem 0 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.service-list__group-empty {
+  margin: 0.25rem 0 0.55rem;
+  padding: 0.35rem 0.1rem;
+}
+
+.service-edit__mode-list--category .service-edit__mode-toggle + .service-edit__mode-toggle {
+  border-top: 1px solid var(--border);
 }
 
 .service-row--static .service-row__top {
@@ -4724,7 +4839,12 @@ span.service-variant-chip {
 
 .service-list__add {
   width: 100%;
-  margin-top: 0.85rem;
+  margin-top: 0.55rem;
+  margin-bottom: 0.35rem;
+}
+
+.service-list__group-empty + .service-list__add {
+  margin-top: 0.2rem;
 }
 
 /* Panel karuzeli zdjęć usługi (wariant B) */
@@ -5248,6 +5368,97 @@ body.service-photo-preview-open {
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 0.35rem;
+}
+
+/* Strefa destrukcyjna — osobno od Zapisz/Anuluj (wzorzec Settings / Booksy). */
+.service-edit__danger {
+  margin-top: 1.35rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: center;
+}
+
+.service-edit__delete {
+  width: 100%;
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.service-edit__delete:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.screen-head--services {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.screen-head--services .screen-head__text {
+  min-width: 0;
+}
+
+.screen-head__text-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  flex-shrink: 0;
+  margin: 0.15rem 0 0;
+  padding: 0.35rem 0.55rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent-provider);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.screen-head__text-btn:hover {
+  background: color-mix(in srgb, var(--accent-provider) 10%, transparent);
+}
+
+.service-list__pick-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+  padding: 0.55rem 0.15rem 0.15rem;
+  position: sticky;
+  bottom: calc(0.35rem + var(--bottom-nav-clearance, 0px));
+  z-index: 2;
+  background: linear-gradient(to top, var(--bg) 55%, color-mix(in srgb, var(--bg) 88%, transparent));
+}
+
+.service-list__pick-count {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.service-list__pick-delete {
+  min-width: 7.5rem;
+}
+
+.service-list__pick-delete:disabled {
+  opacity: 0.45;
+}
+
+.app-screen--services .service-row--pick .service-row__select:hover {
+  border-color: var(--accent-provider);
+}
+
+.app-screen--services .service-row__select--on.service-row__select--checkbox {
+  background: var(--accent-provider);
+  border-color: var(--accent-provider);
+}
+
+.app-screen--services .service-row--static.is-picked {
+  background: color-mix(in srgb, var(--accent-provider-soft) 55%, transparent) !important;
 }
 
 .service-row:not(.service-row--static):not(.service-row--booking-b):hover {

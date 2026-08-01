@@ -88,7 +88,7 @@
 
   // --- Providerzy (6–8). „Grzesiu Barber" wiodący. ---
   // Wymagane: min. 1 oferta bookingMode:'approval', min. 1 bez address, min. 1 visibleInSearch:false.
-  // bookingMode na poziomie usługi (auto | approval | queue); stary bookingMode profilu = fallback.
+  // bookingMode na poziomie usługi (auto | approval | queue | request); stary bookingMode profilu = fallback.
   const PROVIDERS = [
     {
       id: "grzesiu-barber",
@@ -158,7 +158,7 @@
           name: "Skin fade",
           durationMin: 35,
           price: 70,
-          bookingMode: "approval",
+          bookingMode: "request",
           subtitle: "Precyzyjny fade z boków i karku — termin po uzgodnieniu",
           photos: ["assets/services/svc-fade.jpg"],
           variants: [

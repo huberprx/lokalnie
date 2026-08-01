@@ -485,8 +485,8 @@ async function createRequest(request, env) {
 
   const providerId = body.providerId || auth.provider?.id;
   if (!providerId) return json({ error: "provider_id_required" }, 400);
+  // Pusta lista = prośba bez wyboru dnia (usługodawca proponuje dowolne terminy).
   const days = Array.isArray(body.days) ? body.days : [];
-  if (!days.length) return json({ error: "days_required" }, 400);
 
   const requestId = id("rq");
   const ts = nowIso();
