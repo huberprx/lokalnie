@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.171";
+  const APP_VERSION = "1.0.173";
 
   const PWA = {
     registration: null,
@@ -119,7 +119,7 @@
       provCalReplyShowAll: false,
       /** Pulpit: pokazywać karty wolnych luk między wizytami (domyślnie nie). */
       dashShowFreeSlots: false,
-      /** Pulpit: "visits" | "requests" — lista wizyt albo próśb o termin. */
+      /** Pulpit: "visits" | "requests" | "rejected" — lista wizyt, próśb albo odrzuconych. */
       dashListMode: "visits",
       /** Zapisani klienci usługodawcy: { [providerId]: [{ id, name, phone, email, address }] } */
       providerClients: {},
@@ -2829,7 +2829,10 @@
         provCalReplyRequestId: null,
         provCalReplyShowAll: false,
         dashShowFreeSlots: stored.dashShowFreeSlots === true,
-        dashListMode: stored.dashListMode === "requests" ? "requests" : "visits",
+        dashListMode:
+          stored.dashListMode === "requests" || stored.dashListMode === "rejected"
+            ? stored.dashListMode
+            : "visits",
         providerClients:
           stored.providerClients && typeof stored.providerClients === "object" ? stored.providerClients : base.providerClients,
         provCalSelection: normalizeProvCalSelection(
@@ -4461,11 +4464,8 @@
     // iOS: gest na poziomej karuzeli nie może „bujnąć” pionowo rodzica (rubber-band).
     const axis = { el: null, x: 0, y: 0, scrollLeft: 0, dir: null };
     function hScrollTarget(from) {
-      return (
-        from &&
-        from.closest &&
-        from.closest("[data-my-cal-status-scroll], [data-h-scroll]")
-      );
+      // Tylko zakładki statusów — karuzela pulpitu (.stat-row) zostaje na natywnym pan-x.
+      return from && from.closest && from.closest("[data-my-cal-status-scroll]");
     }
     document.addEventListener(
       "touchstart",
@@ -5493,24 +5493,29 @@
   function renderProviderRequestCard(r) {
     const services = (r.serviceNames || []).filter(Boolean);
     const serviceLabel = services.length ? services.join(" + ") : "Usługa";
+    const isRejected = r.status === "rejected";
     const isProposed = r.status === "proposed";
     const days = normalizeRequestDays(r.days);
     const p = myProvider();
     const durationMin = p ? requestServicesDuration(p, r.serviceIds || []) : 0;
     const sentCount = isProposed ? (Array.isArray(r.proposals) ? r.proposals.length : 0) : 0;
-    const statusLabel = isProposed
-      ? sentCount
-        ? `Wysłano ${sentCount} ${proposalCountLabel(sentCount)}`
-        : "Wysłano propozycje"
-      : "Nowa prośba";
+    const statusLabel = isRejected
+      ? "Odrzucona"
+      : isProposed
+        ? sentCount
+          ? `Wysłano ${sentCount} ${proposalCountLabel(sentCount)}`
+          : "Wysłano propozycje"
+        : "Nowa prośba";
     const proposeLabel = isProposed ? "Zmień propozycje" : "Zaproponuj termin";
     return `
       <div class="visit-card visit-card--provider visit-card--request" data-request-id="${escapeHtml(r.id)}" data-status="${escapeHtml(
-        isProposed ? "proposed" : "pending"
+        isRejected ? "rejected" : isProposed ? "proposed" : "pending"
       )}" aria-label="${escapeHtml((r.clientName || "Klient") + ", " + serviceLabel)}">
         <div class="visit-card__req-head">
           <span class="visit-card__name">${escapeHtml(r.clientName || "Klient")}</span>
-          <span class="status-badge" data-status="${escapeHtml(isProposed ? "proposed" : "pending")}">${escapeHtml(statusLabel)}</span>
+          <span class="status-badge" data-status="${escapeHtml(
+            isRejected ? "rejected" : isProposed ? "proposed" : "pending"
+          )}">${escapeHtml(statusLabel)}</span>
         </div>
         <div class="visit-card__req-svc">
           <span class="visit-card__req-svc-name">${escapeHtml(serviceLabel)}</span>
@@ -5526,17 +5531,62 @@
         ${
           days.length
             ? renderProviderRequestDayChips(days)
-            : `<p class="visit-card__req-note">Bez wskazanych dni — możesz zaproponować dowolny termin.</p>`
+            : `<p class="visit-card__req-note">${
+                isRejected
+                  ? "Prośba odrzucona."
+                  : "Bez wskazanych dni — możesz zaproponować dowolny termin."
+              }</p>`
         }
-        <div class="visit-card__actions visit-card__actions--request">
+        ${
+          isRejected
+            ? ""
+            : `<div class="visit-card__actions visit-card__actions--request">
           <button type="button" class="btn btn--primary btn--sm" data-action="propose-open" data-request-id="${escapeHtml(
             r.id
           )}">${escapeHtml(proposeLabel)}</button>
           <button type="button" class="btn btn--quiet btn--sm" data-action="reject-request" data-request-id="${escapeHtml(
             r.id
           )}">Odrzuć</button>
-        </div>
+        </div>`
+        }
       </div>`;
+  }
+
+  /** Ostatnio odrzucone: wizyty + prośby (bez duplikatów), od najnowszych. */
+  function providerRecentRejected() {
+    const bookings = (window.AppState.bookings || []).filter(function (b) {
+      return b && b.providerId === MY_PROVIDER_ID && b.status === "rejected";
+    });
+    const linkedReq = Object.create(null);
+    bookings.forEach(function (b) {
+      if (b.requestId) linkedReq[b.requestId] = true;
+    });
+    const requests = (window.AppState.requests || []).filter(function (r) {
+      return r && r.providerId === MY_PROVIDER_ID && r.status === "rejected" && !linkedReq[r.id];
+    });
+    const items = bookings
+      .map(function (b) {
+        return {
+          kind: "booking",
+          sortKey: String(b.dateISO || "") + String(b.from || "") + "\t" + String(b.id || ""),
+          booking: b,
+        };
+      })
+      .concat(
+        requests.map(function (r) {
+          const days = normalizeRequestDays(r.days);
+          const day0 = (days[0] && days[0].dateISO) || "";
+          return {
+            kind: "request",
+            sortKey: day0 + "\uffff" + String(r.id || ""),
+            request: r,
+          };
+        })
+      );
+    items.sort(function (a, b) {
+      return b.sortKey.localeCompare(a.sortKey);
+    });
+    return items;
   }
 
   /** Treść pulpitu (statystyki, powiadomienia, wizyty) — mobilnie pełny ekran, desktopowo lewy panel. */
@@ -5551,8 +5601,44 @@
     const pendingCount = openRequests.filter(function (r) {
       return r.status === "pending";
     }).length;
-    const showRequests = window.AppState.dashListMode === "requests";
+    const rejectedItems = providerRecentRejected();
+    const listMode =
+      window.AppState.dashListMode === "requests" || window.AppState.dashListMode === "rejected"
+        ? window.AppState.dashListMode
+        : "visits";
+    const showRequests = listMode === "requests";
+    const showRejected = listMode === "rejected";
     const showFree = !!window.AppState.dashShowFreeSlots;
+    const sectionTitle = showRejected
+      ? "Ostatnio odrzucone"
+      : showRequests
+        ? "Prośby o termin"
+        : "Nadchodzące wizyty";
+    const listAria = showRejected
+      ? "Lista ostatnio odrzuconych"
+      : showRequests
+        ? "Lista próśb o termin"
+        : "Lista nadchodzących wizyt";
+    let listBody;
+    if (showRejected) {
+      listBody = rejectedItems.length
+        ? rejectedItems
+            .map(function (item) {
+              return item.kind === "request"
+                ? renderProviderRequestCard(item.request)
+                : renderProviderVisitCard(item.booking);
+            })
+            .join("")
+        : `<p class="empty-note">Brak odrzuconych pozycji.</p>`;
+    } else if (showRequests) {
+      listBody = openRequests.length
+        ? openRequests.map(renderProviderRequestCard).join("")
+        : `<p class="empty-note">Brak próśb o termin.</p>`;
+    } else {
+      listBody = upcoming.length
+        ? renderProviderVisitTimeline(upcoming, { showFree: showFree })
+        : `<p class="empty-note">Brak nadchodzących wizyt. Zarezerwuj coś jako klient, aby zobaczyć synchronizację.</p>`;
+    }
 
     return `
         <div class="app-scroll app-scroll--dash${compact ? " app-scroll--dash-side" : ""}">
@@ -5560,20 +5646,27 @@
             <h2 class="screen-head__title">Pulpit</h2>
           </header>
           <div class="stat-row" role="region" aria-label="Statystyki" data-h-scroll>
-            <button type="button" class="stat-card stat-card--link${!showRequests ? " is-active" : ""}" data-action="open-dash-visits">
+            <button type="button" class="stat-card stat-card--link${
+              listMode === "visits" ? " is-active" : ""
+            }" data-action="open-dash-visits">
               <span class="stat-card__num">${upcoming.length}</span><span class="stat-card__lbl">Nadchodzące wizyty</span>
             </button>
             <button type="button" class="stat-card stat-card--link${pendingCount > 0 ? " stat-card--alert" : ""}${
-              showRequests ? " is-active" : ""
+              listMode === "requests" ? " is-active" : ""
             }" data-action="open-prov-cal-requests">
               <span class="stat-card__num">${pendingCount}</span><span class="stat-card__lbl">Prośby o termin</span>
+            </button>
+            <button type="button" class="stat-card stat-card--link${
+              listMode === "rejected" ? " is-active" : ""
+            }" data-action="open-dash-rejected">
+              <span class="stat-card__num">${rejectedItems.length}</span><span class="stat-card__lbl">Odrzucone</span>
             </button>
           </div>
           ${renderNotificationsBlock("provider", "Powiadomienia")}
           <div class="prov-section-row">
-            <h3 class="prov-section">${showRequests ? "Prośby o termin" : "Nadchodzące wizyty"}</h3>
+            <h3 class="prov-section">${escapeHtml(sectionTitle)}</h3>
             ${
-              showRequests
+              showRequests || showRejected
                 ? ""
                 : `<label class="prov-free-toggle">
               <span class="prov-free-toggle__text">Wolne terminy</span>
@@ -5582,18 +5675,8 @@
             </label>`
             }
           </div>
-          <div class="visit-list visit-list--carousel" role="region" aria-label="${
-            showRequests ? "Lista próśb o termin" : "Lista nadchodzących wizyt"
-          }">
-            ${
-              showRequests
-                ? openRequests.length
-                  ? openRequests.map(renderProviderRequestCard).join("")
-                  : `<p class="empty-note">Brak próśb o termin.</p>`
-                : upcoming.length
-                  ? renderProviderVisitTimeline(upcoming, { showFree: showFree })
-                  : `<p class="empty-note">Brak nadchodzących wizyt. Zarezerwuj coś jako klient, aby zobaczyć synchronizację.</p>`
-            }
+          <div class="visit-list visit-list--carousel" role="region" aria-label="${escapeHtml(listAria)}">
+            ${listBody}
           </div>
         </div>`;
   }
@@ -8399,6 +8482,18 @@
 
   function openDashVisits() {
     window.AppState.dashListMode = "visits";
+    saveState();
+    renderAll();
+    hapticTap(12);
+  }
+
+  function openDashRejected() {
+    window.AppState.dashListMode = "rejected";
+    if (!usesDesktopLayout()) {
+      window.AppState.screen.provider = "dashboard";
+    } else if (window.AppState.screen.provider !== "calendar" && window.AppState.screen.provider !== "dashboard") {
+      window.AppState.screen.provider = "calendar";
+    }
     saveState();
     renderAll();
     hapticTap(12);
@@ -13690,6 +13785,12 @@
         return el.scrollLeft;
       }
     );
+    const prevDashStatScrolls = Array.prototype.map.call(
+      document.querySelectorAll("[data-h-scroll]"),
+      function (el) {
+        return el.scrollLeft;
+      }
+    );
     INSTANCES.forEach(render);
     renderFullscreen();
     // Przywróć od razu (sync), zanim scheduleScroll zrobi short-nudge.
@@ -13713,8 +13814,14 @@
     document.querySelectorAll("[data-my-cal-status-scroll]").forEach(function (el, i) {
       if (typeof prevMyCalTabScrolls[i] === "number") el.scrollLeft = prevMyCalTabScrolls[i];
     });
+    document.querySelectorAll("[data-h-scroll]").forEach(function (el, i) {
+      if (typeof prevDashStatScrolls[i] === "number") el.scrollLeft = prevDashStatScrolls[i];
+    });
     requestAnimationFrame(function () {
       syncAllMyCalStatusRails({ bringActive: true });
+      document.querySelectorAll("[data-h-scroll]").forEach(function (el, i) {
+        if (typeof prevDashStatScrolls[i] === "number") el.scrollLeft = prevDashStatScrolls[i];
+      });
       const availGrid = document.querySelector('[data-role="avail-week-grid"]');
       if (availGrid) initAvailStripScroll(availGrid);
       const bodies = document.querySelectorAll('[data-role="prov-cal-body"]');
@@ -13765,7 +13872,9 @@
   };
 
   function dragScrollTarget(event) {
-    return event.target.closest("[data-filter-scroll], .service-variant-carousel__track");
+    return event.target.closest(
+      "[data-filter-scroll], [data-h-scroll], .service-variant-carousel__track"
+    );
   }
 
   function bindFilterScroll() {
@@ -13841,18 +13950,26 @@
         // Klik tuż po przeciągnięciu (≤250 ms) na tym samym torze — pomiń, to nie był wybór.
         if (!filterDrag.dragEndAt || Date.now() - filterDrag.dragEndAt > 250) return;
         filterDrag.dragEndAt = 0;
-        if (!event.target.closest("[data-filter-scroll], .service-variant-carousel__track")) return;
+        if (
+          !event.target.closest(
+            "[data-filter-scroll], [data-h-scroll], .service-variant-carousel__track"
+          )
+        ) {
+          return;
+        }
         event.preventDefault();
         event.stopPropagation();
       },
       true
     );
 
-    // Kółko myszy na karuzeli wariantów → przewijanie w poziomie.
+    // Kółko myszy na karuzelach poziomych → przewijanie w poziomie.
     document.addEventListener(
       "wheel",
       function (event) {
-        const track = event.target.closest(".service-variant-carousel__track");
+        const track = event.target.closest(
+          ".service-variant-carousel__track, [data-h-scroll]"
+        );
         if (!track) return;
         if (track.scrollWidth <= track.clientWidth + 1) return;
         const dx = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
@@ -15818,6 +15935,10 @@
       case "open-dash-visits":
         event.preventDefault();
         openDashVisits();
+        break;
+      case "open-dash-rejected":
+        event.preventDefault();
+        openDashRejected();
         break;
       case "close-prov-cal-add":
         event.preventDefault();

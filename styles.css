@@ -7716,8 +7716,8 @@ button.provider-info-pop__line {
 }
 
 .prov-desk__dash .stat-card {
-  flex-basis: min(13.5rem, 82%);
-  min-width: min(13.5rem, 82%);
+  flex: 0 0 11.5rem;
+  width: 11.5rem;
   padding: 0.55rem 0.5rem;
 }
 
@@ -12773,19 +12773,25 @@ body.prov-cal-resizing * {
 /* ---- Pulpit: statystyki (karuzela pozioma) ---- */
 .stat-row {
   display: flex;
-  gap: 0.6rem;
+  flex-wrap: nowrap;
+  gap: 0.55rem;
   margin-bottom: 1rem;
-  padding: 0.05rem 0 0.35rem;
+  padding: 0.05rem 0 0.25rem;
   overflow-x: auto;
   overflow-y: hidden;
-  scroll-snap-type: x proximity;
-  scroll-padding-inline: 0.05rem;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
   overscroll-behavior-y: none;
   scrollbar-width: none;
   -ms-overflow-style: none;
   touch-action: pan-x;
+  cursor: grab;
+  user-select: none;
+}
+
+.stat-row.filter-scroll--dragging {
+  cursor: grabbing;
+  scroll-snap-type: none;
 }
 
 .stat-row::-webkit-scrollbar {
@@ -12793,9 +12799,9 @@ body.prov-cal-resizing * {
 }
 
 .stat-card {
-  flex: 0 0 min(15.5rem, 78%);
-  min-width: min(15.5rem, 78%);
-  scroll-snap-align: start;
+  flex: 0 0 12.75rem;
+  width: 12.75rem;
+  max-width: none;
   box-sizing: border-box;
   padding: 0.85rem;
   background: var(--surface);
