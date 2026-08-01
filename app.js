@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.144";
+  const APP_VERSION = "1.0.145";
 
   const PWA = {
     registration: null,
@@ -7123,6 +7123,8 @@
       slotId: null,
       /** Robocza lista propozycji w trybie odpowiedzi na zapytanie. */
       proposals: [],
+      /** Rozwinięta lista wybranych propozycji w panelu odpowiedzi. */
+      proposalsOpen: false,
       servicePickOpen: false,
       clientPickOpen: false,
       /** Rozwinięte pola: telefon / e-mail / adres. */
@@ -7147,6 +7149,7 @@
         cur.serviceIds = cur.serviceId ? [cur.serviceId] : [];
       }
       if (!Array.isArray(cur.proposals)) cur.proposals = [];
+      if (typeof cur.proposalsOpen !== "boolean") cur.proposalsOpen = false;
       if (cur.requestId == null) cur.requestId = null;
       if (typeof cur.servicePickOpen !== "boolean") cur.servicePickOpen = false;
       if (typeof cur.clientPickOpen !== "boolean") cur.clientPickOpen = false;
@@ -9326,6 +9329,7 @@
     });
     if (idx !== -1) {
       draft.proposals.splice(idx, 1);
+      if (!draft.proposals.length) draft.proposalsOpen = false;
       return;
     }
     const dateISO = draft.dateISO;
@@ -9361,8 +9365,25 @@
     });
     if (idx === -1) return;
     draft.proposals.splice(idx, 1);
+    if (!draft.proposals.length) draft.proposalsOpen = false;
     saveState();
     renderAll();
+  }
+
+  function toggleReplyProposalsOpen() {
+    const draft = ensureProvCalAddDraft();
+    if (!draft.proposals || !draft.proposals.length) return;
+    draft.proposalsOpen = !draft.proposalsOpen;
+    saveState();
+    renderAll();
+    if (draft.proposalsOpen) {
+      requestAnimationFrame(function () {
+        const list = document.querySelector(
+          '#app-fullscreen [data-role="prov-cal-add-proposals"]'
+        );
+        if (list) list.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
+    }
   }
 
   function toggleProvCalReplyShowAll() {
@@ -9625,9 +9646,12 @@
           )})</span>`
         : "Godziny";
 
+    const proposalsOpen = !!(isReply && draft.proposalsOpen && draft.proposals.length);
     const chosenList =
       isReply && draft.proposals.length
-        ? `<ul class="proposal-list proposal-list--panel">
+        ? `<ul class="proposal-list proposal-list--panel" id="prov-cal-add-proposals" data-role="prov-cal-add-proposals"${
+            proposalsOpen ? "" : " hidden"
+          }>
             ${draft.proposals
               .map(function (c) {
                 return `<li class="proposal-row">
@@ -9639,6 +9663,17 @@
               })
               .join("")}
           </ul>`
+        : "";
+    const proposalsToggleHtml =
+      isReply && draft.proposals.length
+        ? `<button type="button" class="prov-cal-add__proposals-toggle${
+            proposalsOpen ? " is-open" : ""
+          }" data-action="toggle-reply-proposals" aria-expanded="${
+            proposalsOpen ? "true" : "false"
+          }" aria-controls="prov-cal-add-proposals">
+            <span class="prov-cal-add__proposals-label">Propozycja (${draft.proposals.length})</span>
+            <span class="avail-loc-pick__chevron" aria-hidden="true"></span>
+          </button>`
         : "";
 
     const canSave = isReply ? draft.proposals.length > 0 : hasSvc && !!draft.slotId;
@@ -9718,7 +9753,7 @@
               <div class="time-list time-list--horizontal" data-role="prov-cal-add-time-list"${hasSvc && activeDate ? "" : " hidden"}>${timeList}</div>
               ${
                 isReply && draft.proposals.length
-                  ? `<h3 class="booking__label booking__label--caps">Propozycja (${draft.proposals.length})</h3>${chosenList}`
+                  ? `${proposalsToggleHtml}${chosenList}`
                   : ""
               }
             </div>`;
@@ -15432,6 +15467,10 @@
       case "reply-propose-remove":
         event.preventDefault();
         removeReplyProposalSlot(d.slot);
+        break;
+      case "toggle-reply-proposals":
+        event.preventDefault();
+        toggleReplyProposalsOpen();
         break;
       case "propose-open": proposeOpen(d.requestId); break;
       case "reject-request":
