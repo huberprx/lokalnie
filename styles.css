@@ -7681,7 +7681,7 @@ button.provider-info-pop__line {
 
 .prov-cal-top {
   flex-shrink: 0;
-  padding: 0.55rem var(--app-pad-x) 0.15rem;
+  padding: 0.35rem var(--app-pad-x) 0.1rem;
   background: var(--surface);
   border-bottom: 0;
   z-index: 7;
@@ -7726,7 +7726,7 @@ button.provider-info-pop__line {
 
 .screen-head--prov-cal {
   margin-bottom: 0;
-  padding-bottom: 0.4rem;
+  padding-bottom: 0.25rem;
   /* Ta sama linia co nad panelem miesiąca — też nad paskiem dni (dzień/tydzień). */
   border-bottom: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
 }
