@@ -1,14 +1,8 @@
 /* Lokalnie PWA — przy publikacji podbij CACHE (zgodnie z APP_VERSION w app.js). */
-const CACHE = "lokalnie-shell-v1.0.166";
+const CACHE = "lokalnie-shell-v1.0.167";
 const SHELL = [
   "./",
   "./index.html",
-  "./styles.css",
-  "./app.js",
-  "./api.js",
-  "./data.js",
-  "./simulator.js",
-  "./calendar.js",
   "./manifest.webmanifest",
   "./assets/icons/icon-192.png",
   "./assets/icons/icon-512.png",
@@ -16,11 +10,14 @@ const SHELL = [
 
 self.addEventListener("install", function (event) {
   event.waitUntil(
-    caches.open(CACHE).then(function (cache) {
-      return cache.addAll(SHELL);
-    }).then(function () {
-      return self.skipWaiting();
-    })
+    caches
+      .open(CACHE)
+      .then(function (cache) {
+        return cache.addAll(SHELL);
+      })
+      .then(function () {
+        return self.skipWaiting();
+      })
   );
 });
 
@@ -46,7 +43,7 @@ self.addEventListener("activate", function (event) {
 });
 
 function networkFirst(request) {
-  return fetch(request)
+  return fetch(request, { cache: "no-store" })
     .then(function (response) {
       if (response && response.ok) {
         const copy = response.clone();
@@ -94,7 +91,7 @@ self.addEventListener("fetch", function (event) {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
 
-  // HTML + JS/CSS: najpierw sieć, żeby podgląd/dev nie trzymał starego UI.
+  // HTML + JS/CSS: zawsze świeża sieć (bez HTTP cache), żeby PWA nie trzymała starego UI.
   if (event.request.mode === "navigate" || isCodeAsset(url)) {
     event.respondWith(networkFirst(event.request));
     return;

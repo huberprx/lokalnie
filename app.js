@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.166";
+  const APP_VERSION = "1.0.167";
 
   const PWA = {
     registration: null,
@@ -3380,23 +3380,23 @@
       if (!installing) return;
       installing.addEventListener("statechange", function () {
         if (installing.state === "installed" && navigator.serviceWorker.controller) {
-          notifyPwaUpdateAvailable(installing);
+          applyPwaUpdateNow(installing);
         }
       });
     });
   }
 
-  /** Przy starcie / co godzinę: wykryj update i pokaż komunikat (bez auto-przeładowania). */
+  /** Przy starcie: wykryj update i od razu wgraj (PWA inaczej potrafi trzymać stary UI). */
   function checkPwaUpdateOnLaunch(reg) {
     if (!reg) return;
     if (reg.waiting) {
-      notifyPwaUpdateAvailable(reg.waiting);
+      applyPwaUpdateNow(reg.waiting);
       return;
     }
     reg
       .update()
       .then(function () {
-        if (reg.waiting) notifyPwaUpdateAvailable(reg.waiting);
+        if (reg.waiting) applyPwaUpdateNow(reg.waiting);
       })
       .catch(function () {});
   }
@@ -3404,13 +3404,13 @@
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
     navigator.serviceWorker
-      .register("./sw.js")
+      .register("./sw.js?v=" + encodeURIComponent(APP_VERSION))
       .then(function (reg) {
         trackServiceWorker(reg);
         checkPwaUpdateOnLaunch(reg);
         setInterval(function () {
           reg.update().then(function () {
-            if (reg.waiting) notifyPwaUpdateAvailable(reg.waiting);
+            if (reg.waiting) applyPwaUpdateNow(reg.waiting);
           }).catch(function () {});
         }, 60 * 60 * 1000);
       })
@@ -18146,12 +18146,22 @@
     bindAvailDaySwipe();
     bindAvailTimePickers();
     loadState();
-    renderAll();
-    if (window.AppState.loggedIn && window.AppState.activeRole) {
-      updateAppHeader(window.AppState.activeRole);
+    // Najpierw wejdź w appę — inaczej przy opóźnionym/starym JS widać landing „Zaloguj się”.
+    try {
+      if (window.AppState.loggedIn && window.AppState.activeRole) {
+        updateAppHeader(window.AppState.activeRole);
+        showPage("app");
+        renderAll();
+      } else {
+        goMarketplace();
+      }
+    } catch (err) {
       showPage("app");
-    } else {
-      goMarketplace();
+      try {
+        renderAll();
+      } catch (err2) {
+        /* ignore */
+      }
     }
     handleRouteHash();
     bindPwaInstallPrompt();
