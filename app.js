@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.143";
+  const APP_VERSION = "1.0.144";
 
   const PWA = {
     registration: null,
@@ -9718,7 +9718,7 @@
               <div class="time-list time-list--horizontal" data-role="prov-cal-add-time-list"${hasSvc && activeDate ? "" : " hidden"}>${timeList}</div>
               ${
                 isReply && draft.proposals.length
-                  ? `<h3 class="booking__label booking__label--caps">Do wysłania (${draft.proposals.length})</h3>${chosenList}`
+                  ? `<h3 class="booking__label booking__label--caps">Propozycja (${draft.proposals.length})</h3>${chosenList}`
                   : ""
               }
             </div>`;
@@ -10060,7 +10060,7 @@
                    <div class="time-list time-list--horizontal">${timeList}</div>`
                 : ""
             }
-            <h3 class="booking__label">Do wysłania (${chosen.length})</h3>
+            <h3 class="booking__label">Propozycja (${chosen.length})</h3>
             ${chosenList}
           </div>
         </div>
