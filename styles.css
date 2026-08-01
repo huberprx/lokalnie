@@ -4193,8 +4193,9 @@ body.avatar-preview-open {
   font-size: 0.72rem;
 }
 
-/* Desktop: panel info = wiersz wewnątrz otwartej karty (nie overlay) */
-.provider-card--open .provider-card__info-panel {
+/* Panel info = wiersz wewnątrz karty (lista lub otwarta karta; nie overlay) */
+.provider-card--open .provider-card__info-panel,
+.provider-card--info-open:not(.provider-card--booking-header) .provider-card__info-panel {
   position: static;
   grid-column: 1 / -1;
   width: 100%;
@@ -4204,6 +4205,11 @@ body.avatar-preview-open {
   background: transparent;
   box-shadow: none;
   animation: provider-info-panel-in 0.2s ease;
+}
+
+.provider-item--info-open {
+  position: relative;
+  z-index: 130;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4468,6 +4474,42 @@ body.avatar-preview-open {
   box-shadow: none;
   cursor: default;
   transition: none;
+}
+
+/* FLIP: przeniesienie oferty między grupami po zmianie typu rezerwacji */
+.service-row--static.service-row--list-moving {
+  z-index: 2;
+  transition: transform 0.36s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+  background: var(--surface) !important;
+  border-radius: 10px;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12);
+}
+
+.service-row--static.service-row--list-enter {
+  animation: service-row-list-enter 0.32s ease both;
+}
+
+@keyframes service-row-list-enter {
+  from {
+    opacity: 0;
+    transform: translateY(0.4rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .service-row--static.service-row--list-moving {
+    transition: none;
+    box-shadow: none;
+  }
+
+  .service-row--static.service-row--list-enter {
+    animation: none;
+  }
 }
 
 .service-row--static::after {

@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.175";
+  const APP_VERSION = "1.0.177";
 
   const PWA = {
     registration: null,
@@ -2129,25 +2129,14 @@
     const p = getProviderBySlug(slug);
     if (!p) return;
     closeProviderCardMenu();
-    const onBooking =
-      window.AppState.screen.client === "booking" &&
-      window.AppState.draft &&
-      window.AppState.draft.slug === p.slug;
-    const listOpen = window.AppState.searchOpenSlug === p.slug;
-    // Z listy (karta zamknięta) — wejdź w booking z otwartym panelem info, jak ⓘ w nagłówku.
-    if (!onBooking && !listOpen) {
+    // Na liście i w inline — panel info w bieżącym widoku, bez przejścia do bookingu.
+    const sameDraft = window.AppState.draft && window.AppState.draft.slug === p.slug;
+    if (sameDraft) {
+      window.AppState.draft.providerInfoOpen = !window.AppState.draft.providerInfoOpen;
+    } else {
       initDraftForProvider(p);
       window.AppState.draft.providerInfoOpen = true;
-      window.AppState.params.client = { slug: slug };
-      window.AppState.activeRole = "client";
-      window.AppState.searchOpenSlug = null;
-      window.AppState.screen.client = "booking";
-      saveState();
-      renderAll();
-      return;
     }
-    if (!window.AppState.draft || window.AppState.draft.slug !== p.slug) initDraftForProvider(p);
-    window.AppState.draft.providerInfoOpen = !window.AppState.draft.providerInfoOpen;
     saveState();
     renderAll();
   }
@@ -2161,11 +2150,18 @@
   function toggleBookingProviderInfo(slug) {
     const draft = window.AppState.draft;
     const p = getProviderBySlug(slug);
-    if (!draft || !p || draft.slug !== p.slug) return;
+    if (!p) return;
     closeProviderCardMenu();
-    draft.providerInfoOpen = !draft.providerInfoOpen;
+    // Zamykanie/otwieranie tego samego panelu co na liście (provider-info-pop).
+    if (!draft || draft.slug !== p.slug) {
+      initDraftForProvider(p);
+      window.AppState.draft.providerInfoOpen = true;
+    } else {
+      draft.providerInfoOpen = !draft.providerInfoOpen;
+    }
     saveState();
-    if (!refreshBookingDraftUI()) renderAll();
+    if (window.AppState.screen.client === "booking" && refreshBookingDraftUI()) return;
+    renderAll();
   }
 
   function openProviderCardMenu(slug, trigger) {
@@ -2242,13 +2238,13 @@
     const infoOpen = !!(
       window.AppState.draft &&
       window.AppState.draft.providerInfoOpen &&
-      (isOpen || opts.bookingHeader)
+      window.AppState.draft.slug === p.slug
     );
     const favBtn = `<button type="button" class="provider-card__action provider-card__fav${fav ? " provider-card__fav--on" : ""}" data-action="toggle-fav" data-slug="${escapeHtml(p.slug)}" aria-label="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}" aria-pressed="${fav ? "true" : "false"}" title="${fav ? "Usuń z ulubionych" : "Dodaj do ulubionych"}"><span class="provider-card__action-icon provider-card__fav-icon" aria-hidden="true"></span></button>`;
     const infoAction = opts.bookingHeader ? "toggle-booking-provider-info" : "toggle-provider-card-info";
     const infoBtn = `<button type="button" class="provider-card__action provider-card__info${infoOpen ? " provider-card__info--open" : ""}" data-action="${infoAction}" data-slug="${escapeHtml(p.slug)}" aria-expanded="${infoOpen ? "true" : "false"}" aria-controls="booking-provider-info" aria-label="Informacje o ${escapeHtml(p.name)}" title="Informacje"><span class="provider-card__action-icon provider-card__info-icon" aria-hidden="true"></span></button>`;
     const menuBtn = `<button type="button" class="provider-card__action provider-card__menu" data-action="open-provider-menu" data-slug="${escapeHtml(p.slug)}" aria-haspopup="menu" aria-expanded="false" aria-label="Więcej opcji dla ${escapeHtml(p.name)}" title="Więcej opcji"><span class="provider-card__action-icon provider-card__menu-icon" aria-hidden="true"></span></button>`;
-    // ⓘ otwiera panel info (jak w bookingu); na otwartej karcie dodatkowo ⋯ z menu.
+    // ⓘ otwiera panel info w bieżącym widoku; na otwartej karcie dodatkowo ⋯ z menu.
     const menuSlotHtml = opts.bookingHeader
       ? infoBtn
       : isOpen
@@ -2274,16 +2270,20 @@
         <div class="provider-card__menu-slot">
           ${menuSlotHtml}
         </div>
-        ${!opts.bookingHeader && isOpen && infoOpen ? renderBookingProviderInfoPanel(p) : ""}
       </div>`;
   }
 
   function renderProviderListItem(p, isOpen) {
-    const infoOpen = !!(isOpen && window.AppState.draft && window.AppState.draft.providerInfoOpen);
+    const infoOpen = !!(
+      window.AppState.draft &&
+      window.AppState.draft.providerInfoOpen &&
+      window.AppState.draft.slug === p.slug
+    );
     return `
       <div class="provider-item${isOpen ? " provider-item--open" : ""}${infoOpen ? " provider-item--info-open" : ""}">
         ${renderProviderCard(p, isOpen)}
         ${isOpen ? renderInlineBookingPanel(p) : ""}
+        ${infoOpen ? renderProviderInfoPopover(p) : ""}
       </div>`;
   }
 
@@ -2402,6 +2402,21 @@
     return provider && provider.bookingMode === "approval" ? "approval" : "auto";
   }
 
+  /** Tryb na liście usług — uwzględnia niezatwierdzony draft edycji (podgląd przeniesienia między grupami). */
+  function listServiceBookingMode(service, provider) {
+    const params = window.AppState.params.provider || {};
+    if (
+      service &&
+      params.editServiceId &&
+      params.editServiceId === service.id &&
+      params.editServiceDraft &&
+      params.editServiceDraft.bookingMode
+    ) {
+      return normalizeBookingMode(params.editServiceDraft.bookingMode);
+    }
+    return serviceBookingMode(service, provider);
+  }
+
   function ensureServicesBookingMode(provider) {
     if (!provider || !Array.isArray(provider.services)) return;
     const fallback = provider.bookingMode === "approval" ? "approval" : "auto";
@@ -2483,7 +2498,7 @@
   }
 
   function bookingModeLabel(mode) {
-    if (mode === "approval") return "Prośba o termin — wybór dnia";
+    if (mode === "approval") return "Prośba o termin z możliwością wyboru dnia";
     if (mode === "request") return "Prośba o termin";
     if (mode === "queue") return "Kolejny wolny termin";
     return "Wybór terminu";
@@ -2560,11 +2575,12 @@
     }
     window.AppState.params.provider = params;
     saveState();
-    renderAll();
     if (!changed) {
       showToast("Wszystkie oferty w grupie mają już ten tryb.");
       return;
     }
+    // Bez pełnego renderAll — inaczej lista/edycja skacze do góry.
+    if (!refreshProviderServicesListInPlace()) renderAll();
     showToast(
       group === "ask"
         ? mode === "approval"
@@ -10988,8 +11004,13 @@
 
   function renderProviderServicesListHtml(p, editId) {
     ensureServicesBookingMode(p);
-    const openBook = servicesInBookingGroup(p, "confirm");
-    const requests = servicesInBookingGroup(p, "ask");
+    const all = (p && p.services) || [];
+    const openBook = all.filter(function (s) {
+      return bookingModeGroup(listServiceBookingMode(s, p)) === "confirm";
+    });
+    const requests = all.filter(function (s) {
+      return bookingModeGroup(listServiceBookingMode(s, p)) === "ask";
+    });
     const confirmMode = activeModeForBookingGroup(p, "confirm");
     const askMode = activeModeForBookingGroup(p, "ask");
     const pickMode = providerServicesPickMode();
@@ -11001,7 +11022,7 @@
       const variants = serviceVariants(s);
       const defId = defaultServiceVariantId(s);
       const resolved = resolveServiceVariant(s, defId);
-      const mode = serviceBookingMode(s, p);
+      const mode = listServiceBookingMode(s, p);
       const modeLabel = bookingModeLabel(mode);
       const locLabel = serviceLocationSummary(s, p);
       const selected = !pickMode && editId && editId === s.id;
@@ -13847,6 +13868,92 @@
     });
   }
 
+  function providerServicesListScrollEl() {
+    const pageApp = document.getElementById("page-app");
+    const fs = document.getElementById("app-fullscreen");
+    const root = pageApp && !pageApp.hidden && fs ? fs : document;
+    return (
+      root.querySelector('[data-role="prov-svc-list"] .app-scroll--svc-side') ||
+      root.querySelector(".prov-svc__list .app-scroll--svc-side") ||
+      root.querySelector(".app-screen--services:not(.app-screen--services-desktop):not(.app-screen--service-edit) > .app-scroll")
+    );
+  }
+
+  /** Podmienia HTML listy usług bez resetu scrolla / panelu edycji. */
+  function refreshProviderServicesListInPlace() {
+    const scroller = providerServicesListScrollEl();
+    if (!scroller || !scroller.querySelector(".service-list")) return false;
+    const p = myProvider();
+    if (!p) return false;
+    const editId = window.AppState.params.provider && window.AppState.params.provider.editServiceId;
+    const scrollTop = scroller.scrollTop;
+    scroller.innerHTML = renderProviderServicesListHtml(p, editId);
+    scroller.scrollTop = scrollTop;
+    requestAnimationFrame(function () {
+      scroller.scrollTop = scrollTop;
+    });
+    return true;
+  }
+
+  /** Odświeża listę usług (desktop) z animacją FLIP przy zmianie grupy po przełączeniu trybu. */
+  function refreshProviderServicesListWithModeMove() {
+    const scroller = providerServicesListScrollEl();
+    if (!scroller) return false;
+    const p = myProvider();
+    if (!p) return false;
+    const editId = window.AppState.params.provider && window.AppState.params.provider.editServiceId;
+    const reduce = prefersReducedMotion();
+    const first = Object.create(null);
+    if (!reduce) {
+      scroller.querySelectorAll(".service-row--static[data-service-id]").forEach(function (row) {
+        const id = row.getAttribute("data-service-id");
+        if (id) first[id] = row.getBoundingClientRect();
+      });
+    }
+    const scrollTop = scroller.scrollTop;
+    scroller.innerHTML = renderProviderServicesListHtml(p, editId);
+    scroller.scrollTop = scrollTop;
+    if (reduce) return true;
+
+    const moving = [];
+    scroller.querySelectorAll(".service-row--static[data-service-id]").forEach(function (row) {
+      const id = row.getAttribute("data-service-id");
+      const prev = id && first[id];
+      if (!prev) {
+        row.classList.add("service-row--list-enter");
+        return;
+      }
+      const next = row.getBoundingClientRect();
+      const dx = prev.left - next.left;
+      const dy = prev.top - next.top;
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+      row.style.transform = "translate(" + dx.toFixed(1) + "px," + dy.toFixed(1) + "px)";
+      row.style.transition = "none";
+      row.classList.add("service-row--list-moving");
+      moving.push(row);
+    });
+    if (!moving.length) return true;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        moving.forEach(function (row) {
+          row.style.transition = "";
+          row.style.transform = "";
+        });
+      });
+    });
+    window.setTimeout(function () {
+      moving.forEach(function (row) {
+        row.classList.remove("service-row--list-moving");
+        row.style.transition = "";
+        row.style.transform = "";
+      });
+      scroller.querySelectorAll(".service-row--list-enter").forEach(function (row) {
+        row.classList.remove("service-row--list-enter");
+      });
+    }, 420);
+    return true;
+  }
+
   function setServiceBookingMode(modeOrGroup, fromEl) {
     withServiceEditScroll(fromEl, function (form) {
       if (!form) return;
@@ -13861,6 +13968,7 @@
       } else {
         next = normalizeBookingMode(modeOrGroup);
       }
+      const groupChanged = bookingModeGroup(current) !== bookingModeGroup(next);
       const hidden = form.querySelector('[data-role="service-booking-mode-value"]') || form.elements.bookingMode;
       if (hidden) hidden.value = next;
       const group = bookingModeGroup(next);
@@ -13870,6 +13978,7 @@
       });
       captureServiceEditDraft(form);
       saveState();
+      if (groupChanged) refreshProviderServicesListWithModeMove();
     });
   }
 
