@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.173";
+  const APP_VERSION = "1.0.175";
 
   const PWA = {
     registration: null,
@@ -121,6 +121,9 @@
       dashShowFreeSlots: false,
       /** Pulpit: "visits" | "requests" | "rejected" — lista wizyt, próśb albo odrzuconych. */
       dashListMode: "visits",
+      /** Pulpit: wyszukiwarka klienta / usługi na liście. */
+      dashSearchOpen: false,
+      dashSearchQ: "",
       /** Zapisani klienci usługodawcy: { [providerId]: [{ id, name, phone, email, address }] } */
       providerClients: {},
       availWeekStart: null,
@@ -1860,6 +1863,41 @@
     }, holdMs);
   }
 
+  /**
+   * Oś tygodnia godzin: stałe okno dnia (jak w schedulerach), żeby blok 9–17
+   * nie wypełniał 100% kolumny. Poza oknem — rozszerzamy, by 4–6 też było widać.
+   */
+  const HOURS_WEEK_AXIS_START = 6 * 60;
+  const HOURS_WEEK_AXIS_END = 22 * 60;
+  const HOURS_WEEK_MIN_SPAN = 12 * 60;
+
+  function hoursWeekAxisRange(minMin, maxMin) {
+    let axisStart = HOURS_WEEK_AXIS_START;
+    let axisEnd = HOURS_WEEK_AXIS_END;
+    if (isFinite(minMin) && minMin < axisStart) {
+      axisStart = Math.floor(minMin / 60) * 60;
+    }
+    if (isFinite(maxMin) && maxMin > axisEnd) {
+      axisEnd = Math.ceil(maxMin / 60) * 60;
+    }
+    // Margines 30–60 min przy „wystających” blokach, żeby nie kleiły się do krawędzi.
+    if (isFinite(minMin) && minMin - axisStart < 30 && axisStart > 0) {
+      axisStart = Math.max(0, axisStart - 60);
+    }
+    if (isFinite(maxMin) && axisEnd - maxMin < 30 && axisEnd < 24 * 60) {
+      axisEnd = Math.min(24 * 60, axisEnd + 60);
+    }
+    if (axisEnd - axisStart < HOURS_WEEK_MIN_SPAN) {
+      const mid = (axisStart + axisEnd) / 2;
+      axisStart = Math.max(0, Math.floor((mid - HOURS_WEEK_MIN_SPAN / 2) / 60) * 60);
+      axisEnd = Math.min(24 * 60, axisStart + HOURS_WEEK_MIN_SPAN);
+      if (axisEnd - axisStart < HOURS_WEEK_MIN_SPAN) {
+        axisStart = Math.max(0, axisEnd - HOURS_WEEK_MIN_SPAN);
+      }
+    }
+    return { axisStart: axisStart, axisEnd: axisEnd, span: Math.max(60, axisEnd - axisStart) };
+  }
+
   function renderProviderHoursWeekHtml(p, days, todayDow) {
     const dayBlocks = days.map(function (day) {
       const dow = day.dow;
@@ -1888,16 +1926,27 @@
       return `<p class="empty-note">Brak godzin otwarcia.</p>`;
     }
 
-    const axisStart = Math.floor(minMin / 60) * 60;
-    const axisEnd = Math.ceil(maxMin / 60) * 60;
-    const span = Math.max(60, axisEnd - axisStart);
+    const axis = hoursWeekAxisRange(minMin, maxMin);
+    const axisStart = axis.axisStart;
+    const axisEnd = axis.axisEnd;
+    const span = axis.span;
     const spanHours = span / 60;
-    const tickStep = spanHours <= 6 ? 1 : spanHours <= 12 ? 2 : 3;
+    const tickStep = spanHours <= 8 ? 2 : spanHours <= 14 ? 2 : 4;
 
     let lines = "";
-    for (let m = axisStart + tickStep * 60; m < axisEnd; m += tickStep * 60) {
+    let axisLabels = "";
+    for (let m = axisStart; m <= axisEnd; m += tickStep * 60) {
       const pct = ((m - axisStart) / span) * 100;
-      lines += `<span class="provider-hours-week__line" style="top:${pct.toFixed(3)}%"></span>`;
+      if (m > axisStart && m < axisEnd) {
+        lines += `<span class="provider-hours-week__line" style="top:${pct.toFixed(3)}%"></span>`;
+      }
+      const hour = Math.floor(m / 60) % 24;
+      const label = String(hour);
+      // Unikaj kolizji etykiet na samym dole/górze — lekki inset.
+      const labelTop = m === axisStart ? 0 : m === axisEnd ? 100 : pct;
+      axisLabels += `<span class="provider-hours-week__axis-label" style="top:${labelTop.toFixed(
+        3
+      )}%">${escapeHtml(label)}</span>`;
     }
 
     const cols = dayBlocks
@@ -1915,14 +1964,13 @@
           .map(function (b) {
             const dur = b.to - b.from;
             const top = ((b.from - axisStart) / span) * 100;
-            const height = (dur / span) * 100;
+            const height = Math.max(2.2, (dur / span) * 100);
             const tone = b.locationId ? " " + locationToneClass(p, b.locationId) : "";
             const fromLabel = minToTime(b.from);
             const toLabel = minToTime(b.to);
             const range = fromLabel + "–" + toLabel;
-            // Krótki blok: za mało miejsca na dwie linie — pokazujemy start; koniec po kliknięciu (peek).
-            // % względem osi tygodnia; dur łapie 30–40 min nawet na krótkiej osi.
-            const isShort = height < 14 || dur < 45;
+            // Krótki blok na osi dnia: mało miejsca na dwie linie — peek po kliknięciu.
+            const isShort = height < 11 || dur < 50;
             const timesHtml = isShort
               ? `<span class="provider-hours-week__slot-time">${escapeHtml(fromLabel)}</span>
               <span class="provider-hours-week__slot-time provider-hours-week__slot-time--end">${escapeHtml(
@@ -1960,9 +2008,17 @@
       .join("");
 
     const monthLabel = providerHoursMonthLabel(days);
+    const axisAria =
+      "Oś czasu od " + minToTime(axisStart) + " do " + (axisEnd >= 24 * 60 ? "24:00" : minToTime(axisEnd));
     return `<div class="provider-hours-week">
       ${monthLabel ? `<p class="provider-hours-week__month">${escapeHtml(monthLabel)}</p>` : ""}
-      <div class="provider-hours-week__cols">${cols}</div>
+      <div class="provider-hours-week__frame">
+        <div class="provider-hours-week__axis" aria-hidden="true">
+          <span class="provider-hours-week__axis-spacer"></span>
+          <span class="provider-hours-week__axis-track">${axisLabels}</span>
+        </div>
+        <div class="provider-hours-week__cols" aria-label="${escapeHtml(axisAria)}">${cols}</div>
+      </div>
     </div>`;
   }
 
@@ -2833,6 +2889,8 @@
           stored.dashListMode === "requests" || stored.dashListMode === "rejected"
             ? stored.dashListMode
             : "visits",
+        dashSearchOpen: stored.dashSearchOpen === true,
+        dashSearchQ: typeof stored.dashSearchQ === "string" ? stored.dashSearchQ : "",
         providerClients:
           stored.providerClients && typeof stored.providerClients === "object" ? stored.providerClients : base.providerClients,
         provCalSelection: normalizeProvCalSelection(
@@ -5589,26 +5647,90 @@
     return items;
   }
 
+  function dashSearchQuery() {
+    return String(window.AppState.dashSearchQ || "").trim().toLowerCase();
+  }
+
+  function dashTextMatches(hay, q) {
+    if (!q) return true;
+    return String(hay || "")
+      .toLowerCase()
+      .indexOf(q) !== -1;
+  }
+
+  function dashBookingMatches(b, q) {
+    if (!q || !b) return true;
+    if (dashTextMatches(b.clientName, q) || dashTextMatches(b.clientPhone, q) || dashTextMatches(b.clientEmail, q)) {
+      return true;
+    }
+    const names = b.serviceNames || [];
+    for (let i = 0; i < names.length; i++) {
+      if (dashTextMatches(names[i], q)) return true;
+    }
+    return false;
+  }
+
+  function dashRequestMatches(r, q) {
+    if (!q || !r) return true;
+    if (dashTextMatches(r.clientName, q) || dashTextMatches(r.clientPhone, q) || dashTextMatches(r.clientEmail, q)) {
+      return true;
+    }
+    const names = r.serviceNames || [];
+    for (let i = 0; i < names.length; i++) {
+      if (dashTextMatches(names[i], q)) return true;
+    }
+    return false;
+  }
+
+  function renderDashClientHitCard(c) {
+    const sub = [c.phone, c.email].filter(Boolean).join(" · ");
+    return `<div class="visit-card visit-card--provider visit-card--client-hit" data-client-id="${escapeHtml(
+      c.id || ""
+    )}" aria-label="${escapeHtml(c.name || "Klient")}">
+      <div class="visit-card__name">${escapeHtml(c.name || "Klient")}</div>
+      ${sub ? `<p class="visit-card__req-note">${escapeHtml(sub)}</p>` : ""}
+    </div>`;
+  }
+
   /** Treść pulpitu (statystyki, powiadomienia, wizyty) — mobilnie pełny ekran, desktopowo lewy panel. */
   function renderProviderDashBodyHtml(opts) {
     opts = opts || {};
     const compact = !!opts.compact;
-    const upcoming = (window.AppState.bookings || [])
+    const searchOpen = !!window.AppState.dashSearchOpen;
+    const searchQ = dashSearchQuery();
+    const upcomingAll = (window.AppState.bookings || [])
       .filter((b) => b.providerId === MY_PROVIDER_ID && (b.status === "confirmed" || b.status === "proposed"))
       .sort((a, b) => (a.dateISO + a.from).localeCompare(b.dateISO + b.from));
+    const upcoming = searchQ
+      ? upcomingAll.filter(function (b) {
+          return dashBookingMatches(b, searchQ);
+        })
+      : upcomingAll;
 
-    const openRequests = providerOpenRequests();
-    const pendingCount = openRequests.filter(function (r) {
+    const openRequestsAll = providerOpenRequests();
+    const openRequests = searchQ
+      ? openRequestsAll.filter(function (r) {
+          return dashRequestMatches(r, searchQ);
+        })
+      : openRequestsAll;
+    const pendingCount = openRequestsAll.filter(function (r) {
       return r.status === "pending";
     }).length;
-    const rejectedItems = providerRecentRejected();
+    const rejectedItemsAll = providerRecentRejected();
+    const rejectedItems = searchQ
+      ? rejectedItemsAll.filter(function (item) {
+          return item.kind === "request"
+            ? dashRequestMatches(item.request, searchQ)
+            : dashBookingMatches(item.booking, searchQ);
+        })
+      : rejectedItemsAll;
     const listMode =
       window.AppState.dashListMode === "requests" || window.AppState.dashListMode === "rejected"
         ? window.AppState.dashListMode
         : "visits";
     const showRequests = listMode === "requests";
     const showRejected = listMode === "rejected";
-    const showFree = !!window.AppState.dashShowFreeSlots;
+    const showFree = !!window.AppState.dashShowFreeSlots && !searchQ;
     const sectionTitle = showRejected
       ? "Ostatnio odrzucone"
       : showRequests
@@ -5629,27 +5751,76 @@
                 : renderProviderVisitCard(item.booking);
             })
             .join("")
-        : `<p class="empty-note">Brak odrzuconych pozycji.</p>`;
+        : `<p class="empty-note">${
+            searchQ ? "Brak wyników dla tego wyszukiwania." : "Brak odrzuconych pozycji."
+          }</p>`;
     } else if (showRequests) {
       listBody = openRequests.length
         ? openRequests.map(renderProviderRequestCard).join("")
-        : `<p class="empty-note">Brak próśb o termin.</p>`;
+        : `<p class="empty-note">${
+            searchQ ? "Brak wyników dla tego wyszukiwania." : "Brak próśb o termin."
+          }</p>`;
     } else {
       listBody = upcoming.length
         ? renderProviderVisitTimeline(upcoming, { showFree: showFree })
-        : `<p class="empty-note">Brak nadchodzących wizyt. Zarezerwuj coś jako klient, aby zobaczyć synchronizację.</p>`;
+        : `<p class="empty-note">${
+            searchQ
+              ? "Brak wyników dla tego wyszukiwania."
+              : "Brak nadchodzących wizyt. Zarezerwuj coś jako klient, aby zobaczyć synchronizację."
+          }</p>`;
+    }
+
+    let clientsHitsHtml = "";
+    if (searchOpen && searchQ) {
+      const clients = collectProviderClients(MY_PROVIDER_ID).filter(function (c) {
+        return (
+          dashTextMatches(c.name, searchQ) ||
+          dashTextMatches(c.phone, searchQ) ||
+          dashTextMatches(c.email, searchQ)
+        );
+      });
+      if (clients.length) {
+        clientsHitsHtml = `<div class="prov-section-row">
+            <h3 class="prov-section">Klienci</h3>
+          </div>
+          <div class="visit-list visit-list--dash-clients" role="region" aria-label="Dopasowani klienci">
+            ${clients.map(renderDashClientHitCard).join("")}
+          </div>`;
+      }
     }
 
     return `
         <div class="app-scroll app-scroll--dash${compact ? " app-scroll--dash-side" : ""}">
-          <header class="screen-head">
+          <header class="screen-head screen-head--dash">
+            <button type="button" class="screen-head__back" data-action="provider-tab" data-tab="calendar" aria-label="Wróć">
+              <span class="screen-head__back-icon" aria-hidden="true"></span>
+            </button>
             <h2 class="screen-head__title">Pulpit</h2>
+            <button type="button" class="screen-head__search${searchOpen ? " is-on" : ""}" data-action="toggle-dash-search"
+              aria-label="Szukaj klienta lub usługi" aria-pressed="${searchOpen ? "true" : "false"}" title="Szukaj">
+              <span class="screen-head__search-icon" aria-hidden="true"></span>
+            </button>
           </header>
+          ${
+            searchOpen
+              ? `<div class="dash-search">
+            <span class="dash-search__icon" aria-hidden="true"></span>
+            <input type="search" class="dash-search__input" data-role="dash-search-input"
+              value="${escapeHtml(window.AppState.dashSearchQ || "")}"
+              placeholder="Klient lub usługa" autocomplete="off" spellcheck="false" enterkeyhint="search" />
+            ${
+              window.AppState.dashSearchQ
+                ? `<button type="button" class="dash-search__clear" data-action="clear-dash-search" aria-label="Wyczyść">×</button>`
+                : ""
+            }
+          </div>`
+              : ""
+          }
           <div class="stat-row" role="region" aria-label="Statystyki" data-h-scroll>
             <button type="button" class="stat-card stat-card--link${
               listMode === "visits" ? " is-active" : ""
             }" data-action="open-dash-visits">
-              <span class="stat-card__num">${upcoming.length}</span><span class="stat-card__lbl">Nadchodzące wizyty</span>
+              <span class="stat-card__num">${upcomingAll.length}</span><span class="stat-card__lbl">Nadchodzące wizyty</span>
             </button>
             <button type="button" class="stat-card stat-card--link${pendingCount > 0 ? " stat-card--alert" : ""}${
               listMode === "requests" ? " is-active" : ""
@@ -5659,14 +5830,15 @@
             <button type="button" class="stat-card stat-card--link${
               listMode === "rejected" ? " is-active" : ""
             }" data-action="open-dash-rejected">
-              <span class="stat-card__num">${rejectedItems.length}</span><span class="stat-card__lbl">Odrzucone</span>
+              <span class="stat-card__num">${rejectedItemsAll.length}</span><span class="stat-card__lbl">Odrzucone</span>
             </button>
           </div>
-          ${renderNotificationsBlock("provider", "Powiadomienia")}
+          ${searchOpen ? "" : renderNotificationsBlock("provider", "Powiadomienia")}
+          ${clientsHitsHtml}
           <div class="prov-section-row">
             <h3 class="prov-section">${escapeHtml(sectionTitle)}</h3>
             ${
-              showRequests || showRejected
+              showRequests || showRejected || searchQ
                 ? ""
                 : `<label class="prov-free-toggle">
               <span class="prov-free-toggle__text">Wolne terminy</span>
@@ -8485,6 +8657,42 @@
     saveState();
     renderAll();
     hapticTap(12);
+  }
+
+  function toggleDashSearch() {
+    const next = !window.AppState.dashSearchOpen;
+    window.AppState.dashSearchOpen = next;
+    if (!next) window.AppState.dashSearchQ = "";
+    saveState();
+    renderAll();
+    if (next) {
+      requestAnimationFrame(function () {
+        const el = document.querySelector('[data-role="dash-search-input"]');
+        if (!el) return;
+        try {
+          el.focus({ preventScroll: true });
+        } catch (err) {
+          el.focus();
+        }
+      });
+    }
+    hapticTap(10);
+  }
+
+  function clearDashSearch() {
+    window.AppState.dashSearchQ = "";
+    window.AppState.dashSearchOpen = true;
+    saveState();
+    renderAll();
+    requestAnimationFrame(function () {
+      const el = document.querySelector('[data-role="dash-search-input"]');
+      if (!el) return;
+      try {
+        el.focus({ preventScroll: true });
+      } catch (err) {
+        el.focus();
+      }
+    });
   }
 
   function openDashRejected() {
@@ -15940,6 +16148,14 @@
         event.preventDefault();
         openDashRejected();
         break;
+      case "toggle-dash-search":
+        event.preventDefault();
+        toggleDashSearch();
+        break;
+      case "clear-dash-search":
+        event.preventDefault();
+        clearDashSearch();
+        break;
       case "close-prov-cal-add":
         event.preventDefault();
         closeProvCalAdd();
@@ -16273,6 +16489,29 @@
       draft.clientName = String(addClientInp.value || "");
       patchProvCalAddClientClearBtn();
       saveState();
+      return;
+    }
+
+    const dashSearch = event.target.closest('[data-role="dash-search-input"]');
+    if (dashSearch) {
+      window.AppState.dashSearchOpen = true;
+      window.AppState.dashSearchQ = String(dashSearch.value || "");
+      const start = dashSearch.selectionStart;
+      const end = dashSearch.selectionEnd;
+      saveState();
+      renderAll();
+      requestAnimationFrame(function () {
+        const again = document.querySelector('[data-role="dash-search-input"]');
+        if (!again) return;
+        try {
+          again.focus({ preventScroll: true });
+          if (typeof start === "number" && typeof end === "number") {
+            again.setSelectionRange(start, end);
+          }
+        } catch (err) {
+          again.focus();
+        }
+      });
       return;
     }
 
