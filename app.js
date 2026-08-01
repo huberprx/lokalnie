@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.177";
+  const APP_VERSION = "1.0.178";
 
   const PWA = {
     registration: null,
@@ -6521,26 +6521,122 @@
     hapticTap(16);
   }
 
+  /** Wolne luki dnia: bloki dostępności minus zajęte wizyty. */
+  function provCalFreeGaps(dateISO, exceptBookingId) {
+    const busy = activeDayBookings(dateISO, exceptBookingId)
+      .map(function (b) {
+        return { from: timeToMinutes(b.from), to: timeToMinutes(b.to) };
+      })
+      .filter(function (iv) {
+        return iv.to > iv.from;
+      })
+      .sort(function (a, b) {
+        return a.from - b.from;
+      });
+    const gaps = [];
+    providerAvailBlocksForDate(dateISO).forEach(function (block) {
+      let cursor = timeToMinutes(block.from);
+      const end = timeToMinutes(block.to);
+      if (!(end > cursor)) return;
+      const blockBusy = busy
+        .filter(function (iv) {
+          return iv.from < end && iv.to > cursor;
+        })
+        .map(function (iv) {
+          return { from: Math.max(iv.from, cursor), to: Math.min(iv.to, end) };
+        })
+        .filter(function (iv) {
+          return iv.to > iv.from;
+        })
+        .sort(function (a, b) {
+          return a.from - b.from;
+        });
+      blockBusy.forEach(function (iv) {
+        if (iv.from > cursor) gaps.push({ from: cursor, to: iv.from });
+        cursor = Math.max(cursor, iv.to);
+      });
+      if (end > cursor) gaps.push({ from: cursor, to: end });
+    });
+    return gaps;
+  }
+
+  /** Docelowy czas trwania szkicu (usługi z panelu „+” albo 30 min). */
+  function desiredProvCalFreeDurationMin() {
+    if (window.AppState.provCalAddOpen && window.AppState.provCalAddDraft && !replyRequestId()) {
+      const draft = window.AppState.provCalAddDraft;
+      const p = myProvider();
+      const totals = provCalAddServiceTotals(provCalAddSelectedServices(p, draft));
+      if (totals && totals.duration > 0) return Math.max(5, totals.duration);
+    }
+    return 30;
+  }
+
+  /**
+   * Legalny zakres wolnego szkicu przy preferredFromMin:
+   * 1) najbliższy slot z computeSlots (dostępność + bez kolizji),
+   * 2) inaczej dopasowanie do wolnej luki (ew. krótszy czas).
+   */
+  function fitProvCalFreeRange(dateISO, preferredFromMin, durationMin) {
+    if (!dateISO) return null;
+    durationMin = Math.max(5, Number(durationMin) || 30);
+    preferredFromMin = snapProvCalMin(Number(preferredFromMin) || 0);
+    const p = myProvider();
+    if (p) {
+      const slots = computeSlots(p, dateISO, durationMin, { ignoreLead: true });
+      const matched = matchProvCalAddSlotForFromMin(slots, preferredFromMin);
+      if (matched) {
+        return {
+          fromMin: timeToMin(matched.from),
+          toMin: timeToMin(matched.to),
+          slot: matched,
+        };
+      }
+    }
+    const gaps = provCalFreeGaps(dateISO);
+    let gap = null;
+    let bestDist = Infinity;
+    gaps.forEach(function (g) {
+      if (!(g.to - g.from >= 5)) return;
+      let dist = 0;
+      if (preferredFromMin < g.from) dist = g.from - preferredFromMin;
+      else if (preferredFromMin >= g.to) dist = preferredFromMin - g.to;
+      if (dist < bestDist) {
+        bestDist = dist;
+        gap = g;
+      }
+    });
+    if (!gap) return null;
+    const maxDur = gap.to - gap.from;
+    const dur = Math.max(5, Math.floor(Math.min(durationMin, maxDur) / PROV_CAL_SNAP_MIN) * PROV_CAL_SNAP_MIN);
+    if (dur < 5 || gap.to - gap.from < dur) return null;
+    let fromMin = Math.max(gap.from, Math.min(gap.to - dur, preferredFromMin));
+    fromMin = snapProvCalMin(fromMin);
+    fromMin = Math.max(gap.from, Math.min(gap.to - dur, fromMin));
+    return { fromMin: fromMin, toMin: fromMin + dur, slot: null };
+  }
+
   function placeProvCalFreeSelection(dateISO, clientY, track) {
     if (!dateISO || !track) return;
     const hourH = ensureProvCalHourH();
     const dayStart = PROV_CAL_HOUR_START * 60;
     const dayEnd = PROV_CAL_HOUR_END * 60;
-    const defaultDur = 30;
     const rect = track.getBoundingClientRect();
-    let fromMin = dayStart + ((clientY - rect.top) / hourH) * 60;
-    fromMin = snapProvCalMin(fromMin);
-    fromMin = Math.max(dayStart, Math.min(dayEnd - defaultDur, fromMin));
-    let toMin = fromMin + defaultDur;
-    if (toMin > dayEnd) {
-      toMin = dayEnd;
-      fromMin = Math.max(dayStart, toMin - defaultDur);
-    }
+    let preferredFrom = dayStart + ((clientY - rect.top) / hourH) * 60;
+    preferredFrom = snapProvCalMin(preferredFrom);
+    preferredFrom = Math.max(dayStart, Math.min(dayEnd - 5, preferredFrom));
     // Tryb odpowiedzi na prośbę: tap w wolne miejsce dodaje propozycję (bez szkicu).
     if (window.AppState.provCalAddOpen && replyRequestId()) {
-      addReplyProposalFromPoint(dateISO, fromMin);
+      addReplyProposalFromPoint(dateISO, preferredFrom);
       return;
     }
+    const fitted = fitProvCalFreeRange(dateISO, preferredFrom, desiredProvCalFreeDurationMin());
+    if (!fitted) {
+      showToast("Brak wolnego miejsca w tym przedziale.");
+      hapticTap(8);
+      return;
+    }
+    const fromMin = fitted.fromMin;
+    const toMin = fitted.toMin;
     window.AppState.provCalSelection = normalizeProvCalSelection({
       kind: "free",
       dateISO: dateISO,
@@ -6552,11 +6648,11 @@
       window.AppState.provCalDate = dateISO;
       window.AppState.provCalPickerMonth = dateISO.slice(0, 7);
     }
-    // Panel „+” otwarty — dzień/slot; „Inne” dopasuje sync (katalog zostaje).
+    // Panel „+” otwarty — dzień/slot z legalnego dopasowania (nie sztuczne id).
     if (window.AppState.provCalAddOpen && window.AppState.provCalAddDraft && !replyRequestId()) {
       const draft = window.AppState.provCalAddDraft;
       draft.dateISO = dateISO;
-      draft.slotId = "slot-" + dateISO + "-" + fromMin;
+      draft.slotId = fitted.slot ? fitted.slot.id : null;
     }
     // Przed renderem: dopasuj chip (najbliższy start) i dociągnij szkic do slotu.
     if (window.AppState.provCalAddOpen && !replyRequestId()) {
@@ -9510,18 +9606,22 @@
     if (!window.AppState.provCalAddOpen) return false;
     const draft = window.AppState.provCalAddDraft;
     const sel = window.AppState.provCalSelection;
-    if (!draft || !draft.slotId || !sel || sel.kind !== "free" || replyRequestId()) return false;
-    const start = parseProvCalSlotStartMin(draft.slotId);
-    if (!Number.isFinite(start)) return false;
+    if (!draft || !sel || sel.kind !== "free" || replyRequestId()) return false;
+    const preferred =
+      (draft.slotId && parseProvCalSlotStartMin(draft.slotId)) || Number(sel.fromMin);
+    if (!Number.isFinite(preferred)) return false;
     const dur =
       provCalAddServiceTotals(provCalAddSelectedServices(myProvider(), draft)).duration ||
       Math.max(5, Number(sel.toMin) - Number(sel.fromMin));
+    const fitted = fitProvCalFreeRange(draft.dateISO || sel.dateISO, preferred, Math.max(5, dur));
+    if (!fitted) return false;
     const next = normalizeProvCalSelection({
       kind: "free",
       dateISO: draft.dateISO || sel.dateISO,
-      fromMin: start,
-      toMin: start + Math.max(5, dur),
+      fromMin: fitted.fromMin,
+      toMin: fitted.toMin,
     });
+    if (fitted.slot) draft.slotId = fitted.slot.id;
     if (provCalSelectionKey(sel) === provCalSelectionKey(next)) return false;
     window.AppState.provCalSelection = next;
     document.querySelectorAll('[data-role="prov-cal-slot"][data-kind="free"]').forEach(function (el) {
@@ -9548,19 +9648,24 @@
     // Usługi z oferty = stały czas; „Inne” = elastyczna reszta (total − katalog).
     if (catalogDur > 0) {
       if (duration < catalogDur) {
-        // Nie skracaj poniżej sumy usług — dociągnij szkic.
-        toMin = fromMin + catalogDur;
-        duration = catalogDur;
-        const snapped = normalizeProvCalSelection({
-          kind: "free",
-          dateISO: sel.dateISO,
-          fromMin: fromMin,
-          toMin: toMin,
-        });
-        window.AppState.provCalSelection = snapped;
-        document.querySelectorAll('[data-role="prov-cal-slot"][data-kind="free"]').forEach(function (el) {
-          applyProvCalFreeDraftLayout(el, snapped.fromMin, snapped.toMin);
-        });
+        // Nie skracaj poniżej sumy usług — dociągnij do legalnego slotu (bez kolizji / poza dostępnością).
+        const fitted = fitProvCalFreeRange(sel.dateISO, fromMin, catalogDur);
+        if (fitted) {
+          fromMin = fitted.fromMin;
+          toMin = fitted.toMin;
+          duration = toMin - fromMin;
+          const snapped = normalizeProvCalSelection({
+            kind: "free",
+            dateISO: sel.dateISO,
+            fromMin: fromMin,
+            toMin: toMin,
+          });
+          window.AppState.provCalSelection = snapped;
+          document.querySelectorAll('[data-role="prov-cal-slot"][data-kind="free"]').forEach(function (el) {
+            applyProvCalFreeDraftLayout(el, snapped.fromMin, snapped.toMin);
+          });
+          if (fitted.slot) draft.slotId = fitted.slot.id;
+        }
         draft.serviceIds = catalogIds.slice();
       } else if (duration > catalogDur) {
         setProvCalAddInneMinutesOnDraft(draft, duration - catalogDur);
@@ -17114,15 +17219,28 @@
         let min = dayStart + ((event.clientY - rect.top) / hourH) * 60;
         min = snapProvCalMin(min);
         min = Math.max(dayStart, Math.min(dayEnd, min));
+        // Trzymaj resize w wolnej luce (dostępność − wizyty), żeby nie nachodził na inne.
+        const gaps = provCalFreeGaps(resize.dateISO);
+        const mid = (resize.fromMin + resize.toMin) / 2;
+        let gap =
+          gaps.find(function (g) {
+            return mid >= g.from && mid < g.to;
+          }) || null;
+        if (!gap) {
+          gap = { from: dayStart, to: dayEnd };
+        }
+        const lo = Math.max(dayStart, gap.from);
+        const hi = Math.min(dayEnd, gap.to);
         let fromMin = resize.fromMin;
         let toMin = resize.toMin;
         if (resize.edge === "start") {
           fromMin = Math.min(min, toMin - minDur);
-          fromMin = Math.max(dayStart, fromMin);
+          fromMin = Math.max(lo, fromMin);
         } else {
           toMin = Math.max(min, fromMin + minDur);
-          toMin = Math.min(dayEnd, toMin);
+          toMin = Math.min(hi, toMin);
         }
+        if (toMin - fromMin < minDur) return;
         if (fromMin === resize.fromMin && toMin === resize.toMin) return;
         resize.fromMin = fromMin;
         resize.toMin = toMin;
