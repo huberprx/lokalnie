@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.167";
+  const APP_VERSION = "1.0.171";
 
   const PWA = {
     registration: null,
@@ -4458,14 +4458,19 @@
     window.addEventListener("resize", function () {
       syncAllMyCalStatusRails();
     });
-    // iOS: gest na zakładkach nie może „bujnąć” pionowo rodzica (rubber-band).
+    // iOS: gest na poziomej karuzeli nie może „bujnąć” pionowo rodzica (rubber-band).
     const axis = { el: null, x: 0, y: 0, scrollLeft: 0, dir: null };
+    function hScrollTarget(from) {
+      return (
+        from &&
+        from.closest &&
+        from.closest("[data-my-cal-status-scroll], [data-h-scroll]")
+      );
+    }
     document.addEventListener(
       "touchstart",
       function (event) {
-        const t = event.target;
-        const scroller =
-          t && t.closest && t.closest("[data-my-cal-status-scroll]");
+        const scroller = hScrollTarget(event.target);
         if (!scroller || !event.touches || !event.touches[0]) {
           axis.el = null;
           return;
@@ -5553,9 +5558,8 @@
         <div class="app-scroll app-scroll--dash${compact ? " app-scroll--dash-side" : ""}">
           <header class="screen-head">
             <h2 class="screen-head__title">Pulpit</h2>
-            <p class="screen-head__sub">${escapeHtml(myProvider() ? myProvider().name : "")}</p>
           </header>
-          <div class="stat-row" role="region" aria-label="Statystyki">
+          <div class="stat-row" role="region" aria-label="Statystyki" data-h-scroll>
             <button type="button" class="stat-card stat-card--link${!showRequests ? " is-active" : ""}" data-action="open-dash-visits">
               <span class="stat-card__num">${upcoming.length}</span><span class="stat-card__lbl">Nadchodzące wizyty</span>
             </button>
@@ -10790,10 +10794,6 @@
           }</button>`
         : "";
 
-    const foot = pickMode
-      ? ""
-      : `<button type="button" class="btn btn--primary service-list__add" data-action="add-service">Dodaj usługę</button>`;
-
     return `
           <header class="screen-head screen-head--services">
             <div class="screen-head__text">
@@ -10801,8 +10801,14 @@
             </div>
             ${pickBtn}
           </header>
-          <div class="service-list${pickMode ? " service-list--pick" : ""}">${list}</div>
-          ${foot}`;
+          <div class="service-list${pickMode ? " service-list--pick" : ""}">${list}</div>`;
+  }
+
+  function renderServicesFab() {
+    if (providerServicesPickMode()) return "";
+    return `<button type="button" class="prov-cal-fab service-list-fab" data-action="add-service" aria-label="Dodaj usługę" title="Dodaj usługę">
+      <span class="prov-cal-fab__icon" aria-hidden="true">+</span>
+    </button>`;
   }
 
   function renderServicesPickBar() {
@@ -10845,6 +10851,7 @@
             <div class="app-scroll app-scroll--svc-side">
               ${renderProviderServicesListHtml(p, editId)}
             </div>
+            ${renderServicesFab()}
           </aside>
           <section class="prov-svc__edit" data-role="prov-svc-edit" aria-label="Panel edycji usługi">
             ${editPane}
@@ -10873,6 +10880,7 @@
           ${renderProviderServicesListHtml(p, null)}
         </div>
         ${providerBottomNav("services")}
+        ${renderServicesFab()}
         ${renderServicesPickBar()}
       </div>`;
   }

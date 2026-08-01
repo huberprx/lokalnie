@@ -4837,14 +4837,23 @@ span.service-variant-chip {
   }
 }
 
-.service-list__add {
-  width: 100%;
-  margin-top: 0.55rem;
-  margin-bottom: 0.35rem;
+/* FAB „+” dodawania usługi — ten sam wygląd co w kalendarzu. */
+.app-screen--services .service-list-fab {
+  z-index: 45;
 }
 
-.service-list__group-empty + .service-list__add {
-  margin-top: 0.2rem;
+@media (min-width: 900px) {
+  .app-screen--services .service-list-fab {
+    bottom: max(0.85rem, env(safe-area-inset-bottom, 0px));
+  }
+}
+
+.device-frame[data-view="desktop"] .app-screen--services .service-list-fab {
+  bottom: max(0.85rem, env(safe-area-inset-bottom, 0px));
+}
+
+.app-screen--services .app-scroll {
+  padding-bottom: calc(4.5rem + var(--bottom-nav-clearance, 0px));
 }
 
 /* Panel karuzeli zdjęć usługi (wariant B) */
@@ -7707,6 +7716,8 @@ button.provider-info-pop__line {
 }
 
 .prov-desk__dash .stat-card {
+  flex-basis: min(13.5rem, 82%);
+  min-width: min(13.5rem, 82%);
   padding: 0.55rem 0.5rem;
 }
 
@@ -7736,6 +7747,7 @@ button.provider-info-pop__line {
 }
 
 .prov-svc__list {
+  position: relative;
   flex: 0 0 min(24rem, 36%);
   width: min(24rem, 36%);
   min-width: 18rem;
@@ -7751,7 +7763,11 @@ button.provider-info-pop__line {
 .prov-svc__list .app-scroll--svc-side {
   flex: 1 1 0;
   min-height: 0;
-  padding: 0.7rem 0.85rem 1rem;
+  padding: 0.7rem 0.85rem 5rem;
+}
+
+.prov-svc__list .service-list-fab {
+  bottom: max(0.85rem, env(safe-area-inset-bottom, 0px));
 }
 
 .prov-svc__list .service-row--static {
@@ -7771,11 +7787,6 @@ button.provider-info-pop__line {
 
 .prov-svc__list .service-row--static.is-selected:hover {
   background: color-mix(in srgb, var(--accent-provider-soft) 78%, var(--surface));
-}
-
-.prov-svc__list .service-list__add {
-  margin-top: 0.75rem;
-  width: 100%;
 }
 
 .prov-svc__edit {
@@ -8123,11 +8134,36 @@ button.provider-info-pop__line {
   transform: scale(0.94);
 }
 
+/* Plus rysowany CSS — glyph „+” z fontu optycznie siada za wysoko. */
 .prov-cal-fab__icon {
-  font-size: 1.85rem;
-  font-weight: 400;
-  line-height: 1;
-  margin-top: -0.08rem;
+  position: relative;
+  display: block;
+  width: 1.15rem;
+  height: 1.15rem;
+  font-size: 0;
+  line-height: 0;
+  color: inherit;
+}
+
+.prov-cal-fab__icon::before,
+.prov-cal-fab__icon::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: currentColor;
+  border-radius: 1px;
+  transform: translate(-50%, -50%);
+}
+
+.prov-cal-fab__icon::before {
+  width: 100%;
+  height: 0.16rem;
+}
+
+.prov-cal-fab__icon::after {
+  width: 0.16rem;
+  height: 100%;
 }
 
 .prov-cal-add {
@@ -12742,9 +12778,11 @@ body.prov-cal-resizing * {
   padding: 0.05rem 0 0.35rem;
   overflow-x: auto;
   overflow-y: hidden;
-  scroll-snap-type: x mandatory;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 0.05rem;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
+  overscroll-behavior-y: none;
   scrollbar-width: none;
   -ms-overflow-style: none;
   touch-action: pan-x;
@@ -12755,9 +12793,9 @@ body.prov-cal-resizing * {
 }
 
 .stat-card {
-  flex: 0 0 calc(50% - 0.3rem);
+  flex: 0 0 min(15.5rem, 78%);
+  min-width: min(15.5rem, 78%);
   scroll-snap-align: start;
-  scroll-snap-stop: always;
   box-sizing: border-box;
   padding: 0.85rem;
   background: var(--surface);
@@ -12766,6 +12804,7 @@ body.prov-cal-resizing * {
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
+  touch-action: pan-x;
 }
 
 .stat-card__num {
@@ -16349,6 +16388,7 @@ body.prov-cal-resizing * {
   font: inherit;
   color: inherit;
   cursor: pointer;
+  touch-action: pan-x;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
