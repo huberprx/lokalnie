@@ -5422,16 +5422,26 @@ body.service-photo-preview-open {
 }
 
 .service-list__pick-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 130;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  margin-top: 0.85rem;
-  padding: 0.55rem 0.15rem 0.15rem;
-  position: sticky;
-  bottom: calc(0.35rem + var(--bottom-nav-clearance, 0px));
-  z-index: 2;
-  background: linear-gradient(to top, var(--bg) 55%, color-mix(in srgb, var(--bg) 88%, transparent));
+  margin: 0;
+  min-height: calc(var(--bottom-nav-pill-h) + env(safe-area-inset-bottom, 0px));
+  padding: 0.55rem var(--app-pad-x, 0.75rem);
+  padding-bottom: calc(0.55rem + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--border);
+  background: #fff;
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.08);
+}
+
+.device-frame .service-list__pick-bar {
+  position: absolute;
 }
 
 .service-list__pick-count {
@@ -7197,6 +7207,8 @@ button.provider-info-pop__line {
   position: relative;
   margin: 0.35rem 0 0.65rem;
   min-width: 0;
+  overflow: hidden;
+  touch-action: pan-x;
 }
 
 .my-cal-status-rail::before,
@@ -7235,8 +7247,10 @@ button.provider-info-pop__line {
   padding: 0;
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
+  overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
+  overscroll-behavior-y: none;
   touch-action: pan-x;
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -7263,6 +7277,7 @@ button.provider-info-pop__line {
   line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
+  touch-action: pan-x;
   transition: color 0.14s ease;
 }
 

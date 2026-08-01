@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.163";
+  const APP_VERSION = "1.0.166";
 
   const PWA = {
     registration: null,
@@ -4458,6 +4458,63 @@
     window.addEventListener("resize", function () {
       syncAllMyCalStatusRails();
     });
+    // iOS: gest na zakładkach nie może „bujnąć” pionowo rodzica (rubber-band).
+    const axis = { el: null, x: 0, y: 0, scrollLeft: 0, dir: null };
+    document.addEventListener(
+      "touchstart",
+      function (event) {
+        const t = event.target;
+        const scroller =
+          t && t.closest && t.closest("[data-my-cal-status-scroll]");
+        if (!scroller || !event.touches || !event.touches[0]) {
+          axis.el = null;
+          return;
+        }
+        axis.el = scroller;
+        axis.x = event.touches[0].clientX;
+        axis.y = event.touches[0].clientY;
+        axis.scrollLeft = scroller.scrollLeft;
+        axis.dir = null;
+      },
+      { capture: true, passive: true }
+    );
+    document.addEventListener(
+      "touchmove",
+      function (event) {
+        if (!axis.el || !event.touches || !event.touches[0]) return;
+        const dx = event.touches[0].clientX - axis.x;
+        const dy = event.touches[0].clientY - axis.y;
+        if (axis.dir == null) {
+          if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+          axis.dir = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+        }
+        if (axis.dir !== "x") {
+          axis.el = null;
+          return;
+        }
+        if (event.cancelable) event.preventDefault();
+        axis.el.scrollLeft = axis.scrollLeft - dx;
+        const rail = axis.el.closest("[data-my-cal-status-rail]");
+        if (rail) syncMyCalStatusRail(rail);
+      },
+      { capture: true, passive: false }
+    );
+    document.addEventListener(
+      "touchend",
+      function () {
+        axis.el = null;
+        axis.dir = null;
+      },
+      { capture: true, passive: true }
+    );
+    document.addEventListener(
+      "touchcancel",
+      function () {
+        axis.el = null;
+        axis.dir = null;
+      },
+      { capture: true, passive: true }
+    );
   }
 
   function clientOpenRequests() {
@@ -10630,7 +10687,6 @@
     const askMode = activeModeForBookingGroup(p, "ask");
     const pickMode = providerServicesPickMode();
     const pickIds = providerServicesPickIds();
-    const pickCount = pickIds.length;
     const totalCount = (p && p.services ? p.services.length : 0) || 0;
 
     function rowHtml(s) {
@@ -10735,26 +10791,31 @@
         : "";
 
     const foot = pickMode
-      ? `<div class="service-list__pick-bar" role="toolbar" aria-label="Akcje zaznaczenia">
-            <span class="service-list__pick-count">${
-              pickCount ? escapeHtml(String(pickCount) + " zazn.") : "Zaznacz oferty"
-            }</span>
-            <button type="button" class="btn btn--danger service-list__pick-delete" data-action="delete-selected-services"${
-              pickCount ? "" : " disabled"
-            }>Usuń${pickCount ? " (" + pickCount + ")" : ""}</button>
-          </div>`
+      ? ""
       : `<button type="button" class="btn btn--primary service-list__add" data-action="add-service">Dodaj usługę</button>`;
 
     return `
           <header class="screen-head screen-head--services">
             <div class="screen-head__text">
               <h2 class="screen-head__title">Usługi</h2>
-              <p class="screen-head__sub">Oferty w dwóch koszykach — wariant rezerwacji ustawiasz dla całej grupy.</p>
             </div>
             ${pickBtn}
           </header>
           <div class="service-list${pickMode ? " service-list--pick" : ""}">${list}</div>
           ${foot}`;
+  }
+
+  function renderServicesPickBar() {
+    if (!providerServicesPickMode()) return "";
+    const pickCount = providerServicesPickIds().length;
+    return `<div class="service-list__pick-bar" role="toolbar" aria-label="Akcje zaznaczenia">
+      <span class="service-list__pick-count">${
+        pickCount ? escapeHtml(String(pickCount) + " zazn.") : "Zaznacz oferty"
+      }</span>
+      <button type="button" class="btn btn--danger service-list__pick-delete" data-action="delete-selected-services"${
+        pickCount ? "" : " disabled"
+      }>Usuń${pickCount ? " (" + pickCount + ")" : ""}</button>
+    </div>`;
   }
 
   function renderServices() {
@@ -10778,7 +10839,7 @@
       return `
       <div class="app-screen app-screen--provider app-screen--services app-screen--services-desktop${
         editing ? " app-screen--services-editing" : ""
-      }">
+      }${providerServicesPickMode() ? " app-screen--services-pick" : ""}">
         <div class="prov-svc" data-role="prov-svc">
           <aside class="prov-svc__list" data-role="prov-svc-list" aria-label="Lista usług">
             <div class="app-scroll app-scroll--svc-side">
@@ -10790,6 +10851,7 @@
           </section>
         </div>
         ${providerBottomNav("services")}
+        ${renderServicesPickBar()}
       </div>`;
     }
 
@@ -10804,11 +10866,14 @@
     }
 
     return `
-      <div class="app-screen app-screen--provider app-screen--services">
+      <div class="app-screen app-screen--provider app-screen--services${
+        providerServicesPickMode() ? " app-screen--services-pick" : ""
+      }">
         <div class="app-scroll">
           ${renderProviderServicesListHtml(p, null)}
         </div>
         ${providerBottomNav("services")}
+        ${renderServicesPickBar()}
       </div>`;
   }
 
