@@ -134,9 +134,8 @@
           name: "Strzyżenie brody",
           durationMin: 20,
           price: 40,
-          bookingMode: "queue",
           subtitle: "Modelowanie i wyrównanie linii brody",
-          description: "Modelowanie i wyrównanie linii brody. Strzyżenie nadmiaru, konturowanie i olejek po goleniu. Rezerwacja w kolejce — następny wolny termin w bloku dostępności.",
+          description: "Modelowanie i wyrównanie linii brody. Strzyżenie nadmiaru, konturowanie i olejek po goleniu.",
           photos: ["assets/services/svc-beard.jpg"],
           variants: [
             { id: "svc-gb-2-quick", durationMin: 15, price: 35, label: "Szybkie" },
@@ -149,7 +148,6 @@
           name: "Combo: włosy + broda",
           durationMin: 45,
           price: 85,
-          bookingMode: "queue",
           subtitle: "Strzyżenie i pełna stylizacja brody",
           photos: ["assets/services/svc-combo.jpg", "assets/services/svc-beard.jpg"],
         },

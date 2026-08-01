@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.161";
+  const APP_VERSION = "1.0.163";
 
   const PWA = {
     registration: null,
@@ -2360,6 +2360,49 @@
         s.bookingMode = fallback;
       }
     });
+    // W jednym koszyku (confirm|ask) tylko jeden wariant — mieszane stany ujednolicamy.
+    unifyBookingModesInGroups(provider);
+  }
+
+  /** Wybiera wspólny wariant w koszyku (większość; remis → auto / approval). */
+  function pickUnifiedModeForGroup(modes, group) {
+    const counts = {};
+    modes.forEach(function (m) {
+      counts[m] = (counts[m] || 0) + 1;
+    });
+    const preferred = group === "ask" ? "approval" : "auto";
+    let winner = preferred;
+    let best = -1;
+    Object.keys(counts).forEach(function (m) {
+      const n = counts[m];
+      if (n > best || (n === best && m === preferred)) {
+        best = n;
+        winner = m;
+      }
+    });
+    return winner;
+  }
+
+  function unifyBookingModesInGroups(provider) {
+    if (!provider || !Array.isArray(provider.services)) return;
+    ["confirm", "ask"].forEach(function (group) {
+      const list = provider.services.filter(function (s) {
+        return s && bookingModeGroup(serviceBookingMode(s, provider)) === group;
+      });
+      if (list.length < 2) {
+        if (list.length === 1 && !list[0].bookingMode) {
+          list[0].bookingMode = serviceBookingMode(list[0], provider);
+        }
+        return;
+      }
+      const modes = list.map(function (s) {
+        return serviceBookingMode(s, provider);
+      });
+      const winner = pickUnifiedModeForGroup(modes, group);
+      list.forEach(function (s) {
+        if (s.bookingMode !== winner) s.bookingMode = winner;
+      });
+    });
   }
 
   function draftBookingMode(provider) {
@@ -2430,6 +2473,11 @@
     const uniform = uniformBookingModeInGroup(provider, group);
     if (uniform) return uniform;
     return group === "ask" ? "approval" : "auto";
+  }
+
+  /** Aktywny wariant segmentu — zawsze konkretny (pusty koszyk → domyślny). */
+  function activeModeForBookingGroup(provider, group) {
+    return defaultModeForBookingGroup(provider, group);
   }
 
   /** Ustawia wariant rezerwacji dla wszystkich ofert w koszyku (confirm|ask). */
@@ -10578,8 +10626,8 @@
     ensureServicesBookingMode(p);
     const openBook = servicesInBookingGroup(p, "confirm");
     const requests = servicesInBookingGroup(p, "ask");
-    const confirmMode = uniformBookingModeInGroup(p, "confirm");
-    const askMode = uniformBookingModeInGroup(p, "ask");
+    const confirmMode = activeModeForBookingGroup(p, "confirm");
+    const askMode = activeModeForBookingGroup(p, "ask");
     const pickMode = providerServicesPickMode();
     const pickIds = providerServicesPickIds();
     const pickCount = pickIds.length;
@@ -10645,13 +10693,6 @@
       </div>`;
     }
 
-    function groupAddBtn(group) {
-      if (pickMode) return "";
-      return `<button type="button" class="btn btn--primary service-list__add" data-action="add-service" data-group="${escapeHtml(
-        group
-      )}">Dodaj usługę</button>`;
-    }
-
     let list = "";
     list += `<div class="service-list__group-head">
           <h4 class="service-list__group-title">Typ rezerwacji — klient wybiera termin</h4>
@@ -10668,7 +10709,7 @@
           openBook.length
             ? openBook.map(rowHtml).join("")
             : `<p class="empty-note service-list__group-empty">Brak ofert w tej grupie.</p>`
-        }${groupAddBtn("confirm")}`;
+        }`;
     list += `<div class="service-list__sep service-list__sep--divider">
           <h4 class="service-list__group-title">Typ rezerwacji — na prośbę</h4>
           ${renderProviderServicesGroupSeg(
@@ -10684,7 +10725,7 @@
           requests.length
             ? requests.map(rowHtml).join("")
             : `<p class="empty-note service-list__group-empty">Brak ofert w tej grupie.</p>`
-        }${groupAddBtn("ask")}`;
+        }`;
 
     const pickBtn =
       totalCount > 0
@@ -10702,7 +10743,7 @@
               pickCount ? "" : " disabled"
             }>Usuń${pickCount ? " (" + pickCount + ")" : ""}</button>
           </div>`
-      : "";
+      : `<button type="button" class="btn btn--primary service-list__add" data-action="add-service">Dodaj usługę</button>`;
 
     return `
           <header class="screen-head screen-head--services">
@@ -10944,9 +10985,28 @@
     const durationMin = Math.round(first.durationMin);
     const price = first.price;
 
-    const bookingMode = normalizeBookingMode(
+    let bookingMode = normalizeBookingMode(
       (form.elements.bookingMode && form.elements.bookingMode.value) || readServiceEditBookingMode(form)
     );
+    // Wariant szczegółowy bierze się z koszyka na liście — przy zapisie dopasuj do grupy.
+    {
+      const group = bookingModeGroup(bookingMode);
+      const peers = ((p && p.services) || []).filter(function (svc) {
+        if (!svc || svc.id === serviceId) return false;
+        return bookingModeGroup(serviceBookingMode(svc, p)) === group;
+      });
+      if (peers.length) {
+        bookingMode = serviceBookingMode(peers[0], p);
+      } else {
+        bookingMode = group === "ask"
+          ? bookingMode === "request"
+            ? "request"
+            : "approval"
+          : bookingMode === "queue"
+            ? "queue"
+            : "auto";
+      }
+    }
 
     const locIdsRaw = readServiceEditLocationIds(form);
     const validLocIds = ensureProviderLocations(p).map(function (l) {
