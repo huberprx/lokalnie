@@ -12664,6 +12664,9 @@ body.prov-cal-resizing * {
   flex-shrink: 0;
   padding: 0.15rem var(--app-pad-x) 0.35rem;
   background: var(--surface);
+  /* Nad przewijaną listą godzin — inaczej cień znika pod treścią. */
+  position: relative;
+  z-index: 3;
 }
 
 .avail-cal:empty {
