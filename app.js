@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.179";
+  const APP_VERSION = "1.0.180";
 
   const PWA = {
     registration: null,
@@ -148,6 +148,12 @@
       providerCardInfoExpanded: false,
       /** Profil klienta (Booksy-like): imię, telefon, e-mail, powiadomienia. */
       clientProfile: null,
+      /** Onboarding po świeżym Google OAuth: "choose" | "provider" | null. */
+      onboarding: null,
+      /** Profil usługodawcy utworzony przez użytkownika (null = użyj mocka „Grzesiu Barber”). */
+      myProvider: null,
+      /** Rola provider z konta (Google) — gdy myProvider jest ustawiony. */
+      providerRoleActive: false,
     };
   }
 
@@ -3138,6 +3144,10 @@
           stored.clientProfile && typeof stored.clientProfile === "object"
             ? stored.clientProfile
             : base.clientProfile,
+        onboarding: stored.onboarding === "choose" || stored.onboarding === "provider" ? stored.onboarding : null,
+        myProvider: stored.myProvider && typeof stored.myProvider === "object" ? stored.myProvider : base.myProvider,
+        providerRoleActive:
+          typeof stored.providerRoleActive === "boolean" ? stored.providerRoleActive : base.providerRoleActive,
       };
     } else {
       window.AppState = base;
@@ -3423,13 +3433,11 @@
   }
 
   function renderAppMenu() {
-    const user = data().CURRENT_USER || {};
     const cp = ensureClientProfile();
     const activeRole = window.AppState.activeRole || "client";
     const clientActive = activeRole === "client";
     const providerActive = activeRole === "provider";
-    const hasProvider = !!(user.providerRole && user.providerRole.active);
-    const provider = hasProvider ? myProvider() : null;
+    const provider = hasProviderRole() ? myProvider() : null;
     const editIcon = `<span class="app-menu__profile-edit-icon" aria-hidden="true"></span>`;
 
     const providerBlock = provider
@@ -5750,7 +5758,50 @@
   }
 
   function myProvider() {
+    if (window.AppState && window.AppState.myProvider) return window.AppState.myProvider;
     return getProviderById(MY_PROVIDER_ID);
+  }
+
+  function myProviderId() {
+    const p = myProvider();
+    return (p && p.id) || MY_PROVIDER_ID;
+  }
+
+  /** Czy aktywna rola usługodawcy (lokalny profil albo konto Google z providerem). */
+  function hasProviderRole() {
+    if (window.AppState && window.AppState.myProvider) return true;
+    if (window.AppState && window.AppState.providerRoleActive) return true;
+    const user = data().CURRENT_USER || {};
+    return !!(user.providerRole && user.providerRole.active);
+  }
+
+  /** Aktualizuje lokalną rolę po OAuth (/me) — przed renderem menu. */
+  function applyApiAuth(me) {
+    if (!me || !window.AppState) return;
+    const hasApiProvider = !!(me.user && me.user.roles && me.user.roles.provider) || !!me.provider;
+    if (window.AppState.myProvider) return; // lokalny profil wygrywa
+    if (!hasApiProvider) {
+      if (window.AppState.providerRoleActive) window.AppState.providerRoleActive = false;
+      return;
+    }
+    window.AppState.providerRoleActive = true;
+    const apiSlug =
+      window.LokalnieApi && window.LokalnieApi.toAppProviderId
+        ? window.LokalnieApi.toAppProviderId(me.provider && me.provider.id)
+        : (me.provider && me.provider.slug) || (me.provider && me.provider.id);
+    window.AppState.myProvider = {
+      id: apiSlug || "my-provider",
+      slug: (me.provider && me.provider.slug) || apiSlug || "my-provider",
+      apiId: me.provider && me.provider.id,
+      name: (me.provider && me.provider.name) || "Mój profil",
+      category: (me.provider && me.provider.category) || "",
+      city: (me.provider && me.provider.city) || "",
+      address: (me.provider && me.provider.address) || "",
+      about: (me.provider && me.provider.about) || "",
+      avatarUrl: null,
+      avatarInitials: "MP",
+      _fromApi: true,
+    };
   }
 
   function providerOpenRequests() {
@@ -15146,7 +15197,83 @@
   }
 
   function renderRoleHTML(role) {
+    if (window.AppState && window.AppState.onboarding) {
+      return renderOnboarding(window.AppState.onboarding);
+    }
     return role === "provider" ? renderProvider(window.AppState.screen.provider) : renderClient(window.AppState.screen.client);
+  }
+
+  /** Pierwszy login z Google: wybór ścieżki (klient / firma). */
+  function renderOnboarding(step) {
+    const cp = ensureClientProfile();
+    if (step === "provider") {
+      return `
+        <div class="app-screen app-screen--onboarding">
+          <div class="app-scroll onboarding">
+            <header class="onboarding__head">
+              <button type="button" class="screen-head__back" data-action="onboarding-back" aria-label="Wróć">
+                <span class="screen-head__back-icon" aria-hidden="true"></span>
+              </button>
+              <div>
+                <p class="onboarding__kicker">Lokalnie</p>
+                <h2 class="onboarding__title">Twoja firma</h2>
+                <p class="onboarding__sub">Kilka pól — resztę uzupełnisz w ustawieniach.</p>
+              </div>
+            </header>
+            <div class="onboarding__card onboarding__card--form">
+              <label class="onboarding__field">
+                <span>Nazwa firmy / Twoje imię</span>
+                <input type="text" data-role="onb-provider-name" placeholder="${escapeHtml(cp.name || "np. Studio Urody Ana")}" value="${escapeHtml(cp.name || "")}" />
+              </label>
+              <label class="onboarding__field">
+                <span>Kategoria</span>
+                <input type="text" data-role="onb-provider-category" placeholder="np. fryzjer, kosmetyczka, trener" />
+              </label>
+              <label class="onboarding__field">
+                <span>Miasto</span>
+                <input type="text" data-role="onb-provider-city" placeholder="np. Warszawa" />
+              </label>
+              <label class="onboarding__field">
+                <span>Adres (opcjonalnie)</span>
+                <input type="text" data-role="onb-provider-address" placeholder="ulica, nr" />
+              </label>
+              <button type="button" class="btn btn--primary onboarding__cta" data-action="onboarding-provider-submit">
+                Utwórz profil usługodawcy
+              </button>
+              <p class="onboarding__note">Możesz to zmienić później w ustawieniach firmy.</p>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    return `
+      <div class="app-screen app-screen--onboarding">
+        <div class="app-scroll onboarding">
+          <header class="onboarding__head onboarding__head--center">
+            <img class="onboarding__logo" src="assets/icons/logo-1024.png" alt="" width="64" height="64" />
+            <h2 class="onboarding__title">Jak chcesz zacząć?</h2>
+            <p class="onboarding__sub">Możesz zmienić rolę później w menu.</p>
+          </header>
+          <div class="onboarding__choices">
+            <button type="button" class="onboarding__choice" data-action="onboarding-choose-client">
+              <span class="onboarding__choice-ico onboarding__choice-ico--client" aria-hidden="true"></span>
+              <span class="onboarding__choice-text">
+                <span class="onboarding__choice-title">Szukam usług</span>
+                <span class="onboarding__choice-sub">Rezerwuj wizyty u lokalnych specjalistów.</span>
+              </span>
+              <span class="onboarding__choice-arrow" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="onboarding__choice" data-action="onboarding-choose-provider">
+              <span class="onboarding__choice-ico onboarding__choice-ico--provider" aria-hidden="true"></span>
+              <span class="onboarding__choice-text">
+                <span class="onboarding__choice-title">Oferuję usługi</span>
+                <span class="onboarding__choice-sub">Ustaw kalendarz, usługi i przyjmuj rezerwacje.</span>
+              </span>
+              <span class="onboarding__choice-arrow" aria-hidden="true"></span>
+            </button>
+          </div>
+        </div>
+      </div>`;
   }
 
   // ─────────────────────────────────────────────────────────
@@ -16702,14 +16829,13 @@
   }
 
   function updateAppHeader(activeRole) {
-    const user = data().CURRENT_USER;
     const userEl = document.getElementById("app-header-user");
     if (userEl) userEl.textContent = appHeaderUserLabel(activeRole);
 
     const pageApp = document.getElementById("page-app");
     if (pageApp) pageApp.dataset.activeRole = activeRole || "client";
 
-    const hasProviderRole = user && user.providerRole && user.providerRole.active;
+    const hasProviderRole = hasProviderRole();
     const roleSwitch = document.getElementById("app-role-switch");
     if (roleSwitch) roleSwitch.hidden = !hasProviderRole;
 
@@ -16765,6 +16891,14 @@
   function finishGoogleLogin(token) {
     if (!token || !window.LokalnieApi) return false;
     window.LokalnieApi.setAuthToken(token);
+
+    // Świeży login z Google zaczyna czysty — inaczej nadpisuje go stary stan demo.
+    try {
+      localStorage.removeItem(STATE_KEY);
+    } catch (err) {
+      /* ignore */
+    }
+    window.AppState = defaultState();
     window.AppState.loggedIn = true;
     window.AppState.activeRole = "client";
     window.AppState.screen.client = DEFAULT_SCREEN.client;
@@ -16772,20 +16906,91 @@
     updateAppHeader("client");
     showPage("app");
     renderAll();
-    void window.LokalnieApi.syncFromServer().then(function (result) {
-      if (result && result.ok) {
-        if (window.AppState.clientProfile && window.AppState.clientProfile.name) {
-          /* keep */
-        }
-        // Jeśli konto ma profil usługodawcy — zostaw rolę client; user przełączy w menu.
+
+    void window.LokalnieApi.request("/me").then(function (me) {
+      if (me && me.user) {
+        applyApiAuth(me);
+        const cp = ensureClientProfile();
+        if (me.user.name) cp.name = me.user.name;
+        if (me.user.email) cp.email = me.user.email;
+        const hasProvider = !!(me.user.roles && me.user.roles.provider) || !!me.provider;
+        window.AppState.onboarding = hasProvider ? null : "choose";
         saveState();
         renderAll();
-        showToast("Zalogowano przez Google.");
+        showToast(hasProvider ? "Zalogowano przez Google." : "Zalogowano. Jak chcesz zacząć?");
+        void window.LokalnieApi.syncFromServer().then(function () {
+          saveState();
+          renderAll();
+        });
       } else {
-        showToast("Zalogowano, ale synchronizacja API nie wyszła.");
+        window.AppState.onboarding = "choose";
+        saveState();
+        renderAll();
       }
     });
     return true;
+  }
+
+  function onboardingChooseClient() {
+    window.AppState.onboarding = null;
+    saveState();
+    renderAll();
+    goMarketplace();
+  }
+
+  function onboardingChooseProvider() {
+    window.AppState.onboarding = "provider";
+    saveState();
+    renderAll();
+  }
+
+  function onboardingBack() {
+    window.AppState.onboarding = "choose";
+    saveState();
+    renderAll();
+  }
+
+  function onboardingProviderSubmit() {
+    const cp = ensureClientProfile();
+    const name = readOnboardingInput("onb-provider-name") || cp.name || "Mój profil";
+    const city = readOnboardingInput("onb-provider-city");
+    const category = readOnboardingInput("onb-provider-category");
+    const address = readOnboardingInput("onb-provider-address");
+
+    window.AppState.myProvider = {
+      id: "my-provider",
+      slug: "my-provider",
+      name: name,
+      category: category || "",
+      city: city || "",
+      address: address || "",
+      about: "",
+      avatarUrl: null,
+      avatarInitials: accountInitials(name) || "MP",
+      _mine: true,
+    };
+    window.AppState.providerRoleActive = true;
+    window.AppState.onboarding = null;
+    window.AppState.activeRole = "provider";
+    window.AppState.screen.provider = "settings";
+    saveState();
+    updateAppHeader("provider");
+    renderAll();
+    showPage("app");
+    showToast("Profil usługodawcy gotowy. Uzupełnij dane firmy.");
+  }
+
+  function readOnboardingInput(field) {
+    const el = document.querySelector('[data-role="' + field + '"]');
+    return el ? String(el.value || "").trim() : "";
+  }
+
+  function addProviderProfile() {
+    closeAppMenuThen(function () {
+      window.AppState.onboarding = "provider";
+      saveState();
+      renderAll();
+    });
   }
 
   function consumeAuthHash() {
@@ -16808,10 +17013,16 @@
     } else if (window.LokalnieApi && window.LokalnieApi.clearAuthToken) {
       window.LokalnieApi.clearAuthToken();
     }
-    window.AppState.loggedIn = false;
-    window.AppState.activeRole = null;
+    try {
+      localStorage.removeItem(STATE_KEY);
+    } catch (err) {
+      /* ignore */
+    }
+    window.AppState = defaultState();
     saveState();
-    goMarketplace();
+    renderAll();
+    showPage("home");
+    showToast("Wylogowano.");
   }
 
   function closeAppMenuThen(fn) {
@@ -16914,6 +17125,7 @@
     testLogin: testLogin,
     googleLogin: googleLogin,
     logout: logout,
+    applyApiAuth: applyApiAuth,
     switchRole: switchRole,
     showPage: showPage,
     showSimulator: showSimulator,
@@ -17132,8 +17344,23 @@
         break;
       case "add-provider-profile":
         event.preventDefault();
-        closeAppMenu();
-        showToast("Wkrótce: dodawanie profilu usługodawcy.");
+        addProviderProfile();
+        break;
+      case "onboarding-choose-client":
+        event.preventDefault();
+        onboardingChooseClient();
+        break;
+      case "onboarding-choose-provider":
+        event.preventDefault();
+        onboardingChooseProvider();
+        break;
+      case "onboarding-back":
+        event.preventDefault();
+        onboardingBack();
+        break;
+      case "onboarding-provider-submit":
+        event.preventDefault();
+        onboardingProviderSubmit();
         break;
       case "open-legal":
         event.preventDefault();

@@ -1698,6 +1698,200 @@ button.app-menu__profile {
   padding-top: 0.25rem;
 }
 
+/* ---- Onboarding (pierwszy login z Google) ---- */
+.app-screen--onboarding {
+  background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
+}
+
+.onboarding {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: clamp(1.25rem, 4vw, 3rem) clamp(1rem, 3.5vw, 2rem) calc(2rem + var(--bottom-nav-clearance, 0px));
+  max-width: 32rem;
+  margin: 0 auto;
+  width: 100%;
+  min-height: 100%;
+  justify-content: center;
+}
+
+.onboarding__head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.onboarding__head--center {
+  align-items: center;
+  text-align: center;
+  gap: 0.75rem;
+}
+
+.onboarding__logo {
+  border-radius: 18px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+
+.onboarding__kicker {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-client);
+}
+
+.onboarding__title {
+  margin: 0;
+  font-size: clamp(1.45rem, 4.5vw, 2rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  line-height: 1.15;
+}
+
+.onboarding__sub {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+
+.onboarding__choices {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.onboarding__choice {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  width: 100%;
+  margin: 0;
+  padding: 1rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.02);
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.onboarding__choice:hover {
+  border-color: var(--accent-client);
+  box-shadow: 0 8px 24px rgba(91, 141, 239, 0.12);
+  transform: translateY(-1px);
+}
+
+.onboarding__choice:active {
+  transform: translateY(0);
+}
+
+.onboarding__choice-ico {
+  flex-shrink: 0;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  position: relative;
+}
+
+.onboarding__choice-ico--client::before,
+.onboarding__choice-ico--provider::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  background: var(--accent-client);
+  opacity: 0.9;
+}
+
+.onboarding__choice-ico--provider::before {
+  border-radius: 5px;
+  background: var(--accent-provider);
+}
+
+.onboarding__choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.onboarding__choice-title {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.onboarding__choice-sub {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.onboarding__choice-arrow {
+  flex-shrink: 0;
+  width: 1rem;
+  height: 1rem;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  transform: rotate(-45deg);
+}
+
+.onboarding__card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.1rem;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.onboarding__card--form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.onboarding__field {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.onboarding__field input {
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+}
+
+.onboarding__field input:focus {
+  outline: none;
+  border-color: var(--accent-client);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-client) 18%, transparent);
+}
+
+.onboarding__cta {
+  margin-top: 0.35rem;
+}
+
+.onboarding__note {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
 .app-menu__link {
   appearance: none;
   display: block;

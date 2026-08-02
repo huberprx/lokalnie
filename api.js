@@ -162,6 +162,13 @@
     if (!window.AppState) return { ok: false, reason: "no_state" };
     try {
       const me = await request("/me");
+      if (window.App && typeof window.App.applyApiAuth === "function") {
+        try {
+          window.App.applyApiAuth(me);
+        } catch (err) {
+          /* ignore */
+        }
+      }
       const apiProviderId = me.provider && me.provider.id;
       const appProviderId = toAppProviderId(apiProviderId) || (apiProviderId ? apiProviderId : "grzesiu-barber");
       let clients = [];
