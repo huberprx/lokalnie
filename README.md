@@ -26,7 +26,7 @@ Scenariusze w `e2e/flows.spec.js`: prośba→propozycja→rezerwacja, zmiana ter
 - URL: https://api.lokalnie.app
 - Kod: katalog [`worker/`](worker/)
 - Health: https://api.lokalnie.app/health
-- Auth demo: nagłówek `X-Demo-User: demo`
+- Auth: Google OAuth (`Zaloguj przez Google`) albo demo (`X-Demo-User: demo`)
 - Frontend (`api.js`) synchronizuje CRM, rezerwacje, prośby i awatar z API
 - Działa: CRM klientów, rezerwacje, prośby o termin, upload zdjęć (R2), kolejka maili
 

@@ -3247,7 +3247,9 @@
         busy.push([timeToMin(bk.from), timeToMin(bk.to)]);
       }
     });
-    activeRequestProposalHolds(provider.id, dateISO).forEach(function (hold) {
+    const exceptRequestId =
+      opts.exceptRequestId !== undefined ? opts.exceptRequestId : replyRequestId();
+    activeRequestProposalHolds(provider.id, dateISO, exceptRequestId).forEach(function (hold) {
       busy.push([hold.fromMin, hold.toMin]);
     });
 
@@ -6599,11 +6601,13 @@
       })
       .join("");
 
-    // Holdy z propozycji na prośbę — widoczne i blokujące do akceptacji / wygaśnięcia.
+    // Holdy z propozycji na prośbę — klik otwiera edycję; podczas edycji tej prośby
+    // nie rysujemy jej holdów (zostają interaktywne duchy szkicu).
     const pHold = myProvider();
+    const editingRequestId = replyRequestId();
     const holdEvents =
       pHold &&
-      activeRequestProposalHolds(pHold.id, dateISO)
+      activeRequestProposalHolds(pHold.id, dateISO, editingRequestId)
         .map(function (hold) {
           const clampedFrom = Math.max(dayStartMin, Math.min(dayEndMin, hold.fromMin));
           const clampedTo = Math.max(dayStartMin, Math.min(dayEndMin, hold.toMin));
@@ -6621,10 +6625,17 @@
           }${toneCls}"
             style="top:${top}px;height:${height}px"
             data-role="prov-cal-slot" data-kind="hold" data-date="${escapeHtml(dateISO)}"
-            data-request-id="${escapeHtml(hold.requestId)}"
+            data-action="propose-open" data-request-id="${escapeHtml(hold.requestId)}"
             data-from-min="${clampedFrom}" data-to-min="${clampedTo}"${locAttr}
+            role="button" tabindex="0"
             aria-label="${escapeHtml(
-              "Propozycja dla " + hold.clientName + ", " + hold.from + "–" + hold.to
+              "Propozycja dla " +
+                hold.clientName +
+                ", " +
+                hold.from +
+                "–" +
+                hold.to +
+                ". Edytuj propozycje"
             )}">
             <div class="gcal__event-row">
               <span class="gcal__event-time">${escapeHtml(hold.from)}–${escapeHtml(hold.to)}</span>
@@ -7189,8 +7200,9 @@
 
   function syncProvCalSelection() {
     document.querySelectorAll('[data-role="prov-cal-slot"]').forEach(function (el) {
-      // Duchy propozycji nie podlegają selekcji — są zawsze „włączone”.
-      if (el.getAttribute("data-kind") === "proposal") return;
+      // Duchy / holdy propozycji nie podlegają selekcji wolnego slotu.
+      const kind = el.getAttribute("data-kind");
+      if (kind === "proposal" || kind === "hold") return;
       const on = isProvCalSlotSelected(el);
       el.classList.toggle("gcal__event--selected", on);
       el.setAttribute("aria-pressed", on ? "true" : "false");
@@ -10457,24 +10469,16 @@
     document.querySelectorAll(".prov-cal-add__foot .bottom-nav__summary").forEach(function (summary) {
       const dur = summary.querySelector(".bottom-nav__summary-dur");
       const price = summary.querySelector(".bottom-nav__summary-price");
-      if (isReplyPatch) {
-        const n = (draft.proposals || []).length;
-        summary.classList.toggle("bottom-nav__summary--empty", n < 1);
-        if (dur) {
-          dur.textContent = n < 1 ? "—" : String(n) + " " + proposalCountLabel(n);
-        }
-      } else {
-        summary.classList.toggle("bottom-nav__summary--empty", !hasSvc);
-        if (dur) dur.textContent = !hasSvc ? "—" : formatDuration(totals.duration || 0);
-        if (price) {
-          price.textContent = !hasSvc
+      summary.classList.toggle("bottom-nav__summary--empty", !hasSvc);
+      if (dur) dur.textContent = !hasSvc ? "—" : formatDuration(totals.duration || 0);
+      if (price) {
+        price.textContent = !hasSvc
+          ? "—"
+          : totals.onlyDuration
             ? "—"
-            : totals.onlyDuration
-              ? "—"
-              : totals.hasNullPrice
-                ? "wycena indyw."
-                : formatPrice(totals.price);
-        }
+            : totals.hasNullPrice
+              ? "wycena indyw."
+              : formatPrice(totals.price);
       }
     });
     document.querySelectorAll('[data-role="prov-cal-add-cta"]').forEach(function (cta) {
@@ -11370,26 +11374,13 @@
               }
             </div>`;
 
-    const replyCount = isReply ? draft.proposals.length || 0 : 0;
-    const replyEmpty = isReply ? replyCount < 1 : !hasSvc;
+    const summaryEmpty = !hasSvc;
     const footHtml = `<div class="prov-cal-add__foot booking-confirm-bar">
-            <div class="bottom-nav__summary${replyEmpty ? " bottom-nav__summary--empty" : ""}">
+            <div class="bottom-nav__summary${summaryEmpty ? " bottom-nav__summary--empty" : ""}">
               <span class="bottom-nav__summary-label">${isReply ? "Wybrane:" : "Suma:"}</span>
               <div class="bottom-nav__summary-meta">
-                <span class="bottom-nav__summary-dur">${
-                  isReply
-                    ? escapeHtml(
-                        replyEmpty
-                          ? "—"
-                          : String(replyCount) + " " + proposalCountLabel(replyCount)
-                      )
-                    : escapeHtml(durText)
-                }</span>
-                ${
-                  isReply
-                    ? ""
-                    : `<span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>`
-                }
+                <span class="bottom-nav__summary-dur">${escapeHtml(durText)}</span>
+                <span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>
               </div>
             </div>
             <button type="button" class="bottom-nav__book" data-role="prov-cal-add-cta" data-action="${saveAction}"${saveAttrs}${
@@ -16754,6 +16745,9 @@
 
   function testLogin(startRole) {
     const role = INSTANCES.indexOf(startRole) !== -1 ? startRole : "client";
+    if (window.LokalnieApi && window.LokalnieApi.clearAuthToken) {
+      window.LokalnieApi.clearAuthToken();
+    }
     window.AppState.loggedIn = true;
     window.AppState.activeRole = role;
     window.AppState.screen[role] = DEFAULT_SCREEN[role];
@@ -16763,7 +16757,60 @@
     showPage("app");
   }
 
+  function googleLogin() {
+    if (!window.LokalnieApi || !window.LokalnieApi.googleLoginUrl) {
+      showToast("API niedostępne — użyj logowania demo.");
+      return;
+    }
+    window.location.href = window.LokalnieApi.googleLoginUrl(window.location.origin + "/");
+  }
+
+  function finishGoogleLogin(token) {
+    if (!token || !window.LokalnieApi) return false;
+    window.LokalnieApi.setAuthToken(token);
+    window.AppState.loggedIn = true;
+    window.AppState.activeRole = "client";
+    window.AppState.screen.client = DEFAULT_SCREEN.client;
+    saveState();
+    updateAppHeader("client");
+    showPage("app");
+    renderAll();
+    void window.LokalnieApi.syncFromServer().then(function (result) {
+      if (result && result.ok) {
+        if (window.AppState.clientProfile && window.AppState.clientProfile.name) {
+          /* keep */
+        }
+        // Jeśli konto ma profil usługodawcy — zostaw rolę client; user przełączy w menu.
+        saveState();
+        renderAll();
+        showToast("Zalogowano przez Google.");
+      } else {
+        showToast("Zalogowano, ale synchronizacja API nie wyszła.");
+      }
+    });
+    return true;
+  }
+
+  function consumeAuthHash() {
+    try {
+      const hash = (window.location.hash || "").replace(/^#/, "");
+      if (!hash) return false;
+      const params = new URLSearchParams(hash);
+      const token = params.get("access_token");
+      if (!token) return false;
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+      return finishGoogleLogin(token);
+    } catch (err) {
+      return false;
+    }
+  }
+
   function logout() {
+    if (window.LokalnieApi && window.LokalnieApi.logout) {
+      void window.LokalnieApi.logout();
+    } else if (window.LokalnieApi && window.LokalnieApi.clearAuthToken) {
+      window.LokalnieApi.clearAuthToken();
+    }
     window.AppState.loggedIn = false;
     window.AppState.activeRole = null;
     saveState();
@@ -16868,6 +16915,7 @@
     saveState: saveState,
     resetDemo: resetDemo,
     testLogin: testLogin,
+    googleLogin: googleLogin,
     logout: logout,
     switchRole: switchRole,
     showPage: showPage,
@@ -16934,6 +16982,12 @@
       const slot = event.target.closest('[data-role="prov-cal-slot"]');
       if (slot) {
         event.preventDefault();
+        const kind = slot.getAttribute("data-kind");
+        if (kind === "hold") {
+          const requestId = slot.getAttribute("data-request-id");
+          if (requestId) proposeOpen(requestId);
+          return;
+        }
         const sel = selectionFromSlotEl(slot);
         if (sel && sel.kind === "booking" && sel.bookingId) openProvCalEdit(sel.bookingId);
         else selectProvCalSlot(sel);
@@ -17050,6 +17104,7 @@
     switch (a) {
       case "reset-demo": resetDemo(); break;
       case "test-login": event.preventDefault(); testLogin(d.target); break;
+      case "google-login": event.preventDefault(); googleLogin(); break;
       case "open-my-calendar": event.preventDefault(); openMyCalendar(); break;
       case "logout": logout(); break;
       case "go-home":
@@ -17645,7 +17700,16 @@
         event.preventDefault();
         toggleReplyProposalsOpen();
         break;
-      case "propose-open": proposeOpen(d.requestId); break;
+      case "propose-open":
+        event.preventDefault();
+        // Pointerup na holdzie w kalendarzu już wywołał proposeOpen — uniknij podwójnego otwarcia.
+        if (window._provCalSlotIgnoreClick || window._provCalResizeIgnoreClick) {
+          window._provCalSlotIgnoreClick = false;
+          window._provCalResizeIgnoreClick = false;
+          break;
+        }
+        proposeOpen(d.requestId);
+        break;
       case "reject-request":
         event.preventDefault();
         event.stopPropagation();
@@ -19072,10 +19136,13 @@
         const sel = selectionFromSlotEl(drag.el);
         const tapKind = drag.kind;
         const tapSlotId = drag.slotId;
+        const tapRequestId = drag.el.getAttribute("data-request-id");
         resetDrag();
-        // Tap na ducha obsługujemy tu — klik stłumiony flagą, by nie odpalić się 2× ani po dragu.
+        // Tap na ducha / hold obsługujemy tu — klik stłumiony flagą, by nie odpalić się 2× ani po dragu.
         if (tapKind === "proposal") {
           if (tapSlotId) setProvCalAddSlot(tapSlotId);
+        } else if (tapKind === "hold" && tapRequestId) {
+          proposeOpen(tapRequestId);
         } else if (sel && sel.kind === "booking" && sel.bookingId) openProvCalEdit(sel.bookingId);
         else if (sel && sel.kind === "free") selectProvCalSlot(sel);
         else selectProvCalSlot(sel);
@@ -19912,9 +19979,13 @@
     bindAvailDaySwipe();
     bindAvailTimePickers();
     loadState();
+    // Callback Google OAuth: #access_token=...
+    const justAuthed = consumeAuthHash();
     // Najpierw wejdź w appę — inaczej przy opóźnionym/starym JS widać landing „Zaloguj się”.
     try {
-      if (window.AppState.loggedIn && window.AppState.activeRole) {
+      if (justAuthed) {
+        /* finishGoogleLogin już pokazał app */
+      } else if (window.AppState.loggedIn && window.AppState.activeRole) {
         updateAppHeader(window.AppState.activeRole);
         showPage("app");
         renderAll();

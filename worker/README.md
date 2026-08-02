@@ -7,9 +7,28 @@ Backend Lokalnie na Cloudflare Workers (Free) + D1 (EU) + R2.
 - Produkcja: https://api.lokalnie.app
 - Health: https://api.lokalnie.app/health
 
-## Auth (tymczasowo — demo)
+## Auth
 
-OAuth Google/Facebook później. Na razie:
+### Google OAuth
+
+1. Secrety (raz):
+   ```bash
+   npx wrangler secret put GOOGLE_CLIENT_ID
+   npx wrangler secret put GOOGLE_CLIENT_SECRET
+   ```
+2. Redirect URI w Google Cloud:
+   - `https://api.lokalnie.app/auth/google/callback`
+   - `http://localhost:8787/auth/google/callback` (lokalnie)
+3. Start: `GET /auth/google?return_to=https://lokalnie.app/`
+4. Po sukcesie redirect na front z `#access_token=...`
+5. Kolejne requesty: `Authorization: Bearer <token>`
+6. Wylogowanie: `POST /auth/logout`
+
+`state` OAuth jest podpisany HMAC (`GOOGLE_CLIENT_SECRET`) — bez cookie, żeby uniknąć `invalid_oauth_state` przy 302.
+
+Lokalnie (opcjonalnie) skopiuj `.dev.vars.example` → `.dev.vars`.
+
+### Demo (E2E / makieta)
 
 ```http
 X-Demo-User: demo
@@ -70,4 +89,5 @@ npm run deploy
 ## Co wymaga Ciebie później
 
 1. **Resend** — konto + domena `lokalnie.app` (SPF/DKIM) → prawdziwa wysyłka maili  
-2. **Google / Facebook OAuth** — Client ID/Secret → zamiana trybu demo  
+2. **Google OAuth** — przełączenie consent screen z testowego na produkcję (gdy gotowe)  
+3. **Facebook OAuth** — opcjonalnie później

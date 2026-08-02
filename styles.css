@@ -11316,12 +11316,12 @@ body.client-sheet-open {
   background: color-mix(in srgb, var(--event-accent) 55%, var(--text-muted));
 }
 
-/* Hold propozycji na prośbę — zajęty slot, czekamy na wybór klienta. */
+/* Hold propozycji na prośbę — zajęty slot; klik otwiera edycję propozycji. */
 .gcal__event--propose-hold {
   opacity: 0.78;
   outline: 1.5px dashed color-mix(in srgb, var(--warning) 65%, transparent);
   outline-offset: 1px;
-  pointer-events: none;
+  cursor: pointer;
 }
 
 .gcal__event--propose-hold::before {

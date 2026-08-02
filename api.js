@@ -1,10 +1,44 @@
-// api.js — klient API Lokalnie (tryb demo: X-Demo-User).
+// api.js — klient API Lokalnie (sesja OAuth albo tryb demo: X-Demo-User).
 // Wystawia: window.LokalnieApi
 (function () {
   "use strict";
 
   const BASE = "https://api.lokalnie.app";
+  const TOKEN_KEY = "lokalnie.authToken";
   const DEMO_HEADER = { "X-Demo-User": "demo" };
+
+  function getAuthToken() {
+    try {
+      return localStorage.getItem(TOKEN_KEY) || "";
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function setAuthToken(token) {
+    try {
+      if (token) localStorage.setItem(TOKEN_KEY, token);
+      else localStorage.removeItem(TOKEN_KEY);
+    } catch (err) {
+      /* ignore */
+    }
+  }
+
+  function clearAuthToken() {
+    setAuthToken("");
+  }
+
+  function authHeaders() {
+    const token = getAuthToken();
+    if (token) return { Authorization: "Bearer " + token };
+    return Object.assign({}, DEMO_HEADER);
+  }
+
+  function googleLoginUrl(returnTo) {
+    const u = new URL(BASE + "/auth/google");
+    u.searchParams.set("return_to", returnTo || window.location.origin + window.location.pathname);
+    return u.toString();
+  }
 
   /** Mapowanie ID usługodawcy: mock frontu ↔ D1. */
   const APP_TO_API_PROVIDER = {
@@ -30,7 +64,7 @@
 
   async function request(path, opts) {
     opts = opts || {};
-    const headers = Object.assign({}, DEMO_HEADER, opts.headers || {});
+    const headers = Object.assign({}, authHeaders(), opts.headers || {});
     if (opts.json) {
       headers["Content-Type"] = "application/json";
     }
@@ -129,7 +163,8 @@
     try {
       const me = await request("/me");
       const apiProviderId = me.provider && me.provider.id;
-      const appProviderId = toAppProviderId(apiProviderId) || "grzesiu-barber";
+      const appProviderId = toAppProviderId(apiProviderId) || (apiProviderId ? apiProviderId : "grzesiu-barber");
+      let clients = [];
 
       if (me.user) {
         if (!window.AppState.clientProfile || typeof window.AppState.clientProfile !== "object") {
@@ -142,16 +177,25 @@
         if (me.user.avatarKey && me.user.id) {
           // Avatar z R2 — jeśli mamy media id w stanie, zostaw; inaczej zostaw URL jeśli już ustawiony.
         }
+        if (me.user.roles && me.user.roles.provider && window.AppState.activeRole === "client") {
+          /* klient z rolą provider — przełączenie ręczne w menu */
+        }
       }
 
-      const clientsRes = await request("/provider/me/clients");
-      const clients = (clientsRes.clients || []).map(mapClientToApp).filter(Boolean);
-      if (!window.AppState.providerClients || typeof window.AppState.providerClients !== "object") {
-        window.AppState.providerClients = {};
-      }
-      window.AppState.providerClients[appProviderId] = clients;
-      if (apiProviderId && apiProviderId !== appProviderId) {
-        window.AppState.providerClients[apiProviderId] = clients.slice();
+      if (apiProviderId) {
+        try {
+          const clientsRes = await request("/provider/me/clients");
+          clients = (clientsRes.clients || []).map(mapClientToApp).filter(Boolean);
+          if (!window.AppState.providerClients || typeof window.AppState.providerClients !== "object") {
+            window.AppState.providerClients = {};
+          }
+          window.AppState.providerClients[appProviderId] = clients;
+          if (apiProviderId !== appProviderId) {
+            window.AppState.providerClients[apiProviderId] = clients.slice();
+          }
+        } catch (err) {
+          console.warn("[LokalnieApi] clients sync skipped", err);
+        }
       }
 
       const bookingsRes = await request("/bookings");
@@ -178,7 +222,14 @@
 
       window.AppState._apiSyncedAt = new Date().toISOString();
       window.AppState._apiOnline = true;
-      return { ok: true, appProviderId: appProviderId, clients: clients.length, bookings: serverBookings.length, requests: serverRequests.length };
+      return {
+        ok: true,
+        appProviderId: appProviderId,
+        hasProvider: !!apiProviderId,
+        clients: clients.length,
+        bookings: serverBookings.length,
+        requests: serverRequests.length,
+      };
     } catch (err) {
       console.warn("[LokalnieApi] sync failed", err);
       window.AppState._apiOnline = false;
@@ -348,9 +399,23 @@
     }
   }
 
+  async function logout() {
+    try {
+      await request("/auth/logout", { method: "POST" });
+    } catch (err) {
+      /* ignore */
+    }
+    clearAuthToken();
+  }
+
   window.LokalnieApi = {
     BASE: BASE,
     enabled: true,
+    TOKEN_KEY: TOKEN_KEY,
+    getAuthToken: getAuthToken,
+    setAuthToken: setAuthToken,
+    clearAuthToken: clearAuthToken,
+    googleLoginUrl: googleLoginUrl,
     toAppProviderId: toAppProviderId,
     toApiProviderId: toApiProviderId,
     mediaUrl: mediaUrl,
@@ -362,5 +427,6 @@
     proposeRequestFromApp: proposeRequestFromApp,
     acceptRequestFromApp: acceptRequestFromApp,
     uploadAvatar: uploadAvatar,
+    logout: logout,
   };
 })();
