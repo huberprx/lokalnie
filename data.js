@@ -108,6 +108,7 @@
         futureDays: 30,
         minLeadHours: 2,
         cancelHours: 24,
+        proposeHoldHours: 24,
         policy: "Anulowanie lub przełożenie wizyty możliwe najpóźniej 24 h przed terminem. Późniejsze zmiany prosimy uzgodnić telefonicznie.",
       },
       locations: [

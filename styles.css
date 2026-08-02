@@ -7897,7 +7897,8 @@ button.provider-info-pop__line {
 }
 
 /* Panel „Nowy termin” / prośba / edycja — tylko nad pulpitem (szerokość lewej kolumny). */
-.prov-desk > .prov-cal-add {
+.prov-desk > .prov-cal-add,
+.prov-desk > .prov-cal-reschedule {
   right: auto;
   width: min(24rem, 36%);
   min-width: 18rem;
@@ -8122,7 +8123,8 @@ button.provider-info-pop__line {
 }
 
 /* Bez pulpitu panel wraca na pełną szerokość (jak na mobile). */
-.device-frame[data-view="mobile"] .prov-desk > .prov-cal-add {
+.device-frame[data-view="mobile"] .prov-desk > .prov-cal-add,
+.device-frame[data-view="mobile"] .prov-desk > .prov-cal-reschedule {
   right: 0;
   width: 100%;
   min-width: 0;
@@ -8315,7 +8317,7 @@ button.provider-info-pop__line {
   padding: 0 0 calc(1rem + var(--bottom-nav-clearance));
 }
 
-/* Stos: kłódka nad FAB „+” (prawy dolny róg kalendarza). */
+/* Stos: kolejka zmian / FAB „+” (prawy dolny róg kalendarza). */
 .prov-cal-fab-stack {
   position: absolute;
   right: max(0.85rem, env(safe-area-inset-right, 0px));
@@ -8327,45 +8329,213 @@ button.provider-info-pop__line {
   gap: 0.55rem;
 }
 
-/* Kłódka — okrągły przycisk nad plusem (dwa stany: zamknięta / otwarta). */
-.prov-cal-fab-lock {
+body.prov-cal-dragging .prov-cal-fab-stack {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+/* Kolejka niewysłanych zmian terminu — ikona listy + numerek. */
+.prov-cal-fab-queue {
   appearance: none;
   -webkit-appearance: none;
+  position: relative;
   width: 2.85rem;
   height: 2.85rem;
   margin: 0;
   padding: 0;
-  border: 1.5px solid color-mix(in srgb, var(--border) 70%, var(--text-muted));
+  border: 1.5px solid color-mix(in srgb, var(--accent-provider) 45%, var(--border));
   border-radius: 999px;
-  background: color-mix(in srgb, var(--surface) 92%, var(--surface-2));
-  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 88%, var(--accent-provider-soft));
+  color: var(--accent-provider);
   box-shadow: 0 6px 16px color-mix(in srgb, var(--text) 10%, transparent);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.14s ease, box-shadow 0.14s ease, background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+  transition: transform 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
 }
 
-.prov-cal-fab-lock:hover {
-  background: var(--surface);
-  border-color: color-mix(in srgb, var(--text-muted) 55%, var(--border));
+.prov-cal-fab-queue:hover {
+  background: color-mix(in srgb, var(--surface) 70%, var(--accent-provider-soft));
 }
 
-.prov-cal-fab-lock:active {
+.prov-cal-fab-queue:active {
   transform: scale(0.94);
 }
 
-.prov-cal-fab-lock__svg {
-  width: 1.2rem;
-  height: 1.2rem;
+.prov-cal-fab-queue__svg {
+  width: 1.15rem;
+  height: 1.15rem;
   display: block;
 }
 
-/* Otwarta kłódka: rygiel uniesiony — „kłódka” bez kolorowego wypełnienia. */
-.prov-cal-fab-lock.is-unlocked .prov-cal-fab-lock__shackle {
-  transform: translateY(-1.6px) rotate(-7deg);
-  transform-origin: 8px 10px;
+.prov-cal-fab-queue__badge {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.2rem;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.28rem;
+  border-radius: 999px;
+  background: var(--accent-provider);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 750;
+  line-height: 1.15rem;
+  text-align: center;
+  box-sizing: border-box;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* Panel kolejki propozycji zmiany terminu (bottom sheet). */
+.prov-cal-reschedule {
+  position: absolute;
+  inset: 0;
+  z-index: 130;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.prov-cal-reschedule__sheet {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  max-height: min(72%, 28rem);
+  margin: 0;
+  padding: 0 0 calc(0.85rem + env(safe-area-inset-bottom, 0px));
+  border-radius: 18px 18px 0 0;
+  background: var(--surface);
+  box-shadow: 0 -10px 36px rgba(15, 23, 42, 0.16);
+  --accent: var(--accent-provider);
+  --accent-soft: var(--accent-provider-soft);
+}
+
+.prov-cal-reschedule--enter .prov-cal-reschedule__sheet {
+  animation: prov-cal-add-up 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.prov-cal-reschedule__head {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  align-items: center;
+  min-height: 40px;
+  gap: 0.25rem;
+  padding: 0.35rem 0.85rem 0;
+  flex-shrink: 0;
+}
+
+.prov-cal-reschedule__title {
+  grid-column: 2;
+  justify-self: center;
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 750;
+  color: var(--text);
+  text-align: center;
+}
+
+.prov-cal-reschedule__close {
+  appearance: none;
+  -webkit-appearance: none;
+  grid-column: 3;
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.prov-cal-reschedule__hint {
+  margin: 0.15rem 0.95rem 0.55rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.prov-cal-reschedule__list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0.85rem;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-height: 0;
+}
+
+.prov-cal-reschedule__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
+}
+
+.prov-cal-reschedule__name {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.prov-cal-reschedule__svc {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.prov-cal-reschedule__times {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.4rem;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.prov-cal-reschedule__old {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.prov-cal-reschedule__arrow {
+  color: var(--text-muted);
+}
+
+.prov-cal-reschedule__new {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.prov-cal-reschedule__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.prov-cal-reschedule__footer {
+  flex-shrink: 0;
+  padding: 0.75rem 0.85rem 0;
+}
+
+.prov-cal-reschedule__footer .btn {
+  width: 100%;
 }
 
 /* FAB „+” — otwiera panel nowego terminu (absolute; w stosie: relative). */
@@ -10058,6 +10228,7 @@ body.client-sheet-open {
   color: var(--accent-provider);
 }
 
+/* Stopka panelu „+” — ten sam układ/typografia co pasek klienta (.booking-confirm-bar). */
 .prov-cal-add__foot.booking-confirm-bar {
   position: relative;
   flex-shrink: 0;
@@ -10066,15 +10237,54 @@ body.client-sheet-open {
   gap: 0.55rem;
   width: 100%;
   margin: 0;
-  padding: 0.45rem var(--prov-cal-add-pad-x) calc(0.45rem + env(safe-area-inset-bottom, 0px));
-  border-top: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
-  background: var(--surface);
-  box-shadow: none;
+  padding: 0.45rem var(--prov-cal-add-pad-x);
+  padding-bottom: calc(0.45rem + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--border);
+  background: #fff;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.05);
 }
 
 .prov-cal-add__foot .bottom-nav__summary {
   flex: 0 1 auto;
   min-width: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.prov-cal-add__foot .bottom-nav__summary-label {
+  flex-shrink: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  line-height: 1.1;
+}
+
+.prov-cal-add__foot .bottom-nav__summary-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  line-height: 1.1;
+  min-width: 0;
+  margin-left: 0.35rem;
+  margin-right: 0.45rem;
+}
+
+.prov-cal-add__foot .bottom-nav__summary-dur {
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.prov-cal-add__foot .bottom-nav__summary-price {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text);
+  white-space: nowrap;
 }
 
 .prov-cal-add__foot .bottom-nav__book {
@@ -11094,6 +11304,28 @@ body.client-sheet-open {
 
 .gcal__event--proposed::before {
   background: color-mix(in srgb, var(--event-accent) 70%, var(--text-muted));
+}
+
+/* Szkic zmiany terminu — jeszcze niewysłany do klienta. */
+.gcal__event--reschedule-draft {
+  outline: 1.5px dashed color-mix(in srgb, var(--accent-provider) 55%, transparent);
+  outline-offset: 1px;
+}
+
+.gcal__event--reschedule-draft::before {
+  background: color-mix(in srgb, var(--event-accent) 55%, var(--text-muted));
+}
+
+/* Hold propozycji na prośbę — zajęty slot, czekamy na wybór klienta. */
+.gcal__event--propose-hold {
+  opacity: 0.78;
+  outline: 1.5px dashed color-mix(in srgb, var(--warning) 65%, transparent);
+  outline-offset: 1px;
+  pointer-events: none;
+}
+
+.gcal__event--propose-hold::before {
+  background: color-mix(in srgb, var(--warning) 70%, var(--event-accent, var(--text-muted)));
 }
 
 .gcal__event--cancelled {
@@ -12631,6 +12863,20 @@ body.prov-cal-resizing * {
   color: var(--text);
 }
 
+.visit-card--client .visit-card__reschedule {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.propose-hold-note {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+  font-weight: 650;
+  color: var(--warning);
+  line-height: 1.35;
+}
+
 .visit-card--client .visit-card__svc {
   font-size: 0.82rem;
   font-weight: 500;
@@ -12812,6 +13058,21 @@ body.prov-cal-resizing * {
 
 .visit-card__actions--request {
   margin-top: 0.65rem;
+}
+
+/* CTA prośby — ten sam złoty co pasek statusu (pending / request). */
+.visit-card--request .visit-card__actions--request .btn--primary {
+  background: var(--warning);
+  color: #fff;
+  box-shadow: none;
+}
+
+.visit-card--request .visit-card__actions--request .btn--primary:hover {
+  background: color-mix(in srgb, var(--warning) 88%, #000);
+}
+
+.visit-card--request .visit-card__actions--request .btn--primary:active {
+  background: color-mix(in srgb, var(--warning) 78%, #000);
 }
 
 /* Agenda pulpitu: nagłówek dnia — same godziny nie mówią, o który dzień chodzi. */
@@ -15597,6 +15858,10 @@ body.prov-cal-resizing * {
   font-size: 0.78rem;
   color: var(--text-muted);
   line-height: 1.35;
+}
+
+.settings__help--tight {
+  margin: -0.15rem 0 0.35rem;
 }
 
 .settings__cap {

@@ -106,8 +106,13 @@
       provCalSearchOpen: false,
       provCalSearchQ: "",
       provCalSelection: null,
-      /** Kalendarz: kłódka nad FAB — true = zamknięta (stan UI; funkcja później). */
-      provCalLocked: true,
+      /**
+       * Szkice zmiany terminu (drag / edycja) — jeszcze niewysłane do klienta.
+       * [{ bookingId, origDateISO, origFrom, origTo, newDateISO, newFrom, newTo }]
+       */
+      provCalRescheduleQueue: [],
+      /** Panel kolejki propozycji zmiany terminu. */
+      provCalRescheduleOpen: false,
       /** Panel „+” → nowy termin z kalendarza usługodawcy. */
       provCalAddOpen: false,
       /** Panel „+” zwinięty (tylko pasek) — draft zostaje. */
@@ -374,9 +379,20 @@
     { v: 24, label: "24 godziny przed" },
     { v: 48, label: "48 godzin przed" },
   ];
+  /** Czas blokady slotu na akceptację propozycji (0 = bez limitu). */
+  const BOOKING_PROPOSE_HOLD_OPTS = [
+    { v: 1, label: "1 godzina" },
+    { v: 6, label: "6 godzin" },
+    { v: 12, label: "12 godzin" },
+    { v: 24, label: "24 godziny" },
+    { v: 48, label: "48 godzin" },
+    { v: 0, label: "Bez limitu" },
+  ];
 
   function ensureProviderBookingRules(provider) {
-    if (!provider) return { futureDays: 60, minLeadHours: 2, cancelHours: 24, policy: "" };
+    if (!provider) {
+      return { futureDays: 60, minLeadHours: 2, cancelHours: 24, proposeHoldHours: 24, policy: "" };
+    }
     if (!provider.bookingRules || typeof provider.bookingRules !== "object") provider.bookingRules = {};
     const r = provider.bookingRules;
     if (!isFinite(Number(r.futureDays))) r.futureDays = 60;
@@ -385,10 +401,170 @@
     else r.minLeadHours = Math.max(0, Math.floor(Number(r.minLeadHours)));
     if (!isFinite(Number(r.cancelHours))) r.cancelHours = 24;
     else r.cancelHours = Math.max(0, Math.floor(Number(r.cancelHours)));
+    if (!isFinite(Number(r.proposeHoldHours))) r.proposeHoldHours = 24;
+    else r.proposeHoldHours = Math.max(0, Math.floor(Number(r.proposeHoldHours)));
     if (typeof r.policy !== "string") r.policy = r.policy ? String(r.policy) : "";
     if (typeof provider.about !== "string") provider.about = provider.about ? String(provider.about) : "";
     if (typeof provider.website !== "string") provider.website = provider.website ? String(provider.website) : "";
     return r;
+  }
+
+  function applyProposeHoldExpiry(target, provider) {
+    if (!target) return;
+    const hours = ensureProviderBookingRules(provider).proposeHoldHours;
+    if (!hours) {
+      delete target.proposeExpiresAt;
+      return;
+    }
+    target.proposeExpiresAt = new Date(Date.now() + hours * 3600 * 1000).toISOString();
+  }
+
+  function clearProposeHoldExpiry(target) {
+    if (!target) return;
+    delete target.proposeExpiresAt;
+  }
+
+  function isProposeHoldActive(expiresAt) {
+    if (!expiresAt) return true; // bez limitu — hold trwa do decyzji
+    const t = Date.parse(expiresAt);
+    return isFinite(t) && t > Date.now();
+  }
+
+  function formatProposeDeadline(expiresAt) {
+    if (!expiresAt) return "";
+    const d = new Date(expiresAt);
+    if (isNaN(d.getTime())) return "";
+    const dateISO =
+      d.getFullYear() +
+      "-" +
+      pad(d.getMonth() + 1) +
+      "-" +
+      pad(d.getDate());
+    return (
+      "Ważne do " +
+      formatDayWithDow(dateISO) +
+      ", " +
+      pad(d.getHours()) +
+      ":" +
+      pad(d.getMinutes())
+    );
+  }
+
+  function renderProposeHoldNote(expiresAt) {
+    const label = formatProposeDeadline(expiresAt);
+    if (!label || !isProposeHoldActive(expiresAt)) return "";
+    return `<p class="propose-hold-note">${escapeHtml(label)}</p>`;
+  }
+
+  /**
+   * Aktywne holdy z propozycji na prośbę (status proposed, niewygasłe).
+   * Blokują slot innym klientom tak jak wizyta proposed/confirmed.
+   */
+  function activeRequestProposalHolds(providerId, dateISO, exceptRequestId) {
+    const out = [];
+    if (!providerId || !dateISO) return out;
+    (window.AppState.requests || []).forEach(function (req) {
+      if (!req || req.providerId !== providerId) return;
+      if (req.status !== "proposed") return;
+      if (exceptRequestId && req.id === exceptRequestId) return;
+      if (req.proposeExpiresAt && !isProposeHoldActive(req.proposeExpiresAt)) return;
+      (req.proposals || []).forEach(function (prop) {
+        if (!prop || prop.dateISO !== dateISO || !prop.from || !prop.to) return;
+        const from = timeToMinutes(prop.from);
+        const to = timeToMinutes(prop.to);
+        if (!(to > from)) return;
+        out.push({
+          requestId: req.id,
+          proposalId: prop.id,
+          clientName: req.clientName || "Klient",
+          dateISO: prop.dateISO,
+          from: prop.from,
+          to: prop.to,
+          fromMin: from,
+          toMin: to,
+          locationId: prop.locationId || null,
+          locationLabel: prop.locationLabel || "",
+          proposeExpiresAt: req.proposeExpiresAt || null,
+        });
+      });
+    });
+    return out;
+  }
+
+  /** Wygasłe propozycje: zwolnij slot / przywróć stary termin przy zmianie. */
+  function expireStaleProposals() {
+    const now = Date.now();
+    let changed = false;
+
+    (window.AppState.bookings || []).forEach(function (bk) {
+      if (!bk || bk.status !== "proposed" || !bk.proposeExpiresAt) return;
+      const t = Date.parse(bk.proposeExpiresAt);
+      if (!isFinite(t) || t > now) return;
+      if (bk.reschedulePrevDateISO && bk.reschedulePrevFrom && bk.reschedulePrevTo) {
+        bk.dateISO = bk.reschedulePrevDateISO;
+        bk.from = bk.reschedulePrevFrom;
+        bk.to = bk.reschedulePrevTo;
+        delete bk.reschedulePrevDateISO;
+        delete bk.reschedulePrevFrom;
+        delete bk.reschedulePrevTo;
+        bk.status = "confirmed";
+        clearProposeHoldExpiry(bk);
+        pushNotification(
+          "client",
+          (bk.providerName || "Usługodawca") +
+            ": propozycja zmiany terminu wygasła — obowiązuje poprzedni termin."
+        );
+        pushNotification(
+          "provider",
+          (bk.clientName || "Klient") +
+            ": nie potwierdził(a) zmiany terminu w terminie — przywrócono poprzedni."
+        );
+      } else {
+        bk.status = "pending";
+        bk.dateISO = "";
+        bk.from = "";
+        bk.to = "";
+        clearProposeHoldExpiry(bk);
+        pushNotification(
+          "client",
+          (bk.providerName || "Usługodawca") + ": propozycja terminu wygasła — slot zwolniony."
+        );
+      }
+      changed = true;
+    });
+
+    (window.AppState.requests || []).forEach(function (req) {
+      if (!req || req.status !== "proposed" || !req.proposeExpiresAt) return;
+      const t = Date.parse(req.proposeExpiresAt);
+      if (!isFinite(t) || t > now) return;
+      req.proposals = [];
+      req.acceptedProposalId = null;
+      req.status = "pending";
+      clearProposeHoldExpiry(req);
+      const bk = (window.AppState.bookings || []).find(function (b) {
+        return b && b.requestId === req.id;
+      });
+      if (bk && bk.status === "proposed" && !bk.reschedulePrevDateISO) {
+        bk.status = "pending";
+        bk.dateISO = "";
+        bk.from = "";
+        bk.to = "";
+        clearProposeHoldExpiry(bk);
+      }
+      pushNotification(
+        "client",
+        (req.providerName || "Usługodawca") +
+          ": propozycje terminów wygasły — możesz poczekać na nowe lub anulować prośbę."
+      );
+      pushNotification(
+        "provider",
+        (req.clientName || "Klient") +
+          ": nie wybrał(a) terminu w czasie blokady — propozycje wygasły."
+      );
+      changed = true;
+    });
+
+    return changed;
   }
 
   function providerCancelPolicyText(provider) {
@@ -2896,7 +3072,24 @@
           typeof stored.provCalPickerMonth === "string" ? stored.provCalPickerMonth : base.provCalPickerMonth,
         provCalSearchOpen: !!stored.provCalSearchOpen,
         provCalSearchQ: typeof stored.provCalSearchQ === "string" ? stored.provCalSearchQ : base.provCalSearchQ,
-        provCalLocked: stored.provCalLocked !== false,
+        provCalRescheduleQueue: Array.isArray(stored.provCalRescheduleQueue)
+          ? stored.provCalRescheduleQueue
+              .filter(function (item) {
+                return item && item.bookingId && item.origDateISO && item.newDateISO;
+              })
+              .map(function (item) {
+                return {
+                  bookingId: String(item.bookingId),
+                  origDateISO: String(item.origDateISO),
+                  origFrom: String(item.origFrom || ""),
+                  origTo: String(item.origTo || ""),
+                  newDateISO: String(item.newDateISO),
+                  newFrom: String(item.newFrom || ""),
+                  newTo: String(item.newTo || ""),
+                };
+              })
+          : [],
+        provCalRescheduleOpen: false,
         provCalAddOpen: false,
         provCalAddMinimized: false,
         provCalAddDraft: null,
@@ -3047,8 +3240,15 @@
         bk.dateISO === dateISO &&
         (bk.status === "confirmed" || bk.status === "proposed")
       ) {
+        // Wygasły hold proposed nie blokuje (sweep i tak go zdejmie).
+        if (bk.status === "proposed" && bk.proposeExpiresAt && !isProposeHoldActive(bk.proposeExpiresAt)) {
+          return;
+        }
         busy.push([timeToMin(bk.from), timeToMin(bk.to)]);
       }
+    });
+    activeRequestProposalHolds(provider.id, dateISO).forEach(function (hold) {
+      busy.push([hold.fromMin, hold.toMin]);
     });
 
     const slots = [];
@@ -4716,7 +4916,8 @@
     const extra = waiting
       ? `${days.length ? renderRequestDayBadges(days) : ""}
          <p class="request-card__note">Usługodawca odeśle konkretne godziny do wyboru.</p>`
-      : `<p class="request-card__note">Wybierz jeden termin — pozostałe propozycje przepadną.</p>
+      : `${renderProposeHoldNote(r.proposeExpiresAt)}
+         <p class="request-card__note">Wybierz jeden termin — pozostałe propozycje przepadną.</p>
          <ul class="proposal-list proposal-list--pick">
            ${proposals
              .map(function (c) {
@@ -4796,8 +4997,11 @@
       statusFilters.length === 1 && statusFilters[0] === "cancelled";
     const rejectedOnly =
       statusFilters.length === 1 && statusFilters[0] === "rejected";
-    const rangeOnly = upcomingOnly || pastOnly || cancelledOnly || rejectedOnly;
-    // Oczekujące bez daty (prośba o termin) — przy filtrze „Czekające na potwierdzenie”.
+    // „Czekające…” jak pozostałe zakładki zakresowe — bez filtrowania po wybranym dniu
+    // (propozycja zmiany / oczekująca wizyta ma być widoczna niezależnie od daty w pasku).
+    const rangeOnly =
+      upcomingOnly || pastOnly || cancelledOnly || rejectedOnly || waitingOnly;
+    // Oczekujące bez daty (prośba o termin) — nie wchodzą do clientVisits() (wymaga dateISO).
     const waitingUndated = waitingOnly
       ? (window.AppState.bookings || []).filter(function (b) {
           return (
@@ -5275,7 +5479,16 @@
     const timeRange = b.from && b.to ? `${b.from}–${b.to}` : b.from || "";
     const timeLabel = timeRange || (b.status === "pending" || b.status === "proposed" ? "Do ustalenia" : "");
     const servicesLabel = (b.serviceNames || []).join(", ");
-    const statusLabel = STATUS_LABEL[b.status] || b.status;
+    const statusLabel =
+      b.status === "proposed" && b.reschedulePrevFrom
+        ? "Propozycja zmiany"
+        : STATUS_LABEL[b.status] || b.status;
+    const rescheduleNote =
+      b.status === "proposed" && b.reschedulePrevDateISO && b.reschedulePrevFrom && b.reschedulePrevTo
+        ? formatRescheduleWhen(b.reschedulePrevDateISO, b.reschedulePrevFrom, b.reschedulePrevTo) +
+          " → " +
+          formatRescheduleWhen(b.dateISO, b.from, b.to)
+        : "";
 
     return `
       <div class="visit-card visit-card--client" data-booking-id="${escapeHtml(b.id)}" data-status="${escapeHtml(b.status)}">
@@ -5294,6 +5507,12 @@
               }
               <span class="status-badge" data-status="${escapeHtml(b.status)}">${escapeHtml(statusLabel)}</span>
             </div>
+            ${
+              rescheduleNote
+                ? `<div class="visit-card__reschedule">${escapeHtml(rescheduleNote)}</div>`
+                : ""
+            }
+            ${b.status === "proposed" ? renderProposeHoldNote(b.proposeExpiresAt) : ""}
             <div class="visit-card__name">${escapeHtml(b.providerName)}</div>
             ${servicesLabel ? `<div class="visit-card__svc">${escapeHtml(servicesLabel)}</div>` : ""}
             ${placeLine ? `<div class="visit-card__place">${escapeHtml(placeLine)}</div>` : ""}
@@ -5616,6 +5835,7 @@
                   : "Bez wskazanych dni — możesz zaproponować dowolny termin."
               }</p>`
         }
+        ${isProposed ? renderProposeHoldNote(r.proposeExpiresAt) : ""}
         ${
           isRejected
             ? ""
@@ -6051,6 +6271,7 @@
                 : ""
           }
         </div>
+        ${b.status === "proposed" ? renderProposeHoldNote(b.proposeExpiresAt) : ""}
         <div class="visit-card__name">${escapeHtml(b.clientName || "Klient")}</div>
         <ul class="visit-card__services" aria-label="Zamówione usługi">
           ${services.map((serviceName) => `<li>${escapeHtml(serviceName)}</li>`).join("")}
@@ -6342,6 +6563,7 @@
         const densityCls = provCalDensityCls(height);
         const availBlock = resolveAvailBlockForRange(dateISO, clampedFrom, clampedTo);
         const toneCls = availBlock && availBlock.locationId ? " " + locationToneClass(myProvider(), availBlock.locationId) : "";
+        const pendingReschedule = isBookingInRescheduleQueue(b.id);
         const locAttr =
           availBlock && availBlock.locationId
             ? ` data-location-id="${escapeHtml(String(availBlock.locationId))}"`
@@ -6349,14 +6571,25 @@
         return `
           <article class="gcal__event gcal__event--${escapeHtml(b.status)}${densityCls ? " " + densityCls : ""}${
             dim ? " gcal__event--dim" : ""
-          }${selected ? " gcal__event--selected" : ""}${toneCls}"
+          }${selected ? " gcal__event--selected" : ""}${
+            pendingReschedule ? " gcal__event--reschedule-draft" : ""
+          }${toneCls}"
             style="top:${top}px;height:${height}px"
             data-role="prov-cal-slot" data-kind="booking" data-date="${escapeHtml(dateISO)}"
             data-action="select-prov-cal-slot" data-booking-id="${escapeHtml(b.id)}"
             data-from-min="${clampedFrom}" data-to-min="${clampedTo}"${locAttr}
             data-search="${escapeHtml(hay)}" role="button" tabindex="0"
             aria-pressed="${selected ? "true" : "false"}"
-            aria-label="${escapeHtml(svc + ", " + client + ", " + b.from + "–" + b.to)}">
+            aria-label="${escapeHtml(
+              svc +
+                ", " +
+                client +
+                ", " +
+                b.from +
+                "–" +
+                b.to +
+                (pendingReschedule ? ", zmiana do wysłania" : "")
+            )}">
             <div class="gcal__event-row">
               <span class="gcal__event-time">${escapeHtml(b.from)}–${escapeHtml(b.to)}</span>
               <span class="gcal__event-title">${escapeHtml(svc)}</span>
@@ -6365,6 +6598,42 @@
           </article>`;
       })
       .join("");
+
+    // Holdy z propozycji na prośbę — widoczne i blokujące do akceptacji / wygaśnięcia.
+    const pHold = myProvider();
+    const holdEvents =
+      pHold &&
+      activeRequestProposalHolds(pHold.id, dateISO)
+        .map(function (hold) {
+          const clampedFrom = Math.max(dayStartMin, Math.min(dayEndMin, hold.fromMin));
+          const clampedTo = Math.max(dayStartMin, Math.min(dayEndMin, hold.toMin));
+          if (clampedTo <= clampedFrom) return "";
+          const top = ((clampedFrom - dayStartMin) / 60) * hourH;
+          const height = Math.max(22, ((clampedTo - clampedFrom) / 60) * hourH);
+          const densityCls = provCalDensityCls(height);
+          const toneCls = hold.locationId ? " " + locationToneClass(pHold, hold.locationId) : "";
+          const locAttr = hold.locationId
+            ? ` data-location-id="${escapeHtml(String(hold.locationId))}"`
+            : "";
+          return `
+          <article class="gcal__event gcal__event--proposed gcal__event--propose-hold${
+            densityCls ? " " + densityCls : ""
+          }${toneCls}"
+            style="top:${top}px;height:${height}px"
+            data-role="prov-cal-slot" data-kind="hold" data-date="${escapeHtml(dateISO)}"
+            data-request-id="${escapeHtml(hold.requestId)}"
+            data-from-min="${clampedFrom}" data-to-min="${clampedTo}"${locAttr}
+            aria-label="${escapeHtml(
+              "Propozycja dla " + hold.clientName + ", " + hold.from + "–" + hold.to
+            )}">
+            <div class="gcal__event-row">
+              <span class="gcal__event-time">${escapeHtml(hold.from)}–${escapeHtml(hold.to)}</span>
+              <span class="gcal__event-title">Propozycja</span>
+            </div>
+            <span class="gcal__event-client">${escapeHtml(hold.clientName)}</span>
+          </article>`;
+        })
+        .join("");
 
     let nowLine = "";
     if (isToday) {
@@ -6377,7 +6646,7 @@
     }
 
     const empty =
-      !events && ensureProvCalVisibleDays() <= 1
+      !events && !holdEvents && ensureProvCalVisibleDays() <= 1
         ? `<p class="gcal__empty">Brak wizyt w tym dniu</p>`
         : "";
     const draftSlot = renderProvCalFreeDraftHtml(dateISO, hourH, dayStartMin, dayEndMin);
@@ -6396,6 +6665,7 @@
           ${renderProvCalBusyBlocks(dateISO, hourH, dayStartMin, dayEndMin)}
           ${nowLine}
           ${events}
+          ${holdEvents || ""}
           ${draftSlot}
           ${proposalSlots}
           ${empty}
@@ -6987,6 +7257,9 @@
       if (!b || b.dateISO !== dateISO) return false;
       if (exceptId && b.id === exceptId) return false;
       if (b.status !== "confirmed" && b.status !== "proposed") return false;
+      if (b.status === "proposed" && b.proposeExpiresAt && !isProposeHoldActive(b.proposeExpiresAt)) {
+        return false;
+      }
       const from = timeToMinutes(b.from);
       const to = timeToMinutes(b.to);
       return !isNaN(from) && !isNaN(to) && to > from;
@@ -7026,6 +7299,210 @@
     return true;
   }
 
+  function ensureProvCalRescheduleQueue() {
+    if (!Array.isArray(window.AppState.provCalRescheduleQueue)) {
+      window.AppState.provCalRescheduleQueue = [];
+    }
+    return window.AppState.provCalRescheduleQueue;
+  }
+
+  function findProvCalRescheduleDraft(bookingId) {
+    if (!bookingId) return null;
+    return (
+      ensureProvCalRescheduleQueue().find(function (item) {
+        return item && item.bookingId === bookingId;
+      }) || null
+    );
+  }
+
+  function isBookingInRescheduleQueue(bookingId) {
+    return !!findProvCalRescheduleDraft(bookingId);
+  }
+
+  /**
+   * Zapisz szkic zmiany terminu (bez wysyłki do klienta).
+   * prev* = pozycja przed tą zmianą; przy kolejnych przesunięciach orig zostaje z pierwszego szkicu.
+   */
+  function noteProvCalReschedule(bookingId, prevDateISO, prevFrom, prevTo, newDateISO, newFrom, newTo) {
+    const bk = (window.AppState.bookings || []).find(function (b) {
+      return b && b.id === bookingId;
+    });
+    if (!bk || bk.status !== "confirmed") return false;
+    if (!prevDateISO || !prevFrom || !prevTo || !newDateISO || !newFrom || !newTo) return false;
+    const queue = ensureProvCalRescheduleQueue();
+    const existing = findProvCalRescheduleDraft(bookingId);
+    const origDateISO = existing ? existing.origDateISO : String(prevDateISO);
+    const origFrom = existing ? existing.origFrom : String(prevFrom);
+    const origTo = existing ? existing.origTo : String(prevTo);
+    const nextDate = String(newDateISO);
+    const nextFrom = String(newFrom);
+    const nextTo = String(newTo);
+    if (origDateISO === nextDate && origFrom === nextFrom && origTo === nextTo) {
+      window.AppState.provCalRescheduleQueue = queue.filter(function (item) {
+        return item && item.bookingId !== bookingId;
+      });
+      if (!window.AppState.provCalRescheduleQueue.length) {
+        window.AppState.provCalRescheduleOpen = false;
+      }
+      return true;
+    }
+    if (existing) {
+      existing.newDateISO = nextDate;
+      existing.newFrom = nextFrom;
+      existing.newTo = nextTo;
+    } else {
+      queue.push({
+        bookingId: String(bookingId),
+        origDateISO: origDateISO,
+        origFrom: origFrom,
+        origTo: origTo,
+        newDateISO: nextDate,
+        newFrom: nextFrom,
+        newTo: nextTo,
+      });
+    }
+    return true;
+  }
+
+  function undoProvCalReschedule(bookingId) {
+    const item = findProvCalRescheduleDraft(bookingId);
+    if (!item) return;
+    const bk = (window.AppState.bookings || []).find(function (b) {
+      return b && b.id === bookingId;
+    });
+    if (bk) {
+      bk.dateISO = item.origDateISO;
+      bk.from = item.origFrom;
+      bk.to = item.origTo;
+      const block = resolveAvailBlockForRange(
+        bk.dateISO,
+        timeToMinutes(bk.from),
+        timeToMinutes(bk.to)
+      );
+      if (block && block.locationId) {
+        const p = myProvider();
+        bk.locationId = block.locationId;
+        bk.locationLabel = locationLabel(p, block.locationId) || bk.locationLabel || "";
+      }
+    }
+    window.AppState.provCalRescheduleQueue = ensureProvCalRescheduleQueue().filter(function (q) {
+      return q && q.bookingId !== bookingId;
+    });
+    if (!window.AppState.provCalRescheduleQueue.length) {
+      window.AppState.provCalRescheduleOpen = false;
+    }
+    if (
+      window.AppState.provCalSelection &&
+      window.AppState.provCalSelection.kind === "booking" &&
+      window.AppState.provCalSelection.bookingId === bookingId &&
+      bk
+    ) {
+      window.AppState.provCalSelection = normalizeProvCalSelection({
+        kind: "booking",
+        bookingId: bk.id,
+        dateISO: bk.dateISO,
+        fromMin: timeToMinutes(bk.from),
+        toMin: timeToMinutes(bk.to),
+      });
+    }
+    saveState();
+    renderAll();
+    hapticTap(12);
+    showToast("Przywrócono poprzedni termin.");
+  }
+
+  function formatRescheduleWhen(dateISO, from, to) {
+    return formatDayWithDow(dateISO) + " · " + from + "–" + to;
+  }
+
+  function sendProvCalReschedule(bookingIds) {
+    const ids = Array.isArray(bookingIds) ? bookingIds : bookingIds ? [bookingIds] : [];
+    const queue = ensureProvCalRescheduleQueue();
+    let sent = 0;
+    ids.forEach(function (bookingId) {
+      const item = queue.find(function (q) {
+        return q && q.bookingId === bookingId;
+      });
+      if (!item) return;
+      const bk = (window.AppState.bookings || []).find(function (b) {
+        return b && b.id === bookingId;
+      });
+      if (!bk || bk.status !== "confirmed") {
+        window.AppState.provCalRescheduleQueue = ensureProvCalRescheduleQueue().filter(function (q) {
+          return q && q.bookingId !== bookingId;
+        });
+        return;
+      }
+      // Upewnij się, że na wizycie jest nowy termin ze szkicu.
+      bk.dateISO = item.newDateISO;
+      bk.from = item.newFrom;
+      bk.to = item.newTo;
+      bk.reschedulePrevDateISO = item.origDateISO;
+      bk.reschedulePrevFrom = item.origFrom;
+      bk.reschedulePrevTo = item.origTo;
+      bk.status = "proposed";
+      applyProposeHoldExpiry(bk, myProvider());
+      const holdNote = formatProposeDeadline(bk.proposeExpiresAt);
+      pushNotification(
+        "client",
+        (bk.providerName || "Usługodawca") +
+          ": propozycja zmiany terminu — " +
+          formatRescheduleWhen(item.origDateISO, item.origFrom, item.origTo) +
+          " → " +
+          formatRescheduleWhen(item.newDateISO, item.newFrom, item.newTo) +
+          "." +
+          (holdNote ? " " + holdNote + "." : "")
+      );
+      window.AppState.provCalRescheduleQueue = ensureProvCalRescheduleQueue().filter(function (q) {
+        return q && q.bookingId !== bookingId;
+      });
+      sent += 1;
+    });
+    if (!ensureProvCalRescheduleQueue().length) {
+      window.AppState.provCalRescheduleOpen = false;
+    }
+    saveState();
+    renderAll();
+    if (!sent) {
+      showToast("Brak zmian do wysłania.");
+      return;
+    }
+    hapticTap(22);
+    showToast(
+      sent === 1
+        ? "Wysłano propozycję zmiany terminu."
+        : "Wysłano " + sent + " propozycje zmiany terminu."
+    );
+  }
+
+  function sendAllProvCalReschedule() {
+    const ids = ensureProvCalRescheduleQueue().map(function (item) {
+      return item.bookingId;
+    });
+    sendProvCalReschedule(ids);
+  }
+
+  function openProvCalReschedule() {
+    if (!ensureProvCalRescheduleQueue().length) return;
+    window.AppState.provCalAddOpen = false;
+    window.AppState.provCalAddMinimized = false;
+    window.AppState.provCalAddDraft = null;
+    clearProvCalReplyMode();
+    setProvCalAddClientPickOpen(false);
+    window.AppState.provCalRescheduleOpen = true;
+    setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
+    closeProvCalViewCloud();
+    saveState();
+    renderAll();
+    hapticTap(12);
+  }
+
+  function closeProvCalReschedule() {
+    window.AppState.provCalRescheduleOpen = false;
+    saveState();
+    renderAll();
+  }
+
   /**
    * Kolizja przedziału z inną aktywną wizytą LUB zewnętrzną zajętością (busy)
    * w danym dniu (poza samą wizytą exceptBookingId). Jedno źródło prawdy o „zajęte".
@@ -7035,6 +7512,21 @@
       return fromMin < timeToMinutes(b.to) && timeToMinutes(b.from) < toMin;
     });
     if (hitsBooking) return true;
+    const p = myProvider();
+    const exceptReq =
+      bookingId &&
+      (window.AppState.bookings || []).find(function (b) {
+        return b && b.id === bookingId;
+      });
+    const exceptRequestId = exceptReq && exceptReq.requestId ? exceptReq.requestId : null;
+    if (
+      p &&
+      activeRequestProposalHolds(p.id, dateISO, exceptRequestId).some(function (h) {
+        return fromMin < h.toMin && h.fromMin < toMin;
+      })
+    ) {
+      return true;
+    }
     return providerBusyIntervalsForDate(dateISO).some(function (iv) {
       return fromMin < iv.to && iv.from < toMin;
     });
@@ -7044,7 +7536,7 @@
    * Twarda walidacja przed zapisem: confirmed/proposed zajmują termin.
    * from/to mogą być "HH:MM" albo minutami od północy.
    */
-  function assertNoBookingOverlap(providerId, dateISO, from, to, exceptBookingId) {
+  function assertNoBookingOverlap(providerId, dateISO, from, to, exceptBookingId, exceptRequestId) {
     const fromMin = typeof from === "number" ? from : timeToMinutes(from);
     const toMin = typeof to === "number" ? to : timeToMinutes(to);
     if (!dateISO || isNaN(fromMin) || isNaN(toMin) || !(toMin > fromMin)) {
@@ -7055,12 +7547,20 @@
       if (exceptBookingId && b.id === exceptBookingId) return false;
       if (providerId && b.providerId && b.providerId !== providerId) return false;
       if (b.status !== "confirmed" && b.status !== "proposed") return false;
+      if (b.status === "proposed" && b.proposeExpiresAt && !isProposeHoldActive(b.proposeExpiresAt)) {
+        return false;
+      }
       const bFrom = timeToMinutes(b.from);
       const bTo = timeToMinutes(b.to);
       if (isNaN(bFrom) || isNaN(bTo) || !(bTo > bFrom)) return false;
       return fromMin < bTo && bFrom < toMin;
     });
     if (conflict) return { ok: false, conflict: conflict };
+    // Hold z propozycji na prośbę — blokuje jak wizyta (do akceptacji / wygaśnięcia).
+    const holdHit = activeRequestProposalHolds(providerId, dateISO, exceptRequestId).some(function (h) {
+      return fromMin < h.toMin && h.fromMin < toMin;
+    });
+    if (holdHit) return { ok: false, conflict: { hold: true } };
     // Zewnętrzna zajętość (busy) tak samo blokuje termin — właściwy usługodawca wg providerId.
     const prov = providerId ? getProviderById(providerId) : myProvider();
     const busyHit = providerBusyIntervalsForDate(dateISO, prov).some(function (iv) {
@@ -9163,44 +9663,90 @@
     hapticTap(16);
   }
 
-  function toggleProvCalLock() {
-    window.AppState.provCalLocked = !window.AppState.provCalLocked;
-    saveState();
-    renderAll();
-    hapticTap(12);
-  }
-
-  /** FAB „+” + przycisk kłódki nad nim (dwa stany UI). */
-  function renderProvCalFabStack(addOpen) {
-    if (addOpen) return "";
-    const locked = window.AppState.provCalLocked !== false;
-    const lockIcon = locked
-      ? `<svg class="prov-cal-fab-lock__svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path class="prov-cal-fab-lock__shackle" d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
-          <rect x="5.5" y="10.5" width="13" height="9.5" rx="2.2" />
-          <circle cx="12" cy="14.4" r="1.3" fill="currentColor" stroke="none" />
-          <path d="M12 15.4v1.6" stroke-linecap="round" />
-        </svg>`
-      : `<svg class="prov-cal-fab-lock__svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path class="prov-cal-fab-lock__shackle" d="M8 10.5V7.5a4 4 0 0 1 7.6-1.7" />
-          <rect x="5.5" y="10.5" width="13" height="9.5" rx="2.2" />
-          <circle cx="12" cy="14.4" r="1.3" fill="currentColor" stroke="none" />
-          <path d="M12 15.4v1.6" stroke-linecap="round" />
-        </svg>`;
-    const lockLabel = locked ? "Kłódka zamknięta" : "Kłódka otwarta";
+  /** FAB „+” + (opcjonalnie) kolejka zmian terminu z numerkiem. */
+  function renderProvCalFabStack(hideStack) {
+    if (hideStack) return "";
+    const queueCount = ensureProvCalRescheduleQueue().length;
+    const queueBtn =
+      queueCount > 0
+        ? `<button type="button" class="prov-cal-fab-queue" data-action="open-prov-cal-reschedule"
+            aria-label="Zmiany terminu do wysłania: ${queueCount}" title="Zmiany terminu">
+            <svg class="prov-cal-fab-queue__svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M8 6h12M8 12h12M8 18h12" />
+              <path d="M4 6h.01M4 12h.01M4 18h.01" />
+            </svg>
+            <span class="prov-cal-fab-queue__badge">${queueCount > 9 ? "9+" : String(queueCount)}</span>
+          </button>`
+        : "";
     return `
       <div class="prov-cal-fab-stack">
-        <button type="button" class="prov-cal-fab-lock${locked ? " is-locked" : " is-unlocked"}" data-action="toggle-prov-cal-lock"
-          aria-label="${lockLabel}" title="${lockLabel}" aria-pressed="${locked ? "true" : "false"}">
-          ${lockIcon}
-        </button>
+        ${queueBtn}
         <button type="button" class="prov-cal-fab" data-action="open-prov-cal-add" aria-label="Dodaj termin" title="Dodaj termin">
           <span class="prov-cal-fab__icon" aria-hidden="true">+</span>
         </button>
       </div>`;
   }
 
+  function renderProvCalReschedulePanel() {
+    if (!window.AppState.provCalRescheduleOpen) return "";
+    const queue = ensureProvCalRescheduleQueue();
+    if (!queue.length) return "";
+    const rows = queue
+      .map(function (item) {
+        const bk = (window.AppState.bookings || []).find(function (b) {
+          return b && b.id === item.bookingId;
+        });
+        const name = (bk && bk.clientName) || "Klient";
+        const svc =
+          bk && Array.isArray(bk.serviceNames) && bk.serviceNames.length
+            ? bk.serviceNames.join(", ")
+            : "";
+        return `
+          <li class="prov-cal-reschedule__item">
+            <div class="prov-cal-reschedule__main">
+              <div class="prov-cal-reschedule__name">${escapeHtml(name)}</div>
+              ${svc ? `<div class="prov-cal-reschedule__svc">${escapeHtml(svc)}</div>` : ""}
+              <div class="prov-cal-reschedule__times">
+                <span class="prov-cal-reschedule__old">${escapeHtml(
+                  formatRescheduleWhen(item.origDateISO, item.origFrom, item.origTo)
+                )}</span>
+                <span class="prov-cal-reschedule__arrow" aria-hidden="true">→</span>
+                <span class="prov-cal-reschedule__new">${escapeHtml(
+                  formatRescheduleWhen(item.newDateISO, item.newFrom, item.newTo)
+                )}</span>
+              </div>
+            </div>
+            <div class="prov-cal-reschedule__actions">
+              <button type="button" class="btn btn--ghost btn--sm" data-action="undo-prov-cal-reschedule"
+                data-booking-id="${escapeHtml(item.bookingId)}">Cofnij</button>
+              <button type="button" class="btn btn--primary btn--sm" data-action="send-prov-cal-reschedule"
+                data-booking-id="${escapeHtml(item.bookingId)}">Wyślij</button>
+            </div>
+          </li>`;
+      })
+      .join("");
+    return `
+      <div class="prov-cal-reschedule prov-cal-reschedule--enter" data-role="prov-cal-reschedule">
+        <div class="prov-cal-reschedule__sheet" role="dialog" aria-modal="true" aria-label="Zmiany terminu">
+          <div class="prov-cal-reschedule__head">
+            <h3 class="prov-cal-reschedule__title">Zmiany terminu</h3>
+            <button type="button" class="prov-cal-reschedule__close" data-action="close-prov-cal-reschedule" aria-label="Zamknij">
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
+          <p class="prov-cal-reschedule__hint">Szkice w kalendarzu — wyślij propozycje, gdy będziesz gotów.</p>
+          <ul class="prov-cal-reschedule__list">${rows}</ul>
+          <div class="prov-cal-reschedule__footer">
+            <button type="button" class="btn btn--primary" data-action="send-all-prov-cal-reschedule">
+              Wyślij wszystkim (${queue.length})
+            </button>
+          </div>
+        </div>
+      </div>`;
+  }
+
   function openProvCalAdd() {
+    window.AppState.provCalRescheduleOpen = false;
     clearProvCalReplyMode();
     const draft = defaultProvCalAddDraft();
     const sel = window.AppState.provCalSelection;
@@ -9387,6 +9933,7 @@
       return b && b.id === bookingId;
     });
     if (!bk) return;
+    window.AppState.provCalRescheduleOpen = false;
     clearProvCalReplyMode();
     if (pendingProvCalEditTimer) {
       clearTimeout(pendingProvCalEditTimer);
@@ -9899,29 +10446,37 @@
       pickBtn.setAttribute("aria-label", pickAria);
     });
 
-    document.querySelectorAll(".prov-cal-add__foot .bottom-nav__summary").forEach(function (summary) {
-      summary.classList.toggle("bottom-nav__summary--empty", !hasSvc);
-      const dur = summary.querySelector(".bottom-nav__summary-dur");
-      const price = summary.querySelector(".bottom-nav__summary-price");
-      if (dur) dur.textContent = !hasSvc ? "—" : formatDuration(totals.duration || 0);
-      if (price) {
-        price.textContent = !hasSvc
-          ? "—"
-          : totals.onlyDuration
-            ? "—"
-            : totals.hasNullPrice
-              ? "wycena indyw."
-              : formatPrice(totals.price);
-      }
-    });
-
     let ctaLabel = "Zapisz";
     let ctaDisabled = !(hasSvc && !!draft.slotId);
-    if (draft.requestId) {
+    const isReplyPatch = !!draft.requestId;
+    if (isReplyPatch) {
       const n = (draft.proposals || []).length;
       ctaDisabled = n < 1;
       ctaLabel = ("Wyślij " + (n || "") + " " + proposalCountLabel(n)).replace(/\s+/g, " ").trim();
     }
+    document.querySelectorAll(".prov-cal-add__foot .bottom-nav__summary").forEach(function (summary) {
+      const dur = summary.querySelector(".bottom-nav__summary-dur");
+      const price = summary.querySelector(".bottom-nav__summary-price");
+      if (isReplyPatch) {
+        const n = (draft.proposals || []).length;
+        summary.classList.toggle("bottom-nav__summary--empty", n < 1);
+        if (dur) {
+          dur.textContent = n < 1 ? "—" : String(n) + " " + proposalCountLabel(n);
+        }
+      } else {
+        summary.classList.toggle("bottom-nav__summary--empty", !hasSvc);
+        if (dur) dur.textContent = !hasSvc ? "—" : formatDuration(totals.duration || 0);
+        if (price) {
+          price.textContent = !hasSvc
+            ? "—"
+            : totals.onlyDuration
+              ? "—"
+              : totals.hasNullPrice
+                ? "wycena indyw."
+                : formatPrice(totals.price);
+        }
+      }
+    });
     document.querySelectorAll('[data-role="prov-cal-add-cta"]').forEach(function (cta) {
       cta.disabled = ctaDisabled;
       cta.textContent = ctaLabel;
@@ -10501,6 +11056,11 @@
         showToast("Nie znaleziono terminu.");
         return;
       }
+      const prevDateISO = booking.dateISO;
+      const prevFrom = booking.from;
+      const prevTo = booking.to;
+      const timeChanged =
+        prevDateISO !== draft.dateISO || prevFrom !== slot.from || prevTo !== slot.to;
       booking.clientName = clientName;
       booking.clientPhone = clientPhone;
       booking.clientEmail = clientEmail;
@@ -10513,6 +11073,17 @@
       booking.locationId = slot.locationId || "";
       booking.locationLabel = slot.locationLabel || "";
       if (!booking.status) booking.status = "confirmed";
+      if (timeChanged) {
+        noteProvCalReschedule(
+          booking.id,
+          prevDateISO,
+          prevFrom,
+          prevTo,
+          booking.dateISO,
+          booking.from,
+          booking.to
+        );
+      }
     } else {
       booking = {
         id: "bk-" + Date.now(),
@@ -10549,7 +11120,13 @@
     saveState();
     renderAll();
     hapticTap(22);
-    showToast(editing ? "Termin zapisany ✓" : "Termin dodany ✓");
+    showToast(
+      editing
+        ? isBookingInRescheduleQueue(booking.id)
+          ? "Zmiana w kolejce — wyślij propozycję klientowi."
+          : "Termin zapisany ✓"
+        : "Termin dodany ✓"
+    );
     if (window.LokalnieApi && window.LokalnieApi.enabled && booking) {
       if (!editing || !booking._fromApi) {
         void window.LokalnieApi.createBookingFromApp(booking).then(function () {
@@ -10793,16 +11370,26 @@
               }
             </div>`;
 
+    const replyCount = isReply ? draft.proposals.length || 0 : 0;
+    const replyEmpty = isReply ? replyCount < 1 : !hasSvc;
     const footHtml = `<div class="prov-cal-add__foot booking-confirm-bar">
-            <div class="bottom-nav__summary${hasSvc ? "" : " bottom-nav__summary--empty"}">
+            <div class="bottom-nav__summary${replyEmpty ? " bottom-nav__summary--empty" : ""}">
               <span class="bottom-nav__summary-label">${isReply ? "Wybrane:" : "Suma:"}</span>
               <div class="bottom-nav__summary-meta">
                 <span class="bottom-nav__summary-dur">${
                   isReply
-                    ? escapeHtml(String(draft.proposals.length) + " " + proposalCountLabel(draft.proposals.length))
+                    ? escapeHtml(
+                        replyEmpty
+                          ? "—"
+                          : String(replyCount) + " " + proposalCountLabel(replyCount)
+                      )
                     : escapeHtml(durText)
                 }</span>
-                ${isReply ? "" : `<span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>`}
+                ${
+                  isReply
+                    ? ""
+                    : `<span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>`
+                }
               </div>
             </div>
             <button type="button" class="bottom-nav__book" data-role="prov-cal-add-cta" data-action="${saveAction}"${saveAttrs}${
@@ -10849,6 +11436,7 @@
     if (ensureProvCalHourH() < dynMinHourH) window.AppState.provCalHourH = clampProvCalHourH(dynMinHourH);
     const monthOpen = !!window.AppState.provCalMonthOpen;
     const addOpen = !!window.AppState.provCalAddOpen;
+    const rescheduleOpen = !!window.AppState.provCalRescheduleOpen;
     const replyReq = replyRequest();
     const isReply = !!(addOpen && replyReq);
     // Etykieta śledzi miesiąc pickera (swipe w panelu), nie tylko wybraną datę tygodnia.
@@ -10890,10 +11478,11 @@
         <div class="prov-cal-body" data-role="prov-cal-body">
           ${renderProvCalGoogleWeek(selected, visits)}
         </div>
-        ${renderProvCalFabStack(addOpen)}`;
+        ${renderProvCalFabStack(addOpen || rescheduleOpen)}`;
     // Desktop: panel tylko nad pulpitem (szerokość lewej kolumny; kalendarz wolny).
     // Mobile: panel w obrębie całego ekranu kalendarza jak dotychczas.
     const addPanel = renderProvCalAddPanel();
+    const reschedulePanel = renderProvCalReschedulePanel();
     const body = desktop
       ? `<div class="prov-desk" data-role="prov-desk">
           <aside class="prov-desk__dash" data-role="prov-desk-dash" aria-label="Pulpit">
@@ -10903,12 +11492,15 @@
             ${calInner}
           </div>
           ${addPanel}
+          ${reschedulePanel}
         </div>`
-      : `${calInner}${addPanel}`;
+      : `${calInner}${addPanel}${reschedulePanel}`;
     return `
       <div class="app-screen app-screen--provider app-screen--prov-cal${
         desktop ? " app-screen--prov-cal-desktop" : ""
-      }${addOpen ? " app-screen--prov-cal-add-open" : ""}${isReply ? " app-screen--prov-cal-reply" : ""}">
+      }${addOpen ? " app-screen--prov-cal-add-open" : ""}${
+        rescheduleOpen ? " app-screen--prov-cal-reschedule-open" : ""
+      }${isReply ? " app-screen--prov-cal-reply" : ""}">
         ${body}
         ${providerBottomNav(navActive)}
       </div>`;
@@ -14285,7 +14877,7 @@
     const r = ensureProviderBookingRules(p);
     return `
       <div class="settings__row settings__row--contact" data-field="bookingRules">
-        <p class="settings__help">Okno terminów, wyprzedzenie i zasady anulowania.</p>
+        <p class="settings__help">Okno terminów, wyprzedzenie, blokada propozycji i zasady anulowania.</p>
         ${renderSettingsFloatField({
           tag: "select",
           label: "Rezerwacja z wyprzedzeniem",
@@ -14300,6 +14892,14 @@
           optionsHtml: renderSelectOptions(BOOKING_LEAD_OPTS, r.minLeadHours),
           attrs: 'aria-label="Minimalny czas przed wizytą"',
         })}
+        ${renderSettingsFloatField({
+          tag: "select",
+          label: "Czas na akceptację propozycji",
+          role: "settings-rule-propose-hold",
+          optionsHtml: renderSelectOptions(BOOKING_PROPOSE_HOLD_OPTS, r.proposeHoldHours),
+          attrs: 'aria-label="Czas na akceptację propozycji"',
+        })}
+        <p class="settings__help settings__help--tight">W tym czasie zaproponowany termin jest zajęty — inni klienci go nie wezmą. Po upływie slot wraca do wolnych.</p>
         ${renderSettingsFloatField({
           tag: "select",
           label: "Anulowanie / przełożenie do",
@@ -14333,10 +14933,15 @@
     captureProviderSocialFields();
     const futureEl = document.querySelector('[data-role="settings-rule-future"]');
     const leadEl = document.querySelector('[data-role="settings-rule-lead"]');
+    const holdEl = document.querySelector('[data-role="settings-rule-propose-hold"]');
     const cancelEl = document.querySelector('[data-role="settings-rule-cancel"]');
     const policyEl = document.querySelector('[data-role="settings-rule-policy"]');
     if (futureEl) p.bookingRules.futureDays = Number(futureEl.value) || 30;
     if (leadEl) p.bookingRules.minLeadHours = Number(leadEl.value) || 0;
+    if (holdEl) {
+      const h = Number(holdEl.value);
+      p.bookingRules.proposeHoldHours = isFinite(h) ? Math.max(0, Math.floor(h)) : 24;
+    }
     if (cancelEl) p.bookingRules.cancelHours = Number(cancelEl.value) || 0;
     if (policyEl) p.bookingRules.policy = String(policyEl.value || "").trim();
   }
@@ -14605,6 +15210,13 @@
   }
 
   function renderAll() {
+    if (expireStaleProposals()) {
+      try {
+        localStorage.setItem(STATE_KEY, JSON.stringify(window.AppState));
+      } catch (err) {
+        /* ignore */
+      }
+    }
     closeProviderCardMenu();
     if (window.AppState.loggedIn && window.AppState.activeRole) {
       updateAppHeader(window.AppState.activeRole);
@@ -15604,6 +16216,7 @@
     req.status = "proposed";
     req._proposals = [];
     req._proposeDate = null;
+    applyProposeHoldExpiry(req, p);
 
     // Wizyta klienta czeka bez terminu — konkretną godzinę wybierze on sam z propozycji.
     const bk = (window.AppState.bookings || []).find((b) => b.requestId === req.id);
@@ -15614,11 +16227,14 @@
       bk.locationId = null;
       bk.locationLabel = "";
       bk.status = "proposed";
+      applyProposeHoldExpiry(bk, p);
     }
 
+    const holdNote = formatProposeDeadline(req.proposeExpiresAt);
     pushNotification(
       "client",
-      `${req.providerName}: ${req.proposals.length} ${proposalCountLabel(req.proposals.length)} do wyboru.`
+      `${req.providerName}: ${req.proposals.length} ${proposalCountLabel(req.proposals.length)} do wyboru.` +
+        (holdNote ? " " + holdNote + "." : "")
     );
 
     clearProvCalReplyMode();
@@ -15648,8 +16264,15 @@
       }
     }
     bk.status = "confirmed";
+    delete bk.reschedulePrevDateISO;
+    delete bk.reschedulePrevFrom;
+    delete bk.reschedulePrevTo;
+    clearProposeHoldExpiry(bk);
     const req = (window.AppState.requests || []).find((r) => r.id === bk.requestId);
-    if (req) req.status = "confirmed";
+    if (req) {
+      req.status = "confirmed";
+      clearProposeHoldExpiry(req);
+    }
     saveState();
     renderAll();
     showToast("Termin potwierdzony ✓");
@@ -15658,9 +16281,28 @@
   function rejectProposal(bookingId) {
     const bk = (window.AppState.bookings || []).find((b) => b.id === bookingId);
     if (!bk) return;
+    // Odrzucenie propozycji zmiany terminu → wróć do poprzedniego confirmed.
+    if (bk.reschedulePrevDateISO && bk.reschedulePrevFrom && bk.reschedulePrevTo) {
+      bk.dateISO = bk.reschedulePrevDateISO;
+      bk.from = bk.reschedulePrevFrom;
+      bk.to = bk.reschedulePrevTo;
+      delete bk.reschedulePrevDateISO;
+      delete bk.reschedulePrevFrom;
+      delete bk.reschedulePrevTo;
+      bk.status = "confirmed";
+      clearProposeHoldExpiry(bk);
+      saveState();
+      renderAll();
+      showToast("Zmiana odrzucona — przywrócono poprzedni termin.");
+      return;
+    }
     bk.status = "rejected";
+    clearProposeHoldExpiry(bk);
     const req = (window.AppState.requests || []).find((r) => r.id === bk.requestId);
-    if (req) req.status = "pending"; // wraca do puli — pętla propozycji
+    if (req) {
+      req.status = "pending"; // wraca do puli — pętla propozycji
+      clearProposeHoldExpiry(req);
+    }
     saveState();
     renderAll();
     showToast("Propozycja odrzucona.");
@@ -15707,10 +16349,12 @@
     bk.locationId = prop.locationId || null;
     bk.locationLabel = prop.locationLabel || "";
     bk.status = "confirmed";
+    clearProposeHoldExpiry(bk);
 
     req.status = "confirmed";
     req.acceptedProposalId = prop.id;
     req.proposals = [Object.assign({}, prop)];
+    clearProposeHoldExpiry(req);
 
     pushNotification(
       "provider",
@@ -15740,6 +16384,7 @@
     req.proposals = [];
     req.acceptedProposalId = null;
     req.status = "pending";
+    clearProposeHoldExpiry(req);
     const bk = (window.AppState.bookings || []).find((b) => b.requestId === req.id);
     if (bk) {
       bk.dateISO = "";
@@ -15748,6 +16393,7 @@
       bk.locationId = null;
       bk.locationLabel = "";
       bk.status = "pending";
+      clearProposeHoldExpiry(bk);
     }
     pushNotification(
       "provider",
@@ -15768,10 +16414,14 @@
     req.status = "cancelled";
     req.proposals = [];
     req.acceptedProposalId = null;
+    clearProposeHoldExpiry(req);
     const bk = (window.AppState.bookings || []).find(function (b) {
       return b && b.requestId === req.id;
     });
-    if (bk) bk.status = "cancelled";
+    if (bk) {
+      bk.status = "cancelled";
+      clearProposeHoldExpiry(bk);
+    }
     pushNotification(
       "provider",
       `${req.clientName || "Klient"} anulował(a) prośbę o termin — ${(req.serviceNames || []).join(", ") || "usługa"}.`
@@ -15788,8 +16438,12 @@
     req.status = "rejected";
     req.proposals = [];
     req.acceptedProposalId = null;
+    clearProposeHoldExpiry(req);
     const bk = (window.AppState.bookings || []).find((b) => b && b.requestId === req.id);
-    if (bk) bk.status = "rejected";
+    if (bk) {
+      bk.status = "rejected";
+      clearProposeHoldExpiry(bk);
+    }
     if (replyRequestId() === req.id) {
       window.AppState.provCalReplyRequestId = null;
       window.AppState.provCalReplyShowAll = false;
@@ -15873,6 +16527,15 @@
     const bk = (window.AppState.bookings || []).find((b) => b.id === bookingId);
     if (!bk) return;
     bk.status = "cancelled";
+    delete bk.reschedulePrevDateISO;
+    delete bk.reschedulePrevFrom;
+    delete bk.reschedulePrevTo;
+    window.AppState.provCalRescheduleQueue = ensureProvCalRescheduleQueue().filter(function (q) {
+      return q && q.bookingId !== bookingId;
+    });
+    if (!window.AppState.provCalRescheduleQueue.length) {
+      window.AppState.provCalRescheduleOpen = false;
+    }
     closeCancelVisitDialog();
     saveState();
     renderAll();
@@ -16798,9 +17461,25 @@
         event.preventDefault();
         openProvCalAdd();
         break;
-      case "toggle-prov-cal-lock":
+      case "open-prov-cal-reschedule":
         event.preventDefault();
-        toggleProvCalLock();
+        openProvCalReschedule();
+        break;
+      case "close-prov-cal-reschedule":
+        event.preventDefault();
+        closeProvCalReschedule();
+        break;
+      case "undo-prov-cal-reschedule":
+        event.preventDefault();
+        undoProvCalReschedule(d.bookingId);
+        break;
+      case "send-prov-cal-reschedule":
+        event.preventDefault();
+        sendProvCalReschedule(d.bookingId);
+        break;
+      case "send-all-prov-cal-reschedule":
+        event.preventDefault();
+        sendAllProvCalReschedule();
         break;
       case "open-prov-cal-requests":
         event.preventDefault();
@@ -17339,7 +18018,7 @@
     }
 
     const profileField = event.target.closest(
-      '[data-role="settings-name"], [data-role="settings-address"], [data-role="settings-about"], [data-role="settings-rule-future"], [data-role="settings-rule-lead"], [data-role="settings-rule-cancel"], [data-role="settings-rule-policy"]'
+      '[data-role="settings-name"], [data-role="settings-address"], [data-role="settings-about"], [data-role="settings-rule-future"], [data-role="settings-rule-lead"], [data-role="settings-rule-propose-hold"], [data-role="settings-rule-cancel"], [data-role="settings-rule-policy"]'
     );
     if (profileField) {
       captureProviderProfileFields();
@@ -18233,13 +18912,27 @@
         return;
       }
       if (bookingOverlapsOthers(drag.bookingId, targetDate, newFrom, newTo)) {
+        if (drag.bookingId && drag.startDate) {
+          moveBookingTimes(drag.bookingId, drag.startFrom, drag.startTo, drag.startDate);
+        }
         hapticTap(10);
         resetDrag();
         renderAll();
         showToast("Ten termin nachodzi na inną wizytę.");
         return;
       }
+      const prevFrom = minToTime(drag.startFrom);
+      const prevTo = minToTime(drag.startTo);
       moveBookingTimes(drag.bookingId, newFrom, newTo, targetDate);
+      noteProvCalReschedule(
+        drag.bookingId,
+        drag.startDate,
+        prevFrom,
+        prevTo,
+        targetDate,
+        minToTime(newFrom),
+        minToTime(newTo)
+      );
       window.AppState.provCalSelection = normalizeProvCalSelection({
         kind: "booking",
         bookingId: drag.bookingId,
@@ -19233,6 +19926,13 @@
         /* ignore */
       }
     }
+    // Okresowo zdejmuj wygasłe holdy propozycji (TTL).
+    setInterval(function () {
+      if (!window.AppState || !window.AppState.loggedIn) return;
+      if (!expireStaleProposals()) return;
+      saveState();
+      renderAll();
+    }, 60000);
     handleRouteHash();
     bindPwaInstallPrompt();
     registerServiceWorker();
