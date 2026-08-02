@@ -7,8 +7,19 @@ Komunikator do rezerwacji usług lokalnych — podgląd interfejsu + szkielet AP
 Otwórz `index.html` w przeglądarce lub uruchom lokalny serwer:
 
 ```bash
-python3 -m http.server 8080
+npm start
+# albo: python3 -m http.server 8080 --bind 127.0.0.1
 ```
+
+### Testy E2E (Playwright)
+
+```bash
+npm install
+npx playwright install chromium
+npm test
+```
+
+Scenariusze w `e2e/flows.spec.js`: prośba→propozycja→rezerwacja, zmiana terminu, kolizja slotów.
 
 ## Backend API (Cloudflare Workers Free)
 

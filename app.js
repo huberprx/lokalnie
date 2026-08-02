@@ -16318,13 +16318,15 @@
     if (!prop) return;
 
     let bk = (window.AppState.bookings || []).find((b) => b.requestId === req.id);
+    // exceptRequestId: holdy z tej samej prośby (nakładające się propozycje) nie blokują wyboru.
     if (
       !assertNoBookingOverlap(
         req.providerId,
         prop.dateISO,
         prop.from,
         prop.to,
-        bk && bk.id
+        bk && bk.id,
+        req.id
       ).ok
     ) {
       showToast("Ten termin jest już zajęty — wybierz inną propozycję.");
@@ -16871,6 +16873,7 @@
     showPage: showPage,
     showSimulator: showSimulator,
     computeSlots: computeSlots,
+    assertNoBookingOverlap: assertNoBookingOverlap,
     usesDesktopLayout: usesDesktopLayout,
   };
 
