@@ -8093,7 +8093,7 @@ button.provider-info-pop__line {
   padding-bottom: 1rem;
 }
 
-.prov-desk__cal .prov-cal-fab {
+.prov-desk__cal .prov-cal-fab-stack {
   bottom: max(0.85rem, env(safe-area-inset-bottom, 0px));
 }
 
@@ -8315,7 +8315,60 @@ button.provider-info-pop__line {
   padding: 0 0 calc(1rem + var(--bottom-nav-clearance));
 }
 
-/* FAB „+” nad dolną nawigacją — otwiera panel nowego terminu. */
+/* Stos: kłódka nad FAB „+” (prawy dolny róg kalendarza). */
+.prov-cal-fab-stack {
+  position: absolute;
+  right: max(0.85rem, env(safe-area-inset-right, 0px));
+  bottom: calc(var(--bottom-nav-clearance) + 0.65rem);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+/* Kłódka — okrągły przycisk nad plusem (dwa stany: zamknięta / otwarta). */
+.prov-cal-fab-lock {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 2.85rem;
+  height: 2.85rem;
+  margin: 0;
+  padding: 0;
+  border: 1.5px solid color-mix(in srgb, var(--border) 70%, var(--text-muted));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--surface-2));
+  color: var(--text);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--text) 10%, transparent);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.14s ease, box-shadow 0.14s ease, background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.prov-cal-fab-lock:hover {
+  background: var(--surface);
+  border-color: color-mix(in srgb, var(--text-muted) 55%, var(--border));
+}
+
+.prov-cal-fab-lock:active {
+  transform: scale(0.94);
+}
+
+.prov-cal-fab-lock__svg {
+  width: 1.2rem;
+  height: 1.2rem;
+  display: block;
+}
+
+/* Otwarta kłódka: rygiel uniesiony — „kłódka” bez kolorowego wypełnienia. */
+.prov-cal-fab-lock.is-unlocked .prov-cal-fab-lock__shackle {
+  transform: translateY(-1.6px) rotate(-7deg);
+  transform-origin: 8px 10px;
+}
+
+/* FAB „+” — otwiera panel nowego terminu (absolute; w stosie: relative). */
 .prov-cal-fab {
   appearance: none;
   -webkit-appearance: none;
@@ -8337,6 +8390,13 @@ button.provider-info-pop__line {
   align-items: center;
   justify-content: center;
   transition: transform 0.14s ease, box-shadow 0.14s ease, background 0.14s ease;
+}
+
+.prov-cal-fab-stack .prov-cal-fab {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  z-index: auto;
 }
 
 .prov-cal-fab:hover {

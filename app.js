@@ -106,6 +106,8 @@
       provCalSearchOpen: false,
       provCalSearchQ: "",
       provCalSelection: null,
+      /** Kalendarz: kłódka nad FAB — true = zamknięta (stan UI; funkcja później). */
+      provCalLocked: true,
       /** Panel „+” → nowy termin z kalendarza usługodawcy. */
       provCalAddOpen: false,
       /** Panel „+” zwinięty (tylko pasek) — draft zostaje. */
@@ -119,7 +121,7 @@
       provCalReplyShowAll: false,
       /** Pulpit: pokazywać karty wolnych luk między wizytami (domyślnie nie). */
       dashShowFreeSlots: false,
-      /** Pulpit: "visits" | "requests" | "rejected" — lista wizyt, próśb albo odrzuconych. */
+      /** Pulpit: "visits" | "requests" | "rejected" | "cancelled" — lista wizyt / próśb / odrzuconych / anulowanych. */
       dashListMode: "visits",
       /** Pulpit: wyszukiwarka klienta / usługi na liście. */
       dashSearchOpen: false,
@@ -2894,6 +2896,7 @@
           typeof stored.provCalPickerMonth === "string" ? stored.provCalPickerMonth : base.provCalPickerMonth,
         provCalSearchOpen: !!stored.provCalSearchOpen,
         provCalSearchQ: typeof stored.provCalSearchQ === "string" ? stored.provCalSearchQ : base.provCalSearchQ,
+        provCalLocked: stored.provCalLocked !== false,
         provCalAddOpen: false,
         provCalAddMinimized: false,
         provCalAddDraft: null,
@@ -2902,7 +2905,9 @@
         provCalReplyShowAll: false,
         dashShowFreeSlots: stored.dashShowFreeSlots === true,
         dashListMode:
-          stored.dashListMode === "requests" || stored.dashListMode === "rejected"
+          stored.dashListMode === "requests" ||
+          stored.dashListMode === "rejected" ||
+          stored.dashListMode === "cancelled"
             ? stored.dashListMode
             : "visits",
         dashSearchOpen: stored.dashSearchOpen === true,
@@ -5663,6 +5668,24 @@
     return items;
   }
 
+  /** Ostatnio anulowane wizyty (od najnowszych). */
+  function providerRecentCancelled() {
+    return (window.AppState.bookings || [])
+      .filter(function (b) {
+        return b && b.providerId === MY_PROVIDER_ID && b.status === "cancelled";
+      })
+      .map(function (b) {
+        return {
+          kind: "booking",
+          sortKey: String(b.dateISO || "") + String(b.from || "") + "\t" + String(b.id || ""),
+          booking: b,
+        };
+      })
+      .sort(function (a, b) {
+        return b.sortKey.localeCompare(a.sortKey);
+      });
+  }
+
   function dashSearchQuery() {
     return String(window.AppState.dashSearchQ || "").trim().toLowerCase();
   }
@@ -5740,25 +5763,48 @@
             : dashBookingMatches(item.booking, searchQ);
         })
       : rejectedItemsAll;
+    const cancelledItemsAll = providerRecentCancelled();
+    const cancelledItems = searchQ
+      ? cancelledItemsAll.filter(function (item) {
+          return dashBookingMatches(item.booking, searchQ);
+        })
+      : cancelledItemsAll;
     const listMode =
-      window.AppState.dashListMode === "requests" || window.AppState.dashListMode === "rejected"
+      window.AppState.dashListMode === "requests" ||
+      window.AppState.dashListMode === "rejected" ||
+      window.AppState.dashListMode === "cancelled"
         ? window.AppState.dashListMode
         : "visits";
     const showRequests = listMode === "requests";
     const showRejected = listMode === "rejected";
+    const showCancelled = listMode === "cancelled";
     const showFree = !!window.AppState.dashShowFreeSlots && !searchQ;
-    const sectionTitle = showRejected
-      ? "Ostatnio odrzucone"
-      : showRequests
-        ? "Prośby o termin"
-        : "Nadchodzące wizyty";
-    const listAria = showRejected
-      ? "Lista ostatnio odrzuconych"
-      : showRequests
-        ? "Lista próśb o termin"
-        : "Lista nadchodzących wizyt";
+    const sectionTitle = showCancelled
+      ? "Ostatnio anulowane"
+      : showRejected
+        ? "Ostatnio odrzucone"
+        : showRequests
+          ? "Prośby o termin"
+          : "Nadchodzące wizyty";
+    const listAria = showCancelled
+      ? "Lista ostatnio anulowanych"
+      : showRejected
+        ? "Lista ostatnio odrzuconych"
+        : showRequests
+          ? "Lista próśb o termin"
+          : "Lista nadchodzących wizyt";
     let listBody;
-    if (showRejected) {
+    if (showCancelled) {
+      listBody = cancelledItems.length
+        ? cancelledItems
+            .map(function (item) {
+              return renderProviderVisitCard(item.booking);
+            })
+            .join("")
+        : `<p class="empty-note">${
+            searchQ ? "Brak wyników dla tego wyszukiwania." : "Brak anulowanych wizyt."
+          }</p>`;
+    } else if (showRejected) {
       listBody = rejectedItems.length
         ? rejectedItems
             .map(function (item) {
@@ -5848,13 +5894,18 @@
             }" data-action="open-dash-rejected">
               <span class="stat-card__num">${rejectedItemsAll.length}</span><span class="stat-card__lbl">Odrzucone</span>
             </button>
+            <button type="button" class="stat-card stat-card--link${
+              listMode === "cancelled" ? " is-active" : ""
+            }" data-action="open-dash-cancelled">
+              <span class="stat-card__num">${cancelledItemsAll.length}</span><span class="stat-card__lbl">Anulowane</span>
+            </button>
           </div>
           ${searchOpen ? "" : renderNotificationsBlock("provider", "Powiadomienia")}
           ${clientsHitsHtml}
           <div class="prov-section-row">
             <h3 class="prov-section">${escapeHtml(sectionTitle)}</h3>
             ${
-              showRequests || showRejected || searchQ
+              showRequests || showRejected || showCancelled || searchQ
                 ? ""
                 : `<label class="prov-free-toggle">
               <span class="prov-free-toggle__text">Wolne terminy</span>
@@ -6018,15 +6069,13 @@
   function providerVisits() {
     return (window.AppState.bookings || [])
       .filter(function (b) {
+        // Anulowane i odrzucone nie zajmują miejsca na siatce — zostają w historii / filtrach.
         return (
           b.providerId === MY_PROVIDER_ID &&
           b.dateISO &&
           b.from &&
           b.to &&
-          (b.status === "confirmed" ||
-            b.status === "proposed" ||
-            b.status === "cancelled" ||
-            b.status === "rejected")
+          (b.status === "confirmed" || b.status === "proposed")
         );
       })
       .slice()
@@ -6544,8 +6593,8 @@
     });
   }
 
-  /** Wolne luki dnia: bloki dostępności minus wizyty i busy. */
-  function provCalFreeGaps(dateISO, exceptBookingId) {
+  /** Zajęte przedziały dnia: wizyty + busy (bez dostępności). */
+  function provCalBusyIntervals(dateISO, exceptBookingId) {
     const busy = activeDayBookings(dateISO, exceptBookingId)
       .map(function (b) {
         return { from: timeToMinutes(b.from), to: timeToMinutes(b.to) };
@@ -6559,10 +6608,15 @@
     busy.sort(function (a, b) {
       return a.from - b.from;
     });
+    return busy;
+  }
+
+  /** Luki w podanych blokach po odjęciu zajętości. */
+  function gapsInsideBlocks(blocks, busy) {
     const gaps = [];
-    providerAvailBlocksForDate(dateISO).forEach(function (block) {
-      let cursor = timeToMinutes(block.from);
-      const end = timeToMinutes(block.to);
+    (blocks || []).forEach(function (block) {
+      let cursor = Number(block.from);
+      const end = Number(block.to);
       if (!(end > cursor)) return;
       const blockBusy = busy
         .filter(function (iv) {
@@ -6586,10 +6640,29 @@
     return gaps;
   }
 
-  /** Czy cały przedział mieści się w jednej legalnej wolnej luce dnia. */
+  /** Wolne luki w godzinach dostępności minus wizyty i busy (dla klienta / slotów). */
+  function provCalFreeGaps(dateISO, exceptBookingId) {
+    const busy = provCalBusyIntervals(dateISO, exceptBookingId);
+    const blocks = providerAvailBlocksForDate(dateISO).map(function (block) {
+      return { from: timeToMinutes(block.from), to: timeToMinutes(block.to) };
+    });
+    return gapsInsideBlocks(blocks, busy);
+  }
+
+  /**
+   * Luki bez wizyt na całej osi dnia — usługodawca może tworzyć wydarzenie
+   * także poza zdefiniowaną dostępnością.
+   */
+  function provCalUnbookedGaps(dateISO, exceptBookingId) {
+    const dayStart = PROV_CAL_HOUR_START * 60;
+    const dayEnd = PROV_CAL_HOUR_END * 60;
+    return gapsInsideBlocks([{ from: dayStart, to: dayEnd }], provCalBusyIntervals(dateISO, exceptBookingId));
+  }
+
+  /** Czy przedział nie nachodzi na wizytę/busy (może być poza dostępnością). */
   function isProvCalFreeRange(dateISO, fromMin, toMin, exceptBookingId) {
     if (!dateISO || !(toMin > fromMin)) return false;
-    return provCalFreeGaps(dateISO, exceptBookingId).some(function (gap) {
+    return provCalUnbookedGaps(dateISO, exceptBookingId).some(function (gap) {
       return fromMin >= gap.from && toMin <= gap.to;
     });
   }
@@ -6626,7 +6699,8 @@
         };
       }
     }
-    const gaps = provCalFreeGaps(dateISO);
+    // Poza dostępnością też OK — byle bez kolizji z wizytami.
+    const gaps = provCalUnbookedGaps(dateISO);
     let gap = null;
     let bestDist = Infinity;
     gaps.forEach(function (g) {
@@ -6650,15 +6724,14 @@
   }
 
   /**
-   * Tap w siatkę ma zachować miejsce kliknięcia — bez szukania „najbliższego”
-   * pełnego slotu gdzie indziej w dniu. Jeśli do końca lokalnej wolnej luki
-   * zostało mniej czasu, tworzymy krótszy szkic.
+   * Tap w siatkę ma zachować miejsce kliknięcia — także poza dostępnością.
+   * Jeśli do kolejnej wizyty zostało mniej czasu, tworzymy krótszy szkic.
    */
   function fitProvCalFreeRangeAtPoint(dateISO, preferredFromMin, durationMin) {
     if (!dateISO) return null;
     preferredFromMin = snapProvCalMin(Number(preferredFromMin) || 0);
     durationMin = Math.max(5, Number(durationMin) || 30);
-    const gap = provCalFreeGaps(dateISO).find(function (g) {
+    const gap = provCalUnbookedGaps(dateISO).find(function (g) {
       return preferredFromMin >= g.from && preferredFromMin < g.to;
     });
     if (!gap) return null;
@@ -9058,6 +9131,18 @@
     hapticTap(12);
   }
 
+  function openDashCancelled() {
+    window.AppState.dashListMode = "cancelled";
+    if (!usesDesktopLayout()) {
+      window.AppState.screen.provider = "dashboard";
+    } else if (window.AppState.screen.provider !== "calendar" && window.AppState.screen.provider !== "dashboard") {
+      window.AppState.screen.provider = "calendar";
+    }
+    saveState();
+    renderAll();
+    hapticTap(12);
+  }
+
   /** Prośby o termin na liście pulpitu (karty jak wizyty) — bez starej listy w panelu „+”. */
   function openProvCalAddRequests() {
     clearProvCalReplyMode();
@@ -9076,6 +9161,43 @@
     saveState();
     renderAll();
     hapticTap(16);
+  }
+
+  function toggleProvCalLock() {
+    window.AppState.provCalLocked = !window.AppState.provCalLocked;
+    saveState();
+    renderAll();
+    hapticTap(12);
+  }
+
+  /** FAB „+” + przycisk kłódki nad nim (dwa stany UI). */
+  function renderProvCalFabStack(addOpen) {
+    if (addOpen) return "";
+    const locked = window.AppState.provCalLocked !== false;
+    const lockIcon = locked
+      ? `<svg class="prov-cal-fab-lock__svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path class="prov-cal-fab-lock__shackle" d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+          <rect x="5.5" y="10.5" width="13" height="9.5" rx="2.2" />
+          <circle cx="12" cy="14.4" r="1.3" fill="currentColor" stroke="none" />
+          <path d="M12 15.4v1.6" stroke-linecap="round" />
+        </svg>`
+      : `<svg class="prov-cal-fab-lock__svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path class="prov-cal-fab-lock__shackle" d="M8 10.5V7.5a4 4 0 0 1 7.6-1.7" />
+          <rect x="5.5" y="10.5" width="13" height="9.5" rx="2.2" />
+          <circle cx="12" cy="14.4" r="1.3" fill="currentColor" stroke="none" />
+          <path d="M12 15.4v1.6" stroke-linecap="round" />
+        </svg>`;
+    const lockLabel = locked ? "Kłódka zamknięta" : "Kłódka otwarta";
+    return `
+      <div class="prov-cal-fab-stack">
+        <button type="button" class="prov-cal-fab-lock${locked ? " is-locked" : " is-unlocked"}" data-action="toggle-prov-cal-lock"
+          aria-label="${lockLabel}" title="${lockLabel}" aria-pressed="${locked ? "true" : "false"}">
+          ${lockIcon}
+        </button>
+        <button type="button" class="prov-cal-fab" data-action="open-prov-cal-add" aria-label="Dodaj termin" title="Dodaj termin">
+          <span class="prov-cal-fab__icon" aria-hidden="true">+</span>
+        </button>
+      </div>`;
   }
 
   function openProvCalAdd() {
@@ -9109,13 +9231,15 @@
     window.AppState.provCalAddTab = "new";
     window.AppState.provCalAddOpen = true;
     window.AppState.provCalAddMinimized = false;
+    draft.clientPickOpen = false;
     window.AppState.provCalAddDraft = draft;
     setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
     closeProvCalViewCloud();
+    setProvCalAddClientPickOpen(false);
     saveState();
     renderAll();
     scheduleScrollProvCalAddTimeToSelected();
-    focusProvCalAddClientInput();
+    // Bez autofokusa w pole klienta — focusin otwierałby listę kontaktów zamiast panelu terminu.
   }
 
   function animateProvCalAddSheetHeight(fromH) {
@@ -10766,9 +10890,7 @@
         <div class="prov-cal-body" data-role="prov-cal-body">
           ${renderProvCalGoogleWeek(selected, visits)}
         </div>
-        <button type="button" class="prov-cal-fab" data-action="open-prov-cal-add" aria-label="Dodaj termin" title="Dodaj termin"${addOpen ? " hidden" : ""}>
-          <span class="prov-cal-fab__icon" aria-hidden="true">+</span>
-        </button>`;
+        ${renderProvCalFabStack(addOpen)}`;
     // Desktop: panel tylko nad pulpitem (szerokość lewej kolumny; kalendarz wolny).
     // Mobile: panel w obrębie całego ekranu kalendarza jak dotychczas.
     const addPanel = renderProvCalAddPanel();
@@ -16676,6 +16798,10 @@
         event.preventDefault();
         openProvCalAdd();
         break;
+      case "toggle-prov-cal-lock":
+        event.preventDefault();
+        toggleProvCalLock();
+        break;
       case "open-prov-cal-requests":
         event.preventDefault();
         openProvCalAddRequests();
@@ -16687,6 +16813,10 @@
       case "open-dash-rejected":
         event.preventDefault();
         openDashRejected();
+        break;
+      case "open-dash-cancelled":
+        event.preventDefault();
+        openDashCancelled();
         break;
       case "toggle-dash-search":
         event.preventDefault();
@@ -17546,7 +17676,7 @@
         min = snapProvCalMin(min);
         min = Math.max(dayStart, Math.min(dayEnd, min));
         // Trzymaj resize w wolnej luce (dostępność − wizyty), żeby nie nachodził na inne.
-        const gaps = provCalFreeGaps(resize.dateISO);
+        const gaps = provCalUnbookedGaps(resize.dateISO);
         const mid = (resize.fromMin + resize.toMin) / 2;
         let gap =
           gaps.find(function (g) {
