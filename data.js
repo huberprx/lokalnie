@@ -187,10 +187,7 @@
         },
       ],
       availability: [],
-      busy: [
-        { startISO: "2026-07-17T11:00:00", endISO: "2026-07-17T11:45:00" },
-        { startISO: "2026-07-20T14:00:00", endISO: "2026-07-20T15:00:00" },
-      ],
+      busy: [],
       phone: "+48 221 234 567",
       email: "kontakt@grzesiubarber.pl",
       emailVisible: true,
@@ -222,9 +219,7 @@
         { id: "svc-sb-4", name: "Zdobienie", durationMin: 15, price: 20, subtitle: "Jeden akcent zdobniczy" },
       ],
       availability: [],
-      busy: [
-        { startISO: "2026-07-16T10:00:00", endISO: "2026-07-16T11:00:00" },
-      ],
+      busy: [],
     },
     {
       id: "masaz-relaks",
@@ -247,9 +242,7 @@
         { id: "svc-mr-3", name: "Masaż relaksacyjny 90 min", durationMin: 90, price: 210, subtitle: "Aromaterapia i ciepłe olejki" },
       ],
       availability: [],
-      busy: [
-        { startISO: "2026-07-22T12:00:00", endISO: "2026-07-22T13:30:00" },
-      ],
+      busy: [],
     },
     {
       id: "auto-detailing-pro",
@@ -298,9 +291,7 @@
         { id: "svc-km-3", name: "Przygotowanie do matury", durationMin: 90, price: 120, bookingMode: "approval", subtitle: "Intensywne powtórki" },
       ],
       availability: [],
-      busy: [
-        { startISO: "2026-07-16T17:00:00", endISO: "2026-07-16T18:00:00" },
-      ],
+      busy: [],
     },
     {
       // Ukryta w katalogu — dostępna tylko z linku/slug (visibleInSearch:false).
@@ -347,9 +338,7 @@
         { id: "svc-fr-3", name: "Rehabilitacja pourazowa", durationMin: 60, price: 160, bookingMode: "approval", subtitle: "Powrót do sprawności" },
       ],
       availability: [],
-      busy: [
-        { startISO: "2026-07-17T09:00:00", endISO: "2026-07-17T10:00:00" },
-      ],
+      busy: [],
     },
   ];
 

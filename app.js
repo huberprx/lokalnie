@@ -176,9 +176,9 @@
     return m ? `${h} h ${m} min` : `${h} h`;
   }
 
+  // Jedna implementacja parsowania „HH:MM" → minuty (timeToMinutes zdefiniowane niżej, hoisted).
   function timeToMin(hhmm) {
-    const parts = String(hhmm).split(":");
-    return Number(parts[0]) * 60 + Number(parts[1]);
+    return timeToMinutes(hhmm);
   }
 
   function minToTime(min) {
@@ -6344,6 +6344,7 @@
       }${dimOther ? " gcal-week__col--dim" : ""}" data-date="${escapeHtml(dateISO)}">
         <div class="gcal__track gcal-week__track" data-role="prov-cal-track" data-date="${escapeHtml(dateISO)}">
           ${renderProvCalAvailBars(dateISO, hourH, dayStartMin, dayEndMin)}
+          ${renderProvCalBusyBlocks(dateISO, hourH, dayStartMin, dayEndMin)}
           ${nowLine}
           ${events}
           ${draftSlot}
@@ -6519,7 +6520,31 @@
     hapticTap(16);
   }
 
-  /** Wolne luki dnia: bloki dostępności minus zajęte wizyty. */
+  /** Zewnętrzna zajętość usługodawcy (busy) w danym dniu — minuty od północy. */
+  function providerBusyIntervalsForDate(dateISO, provider) {
+    const p = provider || myProvider();
+    if (!p || !dateISO) return [];
+    const out = [];
+    (p.busy || []).forEach(function (b) {
+      if (!b || String(b.startISO).slice(0, 10) !== dateISO) return;
+      const from = minFromISO(b.startISO);
+      const to = minFromISO(b.endISO);
+      if (!(to > from)) return;
+      out.push({ from: from, to: to });
+    });
+    return out;
+  }
+
+  /** Czy minuta wpada w blok busy (zewnętrzna zajętość). */
+  function isProvCalBusyAt(dateISO, min) {
+    const m = Number(min);
+    if (!dateISO || !Number.isFinite(m)) return false;
+    return providerBusyIntervalsForDate(dateISO).some(function (iv) {
+      return m >= iv.from && m < iv.to;
+    });
+  }
+
+  /** Wolne luki dnia: bloki dostępności minus wizyty i busy. */
   function provCalFreeGaps(dateISO, exceptBookingId) {
     const busy = activeDayBookings(dateISO, exceptBookingId)
       .map(function (b) {
@@ -6527,10 +6552,13 @@
       })
       .filter(function (iv) {
         return iv.to > iv.from;
-      })
-      .sort(function (a, b) {
-        return a.from - b.from;
       });
+    providerBusyIntervalsForDate(dateISO).forEach(function (iv) {
+      busy.push({ from: iv.from, to: iv.to });
+    });
+    busy.sort(function (a, b) {
+      return a.from - b.from;
+    });
     const gaps = [];
     providerAvailBlocksForDate(dateISO).forEach(function (block) {
       let cursor = timeToMinutes(block.from);
@@ -6556,6 +6584,14 @@
       if (end > cursor) gaps.push({ from: cursor, to: end });
     });
     return gaps;
+  }
+
+  /** Czy cały przedział mieści się w jednej legalnej wolnej luce dnia. */
+  function isProvCalFreeRange(dateISO, fromMin, toMin, exceptBookingId) {
+    if (!dateISO || !(toMin > fromMin)) return false;
+    return provCalFreeGaps(dateISO, exceptBookingId).some(function (gap) {
+      return fromMin >= gap.from && toMin <= gap.to;
+    });
   }
 
   /** Docelowy czas trwania szkicu (usługi z panelu „+” albo 30 min). */
@@ -6613,6 +6649,37 @@
     return { fromMin: fromMin, toMin: fromMin + dur, slot: null };
   }
 
+  /**
+   * Tap w siatkę ma zachować miejsce kliknięcia — bez szukania „najbliższego”
+   * pełnego slotu gdzie indziej w dniu. Jeśli do końca lokalnej wolnej luki
+   * zostało mniej czasu, tworzymy krótszy szkic.
+   */
+  function fitProvCalFreeRangeAtPoint(dateISO, preferredFromMin, durationMin) {
+    if (!dateISO) return null;
+    preferredFromMin = snapProvCalMin(Number(preferredFromMin) || 0);
+    durationMin = Math.max(5, Number(durationMin) || 30);
+    const gap = provCalFreeGaps(dateISO).find(function (g) {
+      return preferredFromMin >= g.from && preferredFromMin < g.to;
+    });
+    if (!gap) return null;
+    const availableAfterClick = gap.to - preferredFromMin;
+    const dur =
+      Math.floor(Math.min(durationMin, availableAfterClick) / PROV_CAL_SNAP_MIN) *
+      PROV_CAL_SNAP_MIN;
+    if (dur < 5) return null;
+    const p = myProvider();
+    const slots = p ? computeSlots(p, dateISO, dur, { ignoreLead: true }) : [];
+    const exactSlot =
+      slots.find(function (s) {
+        return timeToMinutes(s.from) === preferredFromMin;
+      }) || null;
+    return {
+      fromMin: preferredFromMin,
+      toMin: preferredFromMin + dur,
+      slot: exactSlot,
+    };
+  }
+
   function placeProvCalFreeSelection(dateISO, clientY, track) {
     if (!dateISO || !track) return;
     const hourH = ensureProvCalHourH();
@@ -6622,12 +6689,31 @@
     let preferredFrom = dayStart + ((clientY - rect.top) / hourH) * 60;
     preferredFrom = snapProvCalMin(preferredFrom);
     preferredFrom = Math.max(dayStart, Math.min(dayEnd - 5, preferredFrom));
+    // Busy niewidoczne wcześniej „przesuwało” draft gdzie indziej — teraz blokujemy z komunikatem.
+    if (isProvCalBusyAt(dateISO, preferredFrom)) {
+      showToast("Ten przedział jest zajęty.");
+      hapticTap(8);
+      return;
+    }
+    // Tap w puste miejsce podczas edycji wizyty: wyjdź z edycji (nie modyfikuj wizyty),
+    // potem postaw czysty szkic „nowa wizyta" w klikniętym miejscu.
+    if (
+      window.AppState.provCalAddOpen &&
+      window.AppState.provCalAddDraft &&
+      window.AppState.provCalAddDraft.bookingId
+    ) {
+      closeProvCalAdd();
+    }
     // Tryb odpowiedzi na prośbę: tap w wolne miejsce dodaje propozycję (bez szkicu).
     if (window.AppState.provCalAddOpen && replyRequestId()) {
       addReplyProposalFromPoint(dateISO, preferredFrom);
       return;
     }
-    const fitted = fitProvCalFreeRange(dateISO, preferredFrom, desiredProvCalFreeDurationMin());
+    const fitted = fitProvCalFreeRangeAtPoint(
+      dateISO,
+      preferredFrom,
+      desiredProvCalFreeDurationMin()
+    );
     if (!fitted) {
       showToast("Brak wolnego miejsca w tym przedziale.");
       hapticTap(8);
@@ -6646,14 +6732,24 @@
       window.AppState.provCalDate = dateISO;
       window.AppState.provCalPickerMonth = dateISO.slice(0, 7);
     }
-    // Panel „+” otwarty — dzień/slot z legalnego dopasowania (nie sztuczne id).
-    if (window.AppState.provCalAddOpen && window.AppState.provCalAddDraft && !replyRequestId()) {
+    // Panel „+” otwarty (nowa wizyta, nie edycja) — dzień/slot z legalnego dopasowania.
+    if (
+      window.AppState.provCalAddOpen &&
+      window.AppState.provCalAddDraft &&
+      !window.AppState.provCalAddDraft.bookingId &&
+      !replyRequestId()
+    ) {
       const draft = window.AppState.provCalAddDraft;
       draft.dateISO = dateISO;
       draft.slotId = fitted.slot ? fitted.slot.id : null;
     }
     // Przed renderem: dopasuj chip (najbliższy start) i dociągnij szkic do slotu.
-    if (window.AppState.provCalAddOpen && !replyRequestId()) {
+    if (
+      window.AppState.provCalAddOpen &&
+      window.AppState.provCalAddDraft &&
+      !window.AppState.provCalAddDraft.bookingId &&
+      !replyRequestId()
+    ) {
       syncProvCalAddDraftFromSelection();
       snapProvCalSelectionToAddSlot();
     }
@@ -6857,11 +6953,48 @@
     return true;
   }
 
-  /** Kolizja wizyty z inną aktywną wizytą w danym dniu (poza samą sobą). */
+  /**
+   * Kolizja przedziału z inną aktywną wizytą LUB zewnętrzną zajętością (busy)
+   * w danym dniu (poza samą wizytą exceptBookingId). Jedno źródło prawdy o „zajęte".
+   */
   function bookingOverlapsOthers(bookingId, dateISO, fromMin, toMin) {
-    return activeDayBookings(dateISO, bookingId).some(function (b) {
+    const hitsBooking = activeDayBookings(dateISO, bookingId).some(function (b) {
       return fromMin < timeToMinutes(b.to) && timeToMinutes(b.from) < toMin;
     });
+    if (hitsBooking) return true;
+    return providerBusyIntervalsForDate(dateISO).some(function (iv) {
+      return fromMin < iv.to && iv.from < toMin;
+    });
+  }
+
+  /**
+   * Twarda walidacja przed zapisem: confirmed/proposed zajmują termin.
+   * from/to mogą być "HH:MM" albo minutami od północy.
+   */
+  function assertNoBookingOverlap(providerId, dateISO, from, to, exceptBookingId) {
+    const fromMin = typeof from === "number" ? from : timeToMinutes(from);
+    const toMin = typeof to === "number" ? to : timeToMinutes(to);
+    if (!dateISO || isNaN(fromMin) || isNaN(toMin) || !(toMin > fromMin)) {
+      return { ok: true, conflict: null };
+    }
+    const conflict = (window.AppState.bookings || []).find(function (b) {
+      if (!b || b.dateISO !== dateISO) return false;
+      if (exceptBookingId && b.id === exceptBookingId) return false;
+      if (providerId && b.providerId && b.providerId !== providerId) return false;
+      if (b.status !== "confirmed" && b.status !== "proposed") return false;
+      const bFrom = timeToMinutes(b.from);
+      const bTo = timeToMinutes(b.to);
+      if (isNaN(bFrom) || isNaN(bTo) || !(bTo > bFrom)) return false;
+      return fromMin < bTo && bFrom < toMin;
+    });
+    if (conflict) return { ok: false, conflict: conflict };
+    // Zewnętrzna zajętość (busy) tak samo blokuje termin — właściwy usługodawca wg providerId.
+    const prov = providerId ? getProviderById(providerId) : myProvider();
+    const busyHit = providerBusyIntervalsForDate(dateISO, prov).some(function (iv) {
+      return fromMin < iv.to && iv.from < toMin;
+    });
+    if (busyHit) return { ok: false, conflict: { busy: true } };
+    return { ok: true, conflict: null };
   }
 
   // Progi „gęstości" treści wizyty wg wysokości (px) — standard jak w Google Calendar:
@@ -7584,6 +7717,24 @@
         const tone = locationToneClass(p, block.locationId);
         const locAttr = block.locationId ? ` data-location-id="${escapeHtml(String(block.locationId))}"` : "";
         return `<div class="gcal__avail ${tone}" style="top:${top}px;height:${height}px" data-from-min="${from}" data-to-min="${to}"${locAttr} aria-hidden="true"></div>`;
+      })
+      .join("");
+  }
+
+  /** Bloki zewnętrznej zajętości (busy) — widoczne na siatce, bez cichego snapu draftu. */
+  function renderProvCalBusyBlocks(dateISO, hourH, dayStartMin, dayEndMin) {
+    return providerBusyIntervalsForDate(dateISO)
+      .map(function (iv) {
+        const from = Math.max(dayStartMin, Math.min(dayEndMin, iv.from));
+        const to = Math.max(dayStartMin, Math.min(dayEndMin, iv.to));
+        if (to <= from) return "";
+        const top = ((from - dayStartMin) / 60) * hourH;
+        const height = Math.max(18, ((to - from) / 60) * hourH);
+        const fromLabel = minToTime(from);
+        const toLabel = minToTime(to);
+        return `<div class="gcal__busy" style="top:${top}px;height:${height}px" data-from-min="${from}" data-to-min="${to}" aria-hidden="true">
+          <span class="gcal__busy-label">Zajęte · ${escapeHtml(fromLabel)}–${escapeHtml(toLabel)}</span>
+        </div>`;
       })
       .join("");
   }
@@ -10059,6 +10210,13 @@
       return s.id === draft.slotId;
     });
     if (!slot) {
+      showToast("Ten termin jest już zajęty — wybierz inny.");
+      draft.slotId = null;
+      saveState();
+      renderAll();
+      return;
+    }
+    if (!assertNoBookingOverlap(p.id, draft.dateISO, slot.from, slot.to, draft.bookingId || null).ok) {
       showToast("Ten termin jest już zajęty — wybierz inny.");
       draft.slotId = null;
       saveState();
@@ -14913,6 +15071,11 @@
       renderAll();
       return;
     }
+    if (!assertNoBookingOverlap(p.id, draft.dateISO, slot.from, slot.to).ok) {
+      showToast("Ten termin jest już zajęty — wybierz inny.");
+      renderAll();
+      return;
+    }
 
     const svcs = draftServices(p);
     const cp = ensureClientProfile();
@@ -15209,6 +15372,12 @@
   function acceptProposal(bookingId) {
     const bk = (window.AppState.bookings || []).find((b) => b.id === bookingId);
     if (!bk) return;
+    if (bk.dateISO && bk.from && bk.to) {
+      if (!assertNoBookingOverlap(bk.providerId, bk.dateISO, bk.from, bk.to, bk.id).ok) {
+        showToast("Ten termin jest już zajęty.");
+        return;
+      }
+    }
     bk.status = "confirmed";
     const req = (window.AppState.requests || []).find((r) => r.id === bk.requestId);
     if (req) req.status = "confirmed";
@@ -15238,6 +15407,18 @@
     if (!prop) return;
 
     let bk = (window.AppState.bookings || []).find((b) => b.requestId === req.id);
+    if (
+      !assertNoBookingOverlap(
+        req.providerId,
+        prop.dateISO,
+        prop.from,
+        prop.to,
+        bk && bk.id
+      ).ok
+    ) {
+      showToast("Ten termin jest już zajęty — wybierz inną propozycję.");
+      return;
+    }
     if (!bk) {
       bk = {
         id: "bk-" + Date.now(),
@@ -17524,6 +17705,11 @@
           "gcal__event--invalid",
           bookingOverlapsOthers(drag.bookingId, drag.dateISO, newFrom, newTo)
         );
+      } else if (drag.kind === "free") {
+        drag.el.classList.toggle(
+          "gcal__event--invalid",
+          !isProvCalFreeRange(drag.dateISO, newFrom, newTo)
+        );
       }
       drag.el.setAttribute("data-date", drag.dateISO);
       if (drag.kind === "free") {
@@ -17720,6 +17906,21 @@
         return;
       }
       if (drag.kind === "free") {
+        if (!isProvCalFreeRange(targetDate, newFrom, newTo)) {
+          window.AppState.provCalSelection = normalizeProvCalSelection({
+            kind: "free",
+            dateISO: drag.startDate,
+            fromMin: drag.startFrom,
+            toMin: drag.startTo,
+          });
+          updateProvCalAddSelectionLive({ snapSelection: true });
+          hapticTap(10);
+          resetDrag();
+          saveState();
+          renderAll();
+          showToast("Ten przedział nie jest wolny.");
+          return;
+        }
         // Szkic: tylko zaznaczenie — bez zmiany provCalDate (okno dni nie skacze).
         window.AppState.provCalSelection = normalizeProvCalSelection({
           kind: "free",
@@ -17754,15 +17955,14 @@
         else if (movedSlotId) scheduleScrollProvCalAddTimeToSelected(movedSlotId.id);
         return;
       }
-      const overlap = bookingOverlapsOthers(drag.bookingId, targetDate, newFrom, newTo);
-      moveBookingTimes(drag.bookingId, newFrom, newTo, targetDate);
-      const bk = (window.AppState.bookings || []).find(function (b) {
-        return b.id === drag.bookingId;
-      });
-      if (overlap && bk && bk.status === "confirmed") {
-        bk.status = "proposed";
-        showToast('Nakłada się na inną wizytę — ustawiono „na akceptację”.');
+      if (bookingOverlapsOthers(drag.bookingId, targetDate, newFrom, newTo)) {
+        hapticTap(10);
+        resetDrag();
+        renderAll();
+        showToast("Ten termin nachodzi na inną wizytę.");
+        return;
       }
+      moveBookingTimes(drag.bookingId, newFrom, newTo, targetDate);
       window.AppState.provCalSelection = normalizeProvCalSelection({
         kind: "booking",
         bookingId: drag.bookingId,
