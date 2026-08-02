@@ -1,5 +1,6 @@
 import { CORS, json, noContent, id, nowIso, readJson } from "./http.js";
 import { requireDemoUser, mapUser, mapProvider } from "./auth.js";
+import { startGoogleAuth, handleGoogleCallback, logoutSession } from "./oauth.js";
 import { enqueueEmail, listOutbox } from "./email.js";
 import { mapClient, mapBooking, mapRequest, mapMedia } from "./mappers.js";
 
@@ -21,9 +22,12 @@ export default {
           ok: true,
           environment: env.ENVIRONMENT || "unknown",
           appOrigin: env.APP_ORIGIN || null,
-          auth: "demo: X-Demo-User: demo | Authorization: Bearer demo",
+          auth: "Bearer <session> | demo: X-Demo-User: demo | Authorization: Bearer demo",
           docs: {
             health: "GET /health",
+            authGoogle: "GET /auth/google",
+            authCallback: "GET /auth/google/callback",
+            authLogout: "POST /auth/logout",
             me: "GET|PATCH /me",
             provider: "GET|PATCH /provider/me",
             clients: "GET|POST /provider/me/clients",
@@ -38,6 +42,12 @@ export default {
 
       if (path === "/health") return health(env);
       if (path === "/debug/tables") return debugTables(env);
+
+      if (path === "/auth/google" && request.method === "GET") return startGoogleAuth(request, env);
+      if (path === "/auth/google/callback" && request.method === "GET") {
+        return handleGoogleCallback(request, env);
+      }
+      if (path === "/auth/logout" && request.method === "POST") return logoutSession(request, env);
 
       if (path === "/me") {
         if (request.method === "GET") return getMe(request, env);
@@ -126,7 +136,12 @@ async function debugTables(env) {
 async function getMe(request, env) {
   const auth = await requireDemoUser(request, env);
   if (auth.error) return auth.error;
-  return json({ authenticated: true, mode: "demo", user: mapUser(auth.user), provider: mapProvider(auth.provider) });
+  return json({
+    authenticated: true,
+    mode: auth.authMode || "demo",
+    user: mapUser(auth.user),
+    provider: mapProvider(auth.provider),
+  });
 }
 
 async function patchMe(request, env) {
@@ -149,7 +164,7 @@ async function patchMe(request, env) {
     .run();
 
   const user = await env.DB.prepare("SELECT * FROM users WHERE id=?").bind(auth.user.id).first();
-  return json({ authenticated: true, mode: "demo", user: mapUser(user) });
+  return json({ authenticated: true, mode: auth.authMode || "demo", user: mapUser(user) });
 }
 
 async function getProviderMe(request, env) {
@@ -456,13 +471,22 @@ async function patchBooking(request, env, bookingId) {
 }
 
 async function listRequests(request, env) {
-  const auth = await requireProvider(request, env);
+  const auth = await requireDemoUser(request, env);
   if (auth.error) return auth.error;
-  const rows = await env.DB.prepare(
-    "SELECT * FROM booking_requests WHERE provider_id=? ORDER BY created_at DESC"
-  )
-    .bind(auth.provider.id)
-    .all();
+  let rows;
+  if (auth.provider) {
+    rows = await env.DB.prepare(
+      "SELECT * FROM booking_requests WHERE provider_id=? ORDER BY created_at DESC"
+    )
+      .bind(auth.provider.id)
+      .all();
+  } else {
+    rows = await env.DB.prepare(
+      "SELECT * FROM booking_requests WHERE client_user_id=? ORDER BY created_at DESC"
+    )
+      .bind(auth.user.id)
+      .all();
+  }
   return json({ requests: (rows.results || []).map(mapRequest) });
 }
 

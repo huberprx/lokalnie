@@ -16754,6 +16754,9 @@
 
   function testLogin(startRole) {
     const role = INSTANCES.indexOf(startRole) !== -1 ? startRole : "client";
+    if (window.LokalnieApi && window.LokalnieApi.clearAuthToken) {
+      window.LokalnieApi.clearAuthToken();
+    }
     window.AppState.loggedIn = true;
     window.AppState.activeRole = role;
     window.AppState.screen[role] = DEFAULT_SCREEN[role];
@@ -16763,7 +16766,56 @@
     showPage("app");
   }
 
+  function googleLogin() {
+    if (!window.LokalnieApi || !window.LokalnieApi.googleLoginUrl) {
+      showToast("API niedostępne — użyj logowania demo.");
+      return;
+    }
+    window.location.href = window.LokalnieApi.googleLoginUrl(window.location.origin + "/");
+  }
+
+  function finishGoogleLogin(token) {
+    if (!token || !window.LokalnieApi) return false;
+    window.LokalnieApi.setAuthToken(token);
+    window.AppState.loggedIn = true;
+    window.AppState.activeRole = "client";
+    window.AppState.screen.client = DEFAULT_SCREEN.client;
+    saveState();
+    updateAppHeader("client");
+    showPage("app");
+    renderAll();
+    void window.LokalnieApi.syncFromServer().then(function (result) {
+      if (result && result.ok) {
+        saveState();
+        renderAll();
+        showToast("Zalogowano przez Google.");
+      } else {
+        showToast("Zalogowano, ale synchronizacja API nie wyszła.");
+      }
+    });
+    return true;
+  }
+
+  function consumeAuthHash() {
+    try {
+      const hash = (window.location.hash || "").replace(/^#/, "");
+      if (!hash) return false;
+      const params = new URLSearchParams(hash);
+      const token = params.get("access_token");
+      if (!token) return false;
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+      return finishGoogleLogin(token);
+    } catch (err) {
+      return false;
+    }
+  }
+
   function logout() {
+    if (window.LokalnieApi && window.LokalnieApi.logout) {
+      void window.LokalnieApi.logout();
+    } else if (window.LokalnieApi && window.LokalnieApi.clearAuthToken) {
+      window.LokalnieApi.clearAuthToken();
+    }
     window.AppState.loggedIn = false;
     window.AppState.activeRole = null;
     saveState();
@@ -16868,6 +16920,7 @@
     saveState: saveState,
     resetDemo: resetDemo,
     testLogin: testLogin,
+    googleLogin: googleLogin,
     logout: logout,
     switchRole: switchRole,
     showPage: showPage,
@@ -17050,6 +17103,7 @@
     switch (a) {
       case "reset-demo": resetDemo(); break;
       case "test-login": event.preventDefault(); testLogin(d.target); break;
+      case "google-login": event.preventDefault(); googleLogin(); break;
       case "open-my-calendar": event.preventDefault(); openMyCalendar(); break;
       case "logout": logout(); break;
       case "go-home":
@@ -19912,9 +19966,13 @@
     bindAvailDaySwipe();
     bindAvailTimePickers();
     loadState();
+    // Callback Google OAuth: #access_token=...
+    const justAuthed = consumeAuthHash();
     // Najpierw wejdź w appę — inaczej przy opóźnionym/starym JS widać landing „Zaloguj się”.
     try {
-      if (window.AppState.loggedIn && window.AppState.activeRole) {
+      if (justAuthed) {
+        /* finishGoogleLogin już pokazał app */
+      } else if (window.AppState.loggedIn && window.AppState.activeRole) {
         updateAppHeader(window.AppState.activeRole);
         showPage("app");
         renderAll();

@@ -1,20 +1,62 @@
 import { json } from "./http.js";
+import { hashToken } from "./oauth.js";
 
 const DEMO_USER_ID = "user-demo-hubert";
 
-/** Tryb demo: X-Demo-User: demo albo Authorization: Bearer demo */
+/**
+ * Auth: sesja OAuth (Authorization: Bearer <token>) albo tryb demo
+ * (X-Demo-User: demo / Authorization: Bearer demo).
+ */
 export async function requireDemoUser(request, env) {
   const demoHeader = (request.headers.get("X-Demo-User") || "").trim().toLowerCase();
   const auth = request.headers.get("Authorization") || "";
-  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim().toLowerCase() : "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
 
-  if (demoHeader !== "demo" && bearer !== "demo") {
+  if (bearer && bearer.toLowerCase() !== "demo") {
+    const tokenHash = await hashToken(bearer);
+    const session = await env.DB.prepare(
+      `SELECT s.*, u.id AS uid FROM sessions s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.token_hash = ?`
+    )
+      .bind(tokenHash)
+      .first();
+
+    if (!session) {
+      return {
+        error: json(
+          { error: "unauthorized", message: "Sesja nieważna lub wygasła. Zaloguj się ponownie." },
+          401
+        ),
+      };
+    }
+
+    if (session.expires_at && new Date(session.expires_at).getTime() < Date.now()) {
+      await env.DB.prepare("DELETE FROM sessions WHERE id = ?").bind(session.id).run();
+      return {
+        error: json({ error: "unauthorized", message: "Sesja wygasła. Zaloguj się ponownie." }, 401),
+      };
+    }
+
+    const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(session.user_id).first();
+    if (!user) {
+      return { error: json({ error: "unauthorized", message: "Użytkownik nie istnieje." }, 401) };
+    }
+
+    const provider = await env.DB.prepare("SELECT * FROM provider_profiles WHERE user_id = ?")
+      .bind(user.id)
+      .first();
+
+    return { user, provider, authMode: "session" };
+  }
+
+  if (demoHeader !== "demo" && bearer.toLowerCase() !== "demo") {
     return {
       error: json(
         {
           error: "unauthorized",
           message:
-            "Tryb demo: dodaj nagłówek X-Demo-User: demo lub Authorization: Bearer demo. OAuth później.",
+            "Zaloguj się przez Google albo użyj trybu demo: X-Demo-User: demo / Authorization: Bearer demo.",
         },
         401
       ),
@@ -35,7 +77,7 @@ export async function requireDemoUser(request, env) {
     .bind(user.id)
     .first();
 
-  return { user, provider };
+  return { user, provider, authMode: "demo" };
 }
 
 export function mapUser(row) {
