@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.178";
+  const APP_VERSION = "1.0.179";
 
   const PWA = {
     registration: null,
@@ -3505,6 +3505,7 @@
             <button type="button" class="app-menu__link" data-action="open-legal" data-doc="privacy">Polityka prywatności</button>
             <button type="button" class="app-menu__link" data-action="open-legal" data-doc="terms">Regulamin</button>
             <button type="button" class="app-menu__link" data-action="open-legal" data-doc="contact">Kontakt</button>
+            <button type="button" class="app-menu__link app-menu__link--logout" data-action="logout">Wyloguj</button>
           </nav>
 
           <div class="app-menu__version" data-role="app-version">
@@ -3518,10 +3519,6 @@
               }</span>
               <span class="app-menu__version-num">${escapeHtml(APP_VERSION)}</span>
             </button>
-          </div>
-
-          <div class="app-menu__footer">
-            <button type="button" class="app-menu__link app-menu__link--logout" data-action="logout">Wyloguj</button>
           </div>
         </aside>
       </div>`;
