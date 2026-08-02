@@ -6339,11 +6339,9 @@
     const dimOther = !!(requestDays && !window.AppState.provCalReplyShowAll && !isRequestDay);
     const isSel = dateISO === ensureProvCalDate();
     return `
-      <div class="gcal-week__col${isToday ? " gcal-week__col--today" : ""}${
-        isSel ? " gcal-week__col--sel" : ""
-      }${isRequestDay ? " gcal-week__col--request" : ""}${
-        dimOther ? " gcal-week__col--dim" : ""
-      }" data-date="${escapeHtml(dateISO)}">
+      <div class="gcal-week__col${isSel ? " gcal-week__col--sel" : ""}${
+        isRequestDay ? " gcal-week__col--request" : ""
+      }${dimOther ? " gcal-week__col--dim" : ""}" data-date="${escapeHtml(dateISO)}">
         <div class="gcal__track gcal-week__track" data-role="prov-cal-track" data-date="${escapeHtml(dateISO)}">
           ${renderProvCalAvailBars(dateISO, hourH, dayStartMin, dayEndMin)}
           ${nowLine}
