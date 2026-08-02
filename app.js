@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.180";
+  const APP_VERSION = "1.0.181";
 
   const PWA = {
     registration: null,
@@ -4086,10 +4086,9 @@
   }
 
   function renderAccount() {
-    const user = data().CURRENT_USER || {};
     const cp = ensureClientProfile();
     const notes = cp.notifications;
-    const hasProvider = user.providerRole && user.providerRole.active;
+    const hasProvider = hasProviderRole();
 
     return `
       <div class="app-screen app-screen--client app-screen--account">
@@ -16835,11 +16834,11 @@
     const pageApp = document.getElementById("page-app");
     if (pageApp) pageApp.dataset.activeRole = activeRole || "client";
 
-    const hasProviderRole = hasProviderRole();
+    const canSwitchProvider = hasProviderRole();
     const roleSwitch = document.getElementById("app-role-switch");
-    if (roleSwitch) roleSwitch.hidden = !hasProviderRole;
+    if (roleSwitch) roleSwitch.hidden = !canSwitchProvider;
 
-    if (hasProviderRole && roleSwitch) {
+    if (canSwitchProvider && roleSwitch) {
       roleSwitch.querySelectorAll(".app-role-btn").forEach(function (btn) {
         btn.setAttribute("aria-pressed", btn.dataset.role === activeRole ? "true" : "false");
       });
