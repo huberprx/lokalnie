@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.184";
+  const APP_VERSION = "1.0.185";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
 
@@ -16939,8 +16939,8 @@
         userEl.classList.remove("app-header__user--guest");
       } else {
         userEl.innerHTML =
-          `<button type="button" class="app-header__login" data-action="google-login">Zaloguj</button>`;
-        userEl.setAttribute("aria-label", "Zaloguj się");
+          `<button type="button" class="app-header__login" data-action="google-login">Twoje konto</button>`;
+        userEl.setAttribute("aria-label", "Twoje konto");
         userEl.dataset.role = "guest";
         userEl.classList.add("app-header__user--guest");
       }
