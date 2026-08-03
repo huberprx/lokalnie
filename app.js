@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.190";
+  const APP_VERSION = "1.0.194";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -14729,7 +14729,9 @@
       toneIndex: nextLocationToneIndex(p),
     });
     saveState();
-    renderAll();
+    withSettingsScroll(function () {
+      renderAll();
+    });
   }
 
   function removeProviderLocation(locId) {
@@ -14744,7 +14746,9 @@
       return l.id !== locId;
     });
     saveState();
-    renderAll();
+    withSettingsScroll(function () {
+      renderAll();
+    });
   }
 
   function setProviderLocationTone(locId, tone) {
@@ -14811,6 +14815,72 @@
     ensureProviderSocialLinks(p);
   }
 
+  function settingsScrollEl() {
+    return (
+      document.querySelector("#app-fullscreen .app-screen--settings > .app-scroll") ||
+      document.querySelector(".app-screen--settings > .app-scroll")
+    );
+  }
+
+  /** Zachowaj scroll ustawień przy pełnym renderAll (gdy in-place się nie uda). */
+  function withSettingsScroll(fn) {
+    const scroller = settingsScrollEl();
+    const top = scroller ? scroller.scrollTop : 0;
+    fn();
+    const again = settingsScrollEl();
+    if (!again) return;
+    again.scrollTop = top;
+    requestAnimationFrame(function () {
+      again.scrollTop = top;
+    });
+  }
+
+  /** Podmienia wiersz Social media bez renderAll — inaczej scroll wraca na górę. */
+  function refreshSettingsSocialInPlace(opts) {
+    opts = opts || {};
+    const p = myProvider();
+    if (!p) return false;
+    const row =
+      document.querySelector("#app-fullscreen .app-screen--settings .settings__row--socials") ||
+      document.querySelector(".app-screen--settings .settings__row--socials");
+    if (!row) return false;
+    const scroller = row.closest(".app-scroll") || settingsScrollEl();
+    const top = scroller ? scroller.scrollTop : 0;
+    const wrap = document.createElement("div");
+    wrap.innerHTML = String(renderSettingsSocial(p) || "").trim();
+    const next = wrap.firstElementChild;
+    if (!next) return false;
+    row.replaceWith(next);
+    if (scroller) {
+      scroller.scrollTop = top;
+      requestAnimationFrame(function () {
+        scroller.scrollTop = top;
+      });
+    }
+    if (opts.focusLast) {
+      const input = next.querySelector(".settings-social:last-child [data-role='settings-social-value']");
+      if (input) {
+        requestAnimationFrame(function () {
+          try {
+            input.focus({ preventScroll: true });
+          } catch (err) {
+            input.focus();
+            if (scroller) scroller.scrollTop = top;
+          }
+        });
+      }
+    }
+    return true;
+  }
+
+  function rerenderSettingsSocial(opts) {
+    if (!refreshSettingsSocialInPlace(opts)) {
+      withSettingsScroll(function () {
+        renderAll();
+      });
+    }
+  }
+
   function addProviderSocialLink() {
     const p = myProvider();
     if (!p) return;
@@ -14830,7 +14900,7 @@
       }) || SETTINGS_SOCIAL_KINDS[0]).key;
     links.push({ id: "sl-" + Date.now(), kind: nextKind, value: "" });
     saveState();
-    renderAll();
+    rerenderSettingsSocial({ focusLast: true });
   }
 
   function removeProviderSocialLink(linkId) {
@@ -14841,7 +14911,7 @@
     if (links.length <= 1) {
       links[0].value = "";
       saveState();
-      renderAll();
+      rerenderSettingsSocial();
       return;
     }
     p.socialLinks = links.filter(function (l) {
@@ -14849,7 +14919,7 @@
     });
     ensureProviderSocialLinks(p);
     saveState();
-    renderAll();
+    rerenderSettingsSocial();
   }
 
   function renderSettingsGroup(title, bodyHtml) {
@@ -18533,9 +18603,13 @@
     if (visibleSearchToggle) {
       const p = myProvider();
       if (p) {
-        p.visibleInSearch = !!visibleSearchToggle.checked;
+        const on = !!visibleSearchToggle.checked;
+        p.visibleInSearch = on;
         saveState();
-        renderAll();
+        // Bez renderAll — inaczej scroll ustawień wraca na górę.
+        const row = visibleSearchToggle.closest(".settings__row--toggle");
+        const hint = row && row.querySelector(".settings__hint");
+        if (hint) hint.textContent = on ? "Widoczny w wyszukiwaniu" : "Ukryty — tylko z linku";
       }
       return;
     }
@@ -18545,7 +18619,17 @@
       captureProviderProfileFields();
       captureProviderContactFields();
       saveState();
-      renderAll();
+      // Bez renderAll — wystarczy podmienić etykiety przy przełączniku.
+      const on = !!emailVisibleToggle.checked;
+      const wrap = emailVisibleToggle.closest(".settings-contact__toggle");
+      const hint = wrap && wrap.querySelector(".settings__hint");
+      const sub = wrap && wrap.querySelector(".settings-contact__toggle-hint");
+      if (hint) hint.textContent = on ? "E-mail widoczny dla klientów" : "E-mail ukryty";
+      if (sub) {
+        sub.textContent = on
+          ? "Klienci mogą napisać na ten adres"
+          : "Tylko Ty widzisz ten adres w ustawieniach";
+      }
       return;
     }
 
@@ -18593,7 +18677,7 @@
     if (socialKindField) {
       captureProviderSocialFields();
       saveState();
-      renderAll();
+      rerenderSettingsSocial();
       return;
     }
 

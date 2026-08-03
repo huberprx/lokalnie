@@ -2551,15 +2551,23 @@ body.cancel-visit-dialog-open {
   background: #eef0f4;
 }
 
-/* Desktop: ustawienia / konto — wąska kolumna (nie na pełną szerokość) */
+/* Desktop: ustawienia / konto — wąska kolumna (nie na pełną szerokość).
+   align-self:center — inaczej flex stretch rozciąga .app-scroll mimo max-width. */
 @media (min-width: 900px) {
-  .app-screen--settings .app-scroll,
-  .app-screen--account .app-scroll,
-  .app-screen--service-edit .app-scroll {
+  .app-fullscreen .app-screen--settings,
+  .app-fullscreen .app-screen--account,
+  .app-fullscreen .app-screen--service-edit {
+    background: #eef0f4;
+  }
+
+  .app-fullscreen .app-screen--settings > .app-scroll,
+  .app-fullscreen .app-screen--account > .app-scroll,
+  .app-fullscreen .app-screen--service-edit > .app-scroll {
     max-width: 40rem;
     width: 100%;
     margin-left: auto;
     margin-right: auto;
+    align-self: center;
     box-sizing: border-box;
   }
 }
