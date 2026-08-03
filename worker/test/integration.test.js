@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { applyD1Migrations } from "cloudflare:test";
 import worker from "../src/index.js";
 import { hashToken } from "../src/oauth.js";
+import { cleanupIdempotencyKeys } from "../src/idempotency.js";
 
 const CLIENT_TOKEN = "client-token";
 const PROVIDER_TOKEN = "provider-token";
@@ -139,6 +140,44 @@ describe("production schema and authorization", () => {
       body: { proposalId: "prop-1" },
     });
     expect(ownerless.status).toBe(403);
+  });
+});
+
+describe("required idempotency keys", () => {
+  it("rejects every frontend mutation without a key", async () => {
+    const cases = [
+      ["/bookings", "POST", CLIENT_TOKEN],
+      ["/requests", "POST", CLIENT_TOKEN],
+      ["/requests/missing/propose", "POST", PROVIDER_TOKEN],
+      ["/requests/missing/accept", "POST", CLIENT_TOKEN],
+      ["/requests/missing/decline", "POST", CLIENT_TOKEN],
+      ["/requests/missing/request-more", "POST", CLIENT_TOKEN],
+      ["/bookings/missing", "PATCH", CLIENT_TOKEN],
+    ];
+    for (const [path, method, token] of cases) {
+      const response = await api(path, { method, token, body: {} });
+      expect(response.status, path).toBe(400);
+      expect(await response.json(), path).toEqual({ error: "idempotency_key_required" });
+    }
+  });
+
+  it("removes expired idempotency records but keeps recent ones", async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO idempotency_keys (
+          scope, request_hash, status, response_status, response_json, created_at, updated_at
+        ) VALUES ('old', 'hash', 'completed', 200, '{}', '2020-01-01T00:00:00.000Z', '2020-01-01T00:00:00.000Z')`
+      ),
+      env.DB.prepare(
+        `INSERT INTO idempotency_keys (scope, request_hash, status, created_at, updated_at)
+         VALUES ('recent', 'hash', 'processing', ?, ?)`
+      ).bind(new Date().toISOString(), new Date().toISOString()),
+    ]);
+    expect(await cleanupIdempotencyKeys(env)).toBe(1);
+    const recent = await env.DB.prepare(
+      "SELECT scope FROM idempotency_keys WHERE scope='recent'"
+    ).first();
+    expect(recent.scope).toBe("recent");
   });
 });
 
@@ -319,5 +358,58 @@ describe("idempotent mutation replay", () => {
       booking_confirmed: 1,
       request_proposed: 1,
     });
+  });
+});
+
+describe("request-more flow", () => {
+  it("is owner-only, proposed-only, and idempotent", async () => {
+    await seedRequest({ id: "rq-more" });
+    await env.DB.prepare(
+      "UPDATE booking_requests SET accepted_proposal_id='old-proposal' WHERE id='rq-more'"
+    ).run();
+
+    const first = await api("/requests/rq-more/request-more", {
+      method: "POST",
+      key: "request-more-replay",
+    });
+    const replay = await api("/requests/rq-more/request-more", {
+      method: "POST",
+      key: "request-more-replay",
+    });
+    expect(first.status).toBe(200);
+    expect(await replay.text()).toBe(await first.text());
+
+    const updated = await env.DB.prepare(
+      `SELECT status, proposals_json, accepted_proposal_id
+       FROM booking_requests WHERE id='rq-more'`
+    ).first();
+    expect(updated).toMatchObject({
+      status: "pending",
+      proposals_json: "[]",
+      accepted_proposal_id: null,
+    });
+
+    await seedRequest({ id: "rq-more-other" });
+    const other = await api("/requests/rq-more-other/request-more", {
+      method: "POST",
+      token: OTHER_TOKEN,
+      key: "request-more-other",
+    });
+    expect(other.status).toBe(403);
+
+    await seedRequest({ id: "rq-more-provider" });
+    const provider = await api("/requests/rq-more-provider/request-more", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      key: "request-more-provider",
+    });
+    expect(provider.status).toBe(403);
+
+    await seedRequest({ id: "rq-more-pending", status: "pending", proposals: [] });
+    const wrongStatus = await api("/requests/rq-more-pending/request-more", {
+      method: "POST",
+      key: "request-more-pending",
+    });
+    expect(wrongStatus.status).toBe(409);
   });
 });

@@ -5,33 +5,31 @@ const RETRY_MINUTES = [1, 5, 30, 60];
 const MAX_ATTEMPTS = 5;
 const MAX_ERROR_LENGTH = 500;
 
-/** Kolejka maili — faktyczna wysyłka po podpięciu Resend. */
-export async function enqueueEmail(env, { toEmail, template, payload }) {
+/** Przygotowuje INSERT do transakcyjnego użycia w env.DB.batch(). */
+export function prepareEmailOutbox(
+  env,
+  { toEmail, template, payload, conditionSql = null, conditionBinds = [] }
+) {
   if (!toEmail) return null;
   const emailId = id("em");
-  await env.DB.prepare(
-    `INSERT INTO email_outbox (id, to_email, template, payload_json, status, scheduled_at)
-     VALUES (?, ?, ?, ?, 'pending', ?)`
-  )
-    .bind(emailId, String(toEmail).trim(), template, JSON.stringify(payload || {}), nowIso())
-    .run();
-  return emailId;
-}
-
-export async function safeEnqueueEmail(env, message) {
-  try {
-    return await enqueueEmail(env, message);
-  } catch (err) {
-    console.error(
-      JSON.stringify({
-        level: "error",
-        event: "email_enqueue_failed",
-        template: message?.template || null,
-        error: String(err?.message || err),
-      })
-    );
-    return null;
+  const values = [
+    emailId,
+    String(toEmail).trim(),
+    template,
+    JSON.stringify(payload || {}),
+    nowIso(),
+  ];
+  if (!conditionSql) {
+    return env.DB.prepare(
+      `INSERT INTO email_outbox (id, to_email, template, payload_json, status, scheduled_at)
+       VALUES (?, ?, ?, ?, 'pending', ?)`
+    ).bind(...values);
   }
+  return env.DB.prepare(
+    `INSERT INTO email_outbox (id, to_email, template, payload_json, status, scheduled_at)
+     SELECT ?, ?, ?, ?, 'pending', ?
+     WHERE ${conditionSql}`
+  ).bind(...values, ...conditionBinds);
 }
 
 export async function listOutbox(env, limit = 50) {

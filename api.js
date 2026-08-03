@@ -6,8 +6,47 @@
   const BASE = "https://api.lokalnie.app";
   const TOKEN_KEY = "lokalnie.authToken";
   const DEMO_HEADER = { "X-Demo-User": "demo" };
-  const IDEMPOTENCY_PREFIX = "lokalnie.idempotency.";
+  const IDEMPOTENCY_SESSION_KEY = "lokalnie.pendingIdempotency";
+  const LEGACY_IDEMPOTENCY_PREFIX = "lokalnie.idempotency.";
   let unauthorizedHookRunning = false;
+  let pendingIdempotencyKeys = loadPendingIdempotencyKeys();
+
+  function loadPendingIdempotencyKeys() {
+    try {
+      const value = JSON.parse(sessionStorage.getItem(IDEMPOTENCY_SESSION_KEY) || "{}");
+      return value && typeof value === "object" ? value : {};
+    } catch (err) {
+      return {};
+    }
+  }
+
+  function persistPendingIdempotencyKeys() {
+    try {
+      const keys = Object.keys(pendingIdempotencyKeys);
+      if (keys.length) {
+        sessionStorage.setItem(IDEMPOTENCY_SESSION_KEY, JSON.stringify(pendingIdempotencyKeys));
+      } else {
+        sessionStorage.removeItem(IDEMPOTENCY_SESSION_KEY);
+      }
+    } catch (err) {
+      /* pamięć procesu nadal zapewnia współdzielenie klucza */
+    }
+  }
+
+  function clearLegacyIdempotencyKeys() {
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+        const key = localStorage.key(i);
+        if (key && key.indexOf(LEGACY_IDEMPOTENCY_PREFIX) === 0) {
+          localStorage.removeItem(key);
+        }
+      }
+    } catch (err) {
+      /* ignore */
+    }
+  }
+
+  clearLegacyIdempotencyKeys();
 
   function isProductionHostname(hostname) {
     const host = String(hostname == null ? window.location.hostname : hostname)
@@ -52,26 +91,36 @@
     return "lokalnie-" + action + "-" + random;
   }
 
-  function idempotencyKey(action, identity, target) {
-    const prop = "_idempotency_" + action;
-    if (target && target[prop]) return target[prop];
-    const storageKey = IDEMPOTENCY_PREFIX + action + "." + String(identity || "unknown");
-    let value = "";
-    try {
-      value = localStorage.getItem(storageKey) || "";
-    } catch (err) {
-      /* ignore */
-    }
+  function idempotencyOperationId(action, identity) {
+    return String(action || "mutation") + "." + String(identity || "unknown");
+  }
+
+  function idempotencyKey(action, identity) {
+    const operationId = idempotencyOperationId(action, identity);
+    let value = pendingIdempotencyKeys[operationId] || "";
     if (!value) {
       value = newIdempotencyKey(action);
-      try {
-        localStorage.setItem(storageKey, value);
-      } catch (err) {
-        /* ignore */
-      }
+      pendingIdempotencyKeys[operationId] = value;
+      persistPendingIdempotencyKeys();
     }
-    if (target) target[prop] = value;
     return value;
+  }
+
+  function releaseIdempotencyKey(action, identity) {
+    const operationId = idempotencyOperationId(action, identity);
+    if (!pendingIdempotencyKeys[operationId]) return;
+    delete pendingIdempotencyKeys[operationId];
+    persistPendingIdempotencyKeys();
+  }
+
+  async function idempotentRequest(action, identity, path, opts) {
+    opts = opts || {};
+    const headers = Object.assign({}, opts.headers || {}, {
+      "Idempotency-Key": idempotencyKey(action, identity),
+    });
+    const result = await request(path, Object.assign({}, opts, { headers: headers }));
+    releaseIdempotencyKey(action, identity);
+    return result;
   }
 
   function notifyUnauthorized() {
@@ -382,9 +431,9 @@
   async function createBookingFromApp(booking) {
     if (!booking) return null;
     try {
-      const res = await request("/bookings", {
+      const identity = String(booking.id || "local-booking");
+      const res = await idempotentRequest("create-booking", identity, "/bookings", {
         method: "POST",
-        headers: { "Idempotency-Key": idempotencyKey("create-booking", booking.id, booking) },
         json: {
           providerId: toApiProviderId(booking.providerId),
           clientName: booking.clientName,
@@ -415,9 +464,9 @@
   async function createRequestFromApp(req) {
     if (!req) return null;
     try {
-      const res = await request("/requests", {
+      const identity = String(req.id || "local-request");
+      const res = await idempotentRequest("create-request", identity, "/requests", {
         method: "POST",
-        headers: { "Idempotency-Key": idempotencyKey("create-request", req.id, req) },
         json: {
           providerId: toApiProviderId(req.providerId),
           clientName: req.clientName,
@@ -456,16 +505,16 @@
           locationLabel: p.locationLabel || null,
         };
       });
-      const res = await request("/requests/" + encodeURIComponent(req.id) + "/propose", {
+      const identity = String(req.id);
+      const res = await idempotentRequest(
+        "propose-request",
+        identity,
+        "/requests/" + encodeURIComponent(req.id) + "/propose",
+        {
         method: "POST",
-        headers: {
-          "Idempotency-Key": idempotencyKey(
-            "propose-request",
-            String(req.id) + "." + JSON.stringify(proposals)
-          ),
-        },
         json: { proposals: proposals },
-      });
+        }
+      );
       if (res.request) {
         req.status = res.request.status;
         req.proposals = res.request.proposals || proposals;
@@ -480,16 +529,16 @@
 
   async function acceptRequestFromApp(requestId, proposalId) {
     try {
-      const res = await request("/requests/" + encodeURIComponent(requestId) + "/accept", {
-        method: "POST",
-        headers: {
-          "Idempotency-Key": idempotencyKey(
-            "accept-request",
-            String(requestId) + "." + String(proposalId)
-          ),
-        },
-        json: { proposalId: proposalId },
-      });
+      const identity = String(requestId) + "." + String(proposalId);
+      const res = await idempotentRequest(
+        "accept-request",
+        identity,
+        "/requests/" + encodeURIComponent(requestId) + "/accept",
+        {
+          method: "POST",
+          json: { proposalId: proposalId },
+        }
+      );
       return res;
     } catch (err) {
       console.warn("[LokalnieApi] acceptRequest failed", err);
@@ -499,15 +548,24 @@
 
   async function declineRequestFromApp(requestId, action) {
     if (!requestId) return null;
-    const res = await request("/requests/" + encodeURIComponent(requestId) + "/decline", {
-      method: "POST",
-      headers: {
-        "Idempotency-Key": idempotencyKey(
-          action || "decline-request",
-          String(requestId) + "." + String(action || "decline")
-        ),
-      },
-    });
+    const mutationAction = action || "decline-request";
+    const res = await idempotentRequest(
+      mutationAction,
+      String(requestId),
+      "/requests/" + encodeURIComponent(requestId) + "/decline",
+      { method: "POST" }
+    );
+    return res && res.request;
+  }
+
+  async function requestMoreRequestFromApp(requestId) {
+    if (!requestId) return null;
+    const res = await idempotentRequest(
+      "request-more",
+      String(requestId),
+      "/requests/" + encodeURIComponent(requestId) + "/request-more",
+      { method: "POST" }
+    );
     return res && res.request;
   }
 
@@ -523,16 +581,14 @@
   async function patchBookingFromApp(booking, patch, action) {
     if (!booking || !booking.id || !patch) return null;
     const stablePatch = JSON.stringify(patch);
-    const res = await request("/bookings/" + encodeURIComponent(booking.id), {
-      method: "PATCH",
-      headers: {
-        "Idempotency-Key": idempotencyKey(
-          action || "patch-booking",
-          String(booking.id) + "." + String(action || "patch") + "." + stablePatch
-        ),
-      },
-      json: patch,
-    });
+    const mutationAction = action || "patch-booking";
+    const identity = String(booking.id) + "." + stablePatch;
+    const res = await idempotentRequest(
+      mutationAction,
+      identity,
+      "/bookings/" + encodeURIComponent(booking.id),
+      { method: "PATCH", json: patch }
+    );
     return res && res.booking;
   }
 
@@ -582,8 +638,10 @@
     proposeRequestFromApp: proposeRequestFromApp,
     acceptRequestFromApp: acceptRequestFromApp,
     declineRequestFromApp: declineRequestFromApp,
+    requestMoreRequestFromApp: requestMoreRequestFromApp,
     updateBookingStatusFromApp: updateBookingStatusFromApp,
     patchBookingFromApp: patchBookingFromApp,
+    releaseIdempotencyKey: releaseIdempotencyKey,
     uploadAvatar: uploadAvatar,
     logout: logout,
   };

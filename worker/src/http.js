@@ -20,9 +20,13 @@ export function isAllowedOrigin(origin, env) {
   if (!origin) return false;
   const allowed = new Set(STATIC_ORIGINS);
   const appOrigin = String(env?.APP_ORIGIN || "").replace(/\/+$/, "");
-  if (appOrigin) allowed.add(appOrigin);
-  if (env?.ENVIRONMENT !== "production" || LOCAL_ORIGINS.has(appOrigin)) {
-    for (const localOrigin of LOCAL_ORIGINS) allowed.add(localOrigin);
+  if (env?.ENVIRONMENT === "production") {
+    if (appOrigin && !LOCAL_ORIGINS.has(appOrigin)) allowed.add(appOrigin);
+  } else {
+    if (appOrigin) allowed.add(appOrigin);
+    for (const localOrigin of LOCAL_ORIGINS) {
+      allowed.add(localOrigin);
+    }
   }
   return allowed.has(origin);
 }

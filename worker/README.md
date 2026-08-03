@@ -58,6 +58,7 @@ i muszą być załadowane jawnie wyłącznie do lokalnej bazy.
 | POST | `/requests/:id/propose` | Propozycje godzin |
 | POST | `/requests/:id/accept` | Akceptacja propozycji |
 | POST | `/requests/:id/decline` | Odrzucenie |
+| POST | `/requests/:id/request-more` | Prośba klienta o nowe propozycje |
 | POST | `/media` | Upload (multipart: `file`, `kind`) |
 | GET | `/media/:id` | Odczyt pliku |
 | GET | `/emails/outbox` | Kolejka maili (bez wysyłki) |
@@ -94,9 +95,13 @@ npm run deploy
 
 Wdrożenie zdalne wykonuje wyłącznie migracje — bez seeda demo.
 
-E-maile transakcyjne są kolejką best-effort: udana mutacja biznesowa nie jest
-cofana, gdy chwilowo nie uda się dopisać wiadomości do outbox. Błąd jest logowany,
-a klient nadal dostaje wynik wykonanej mutacji.
+Mutacje `POST /bookings`, `POST /requests`, `propose`, `accept`, `decline`,
+`request-more` oraz `PATCH /bookings/:id` wymagają nagłówka `Idempotency-Key`.
+Zakres klucza obejmuje użytkownika, metodę i endpoint. Zakończone rekordy
+idempotencji są usuwane przez cron po 7 dniach, a porzucone po 24 godzinach.
+
+Mutacja biznesowa i odpowiadający jej wpis do `email_outbox` są wykonywane w jednym
+transakcyjnym `DB.batch`. Błąd outbox wycofuje mutację zamiast pozostawiać częściowy stan.
 
 ## Co wymaga Ciebie później
 

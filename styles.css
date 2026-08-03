@@ -12303,6 +12303,11 @@ body.prov-cal-resizing * {
   flex: 0 0 auto;
 }
 
+.device-frame[data-view="desktop"] .app-screen--booking > .booking-confirm-bar {
+  display: flex;
+  flex-shrink: 0;
+}
+
 @media (min-width: 900px) {
   .app-fullscreen .app-screen--booking .booking-mobile {
     display: none;
@@ -13185,9 +13190,24 @@ body.prov-cal-resizing * {
 }
 
 @media (min-width: 900px) {
-  .app-fullscreen .bottom-nav,
-  .app-fullscreen .booking-confirm-bar:not(.prov-cal-add__foot) {
+  /* Dolne menu nawigacji tylko na mobile — pasek Suma/Rezerwuj zostaje. */
+  .app-fullscreen .bottom-nav {
     display: none;
+  }
+
+  /* Desktop: pasek podsumowania zawsze pod kolumnami usługi–dzień–godzina. */
+  .app-fullscreen .app-screen--booking > .booking-confirm-bar {
+    display: flex;
+    position: relative;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    transform: none;
+    flex-shrink: 0;
+    margin-top: 0;
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.05);
+    z-index: 5;
   }
 }
 

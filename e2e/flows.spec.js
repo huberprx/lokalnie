@@ -319,7 +319,9 @@ test.describe("Lokalnie — kluczowe przepływy", function () {
       localStorage.removeItem("lokalnie.testerMode");
       window.LokalnieApi.setAuthToken("e2e-token");
       window.LokalnieApi.enabled = true;
+      let upsertCalls = 0;
       window.LokalnieApi.upsertClient = function () {
+        upsertCalls += 1;
         return Promise.resolve(null);
       };
       let patchCalls = 0;
@@ -337,6 +339,7 @@ test.describe("Lokalnie — kluczowe przepływy", function () {
       if (!booking) throw new Error("Brak booking do testu rollbacku");
       booking._fromApi = true;
       const before = JSON.parse(JSON.stringify(booking));
+      const clientsBefore = JSON.parse(JSON.stringify(window.AppState.providerClients || {}));
       window.App.openProvCalEdit(booking.id);
       window.AppState.provCalAddDraft.clientName = "Zmiana, która ma zostać cofnięta";
       await window.App.confirmProvCalAdd();
@@ -344,6 +347,9 @@ test.describe("Lokalnie — kluczowe przepływy", function () {
         patchCalls: patchCalls,
         before: before,
         after: JSON.parse(JSON.stringify(booking)),
+        clientsBefore: clientsBefore,
+        clientsAfter: JSON.parse(JSON.stringify(window.AppState.providerClients || {})),
+        upsertCalls: upsertCalls,
         panelOpen: window.AppState.provCalAddOpen,
         toast: document.getElementById("app-toast").textContent,
       };
@@ -351,6 +357,8 @@ test.describe("Lokalnie — kluczowe przepływy", function () {
 
     expect(result.patchCalls).toBe(1);
     expect(result.after).toEqual(result.before);
+    expect(result.clientsAfter).toEqual(result.clientsBefore);
+    expect(result.upsertCalls).toBe(0);
     expect(result.panelOpen).toBe(true);
     expect(result.toast).toBe("Termin został właśnie zajęty");
   });
@@ -365,6 +373,10 @@ test.describe("Lokalnie — kluczowe przepływy", function () {
       window.LokalnieApi.declineRequestFromApp = function (id, action) {
         calls.push({ id: id, action: action });
         return Promise.resolve({ id: id, status: "rejected" });
+      };
+      window.LokalnieApi.requestMoreRequestFromApp = function (id) {
+        calls.push({ id: id, action: "request-more" });
+        return Promise.resolve({ id: id, status: "pending", proposals: [] });
       };
 
       function request(id, status) {
@@ -398,21 +410,31 @@ test.describe("Lokalnie — kluczowe przepływy", function () {
     expect(result.calls).toEqual([
       { id: "rq-e2e-cancel", action: "cancel-request" },
       { id: "rq-e2e-reject", action: "reject-request" },
-      { id: "rq-e2e-proposals", action: "decline-proposals" },
+      { id: "rq-e2e-proposals", action: "request-more" },
     ]);
-    expect(result.statuses).toEqual(["cancelled", "rejected", "rejected"]);
-    expect(result.toast).toContain("Możesz wysłać nową prośbę");
+    expect(result.statuses).toEqual(["cancelled", "rejected", "pending"]);
+    expect(result.toast).toContain("Poprosiliśmy o inne terminy");
   });
 
-  test("propose, decline i PATCH ponawiają stabilne Idempotency-Key", async function ({ page }) {
+  test("retry zachowuje, a sukces zwalnia Idempotency-Key", async function ({ page }) {
     const seen = [];
+    const attempts = Object.create(null);
     await page.route("https://api.lokalnie.app/**", async function (route) {
       const request = route.request();
+      const path = new URL(request.url()).pathname;
+      attempts[path] = (attempts[path] || 0) + 1;
       seen.push({
-        path: new URL(request.url()).pathname,
+        path: path,
         key: request.headers()["idempotency-key"],
       });
-      const path = new URL(request.url()).pathname;
+      if (attempts[path] === 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "temporary_failure" }),
+        });
+        return;
+      }
       const body = path.endsWith("/propose")
         ? {
             request: {
@@ -431,7 +453,9 @@ test.describe("Lokalnie — kluczowe przepływy", function () {
           }
         : path.endsWith("/decline")
           ? { request: { id: "rq-idem", status: "rejected" } }
-          : { booking: { id: "bk-idem", status: "confirmed" } };
+          : path.endsWith("/request-more")
+            ? { request: { id: "rq-idem", status: "pending", proposals: [] } }
+            : { booking: { id: "bk-idem", status: "confirmed" } };
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
     });
     await gotoApp(page);
@@ -443,20 +467,135 @@ test.describe("Lokalnie — kluczowe przepływy", function () {
         proposals: [{ id: "p1", dateISO: "2026-08-04", from: "10:00", to: "10:30" }],
       };
       const booking = { id: "bk-idem" };
+      await window.LokalnieApi.proposeRequestFromApp(req).catch(function () {});
       await window.LokalnieApi.proposeRequestFromApp(req);
       await window.LokalnieApi.proposeRequestFromApp(req);
-      await window.LokalnieApi.declineRequestFromApp(req.id, "decline-proposals");
-      await window.LokalnieApi.declineRequestFromApp(req.id, "decline-proposals");
+      await window.LokalnieApi.declineRequestFromApp(req.id, "decline-request").catch(function () {});
+      await window.LokalnieApi.declineRequestFromApp(req.id, "decline-request");
+      await window.LokalnieApi.declineRequestFromApp(req.id, "decline-request");
+      await window.LokalnieApi.requestMoreRequestFromApp(req.id).catch(function () {});
+      await window.LokalnieApi.requestMoreRequestFromApp(req.id);
+      await window.LokalnieApi.requestMoreRequestFromApp(req.id);
+      await Promise.allSettled([
+        window.LokalnieApi.acceptRequestFromApp("rq-concurrent", "p1"),
+        window.LokalnieApi.acceptRequestFromApp("rq-concurrent", "p1"),
+      ]);
+      await window.LokalnieApi.acceptRequestFromApp("rq-concurrent", "p1");
       const patch = { status: "confirmed", dateISO: "2026-08-04", from: "10:00", to: "10:30" };
+      await window.LokalnieApi.patchBookingFromApp(booking, patch, "edit-booking").catch(function () {});
       await window.LokalnieApi.patchBookingFromApp(booking, patch, "edit-booking");
       await window.LokalnieApi.patchBookingFromApp(booking, patch, "edit-booking");
       return true;
     });
     expect(keys).toBe(true);
-    expect(seen).toHaveLength(6);
+    expect(seen).toHaveLength(15);
     expect(seen.every(function (entry) { return !!entry.key; })).toBe(true);
     expect(seen[0].key).toBe(seen[1].key);
-    expect(seen[2].key).toBe(seen[3].key);
-    expect(seen[4].key).toBe(seen[5].key);
+    expect(seen[2].key).not.toBe(seen[1].key);
+    expect(seen[3].key).toBe(seen[4].key);
+    expect(seen[5].key).not.toBe(seen[4].key);
+    expect(seen[6].key).toBe(seen[7].key);
+    expect(seen[8].key).not.toBe(seen[7].key);
+    expect(seen[9].key).toBe(seen[10].key);
+    expect(seen[11].key).not.toBe(seen[10].key);
+    expect(seen[12].key).toBe(seen[13].key);
+    expect(seen[14].key).not.toBe(seen[13].key);
+  });
+
+  test("druga pętla propose → request-more → propose dostaje nowe klucze", async function ({ page }) {
+    const calls = [];
+    await page.route("https://api.lokalnie.app/requests/**", async function (route) {
+      const request = route.request();
+      const path = new URL(request.url()).pathname;
+      const key = request.headers()["idempotency-key"];
+      calls.push({ path: path, key: key });
+      if (path.endsWith("/request-more")) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            request: { id: "rq-demo-magda", status: "pending", proposals: [] },
+          }),
+        });
+        return;
+      }
+      const payload = request.postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          request: {
+            id: "rq-demo-magda",
+            status: "proposed",
+            proposals: payload.proposals || [],
+          },
+        }),
+      });
+    });
+
+    await resetAndLogin(page, "provider");
+    await page.evaluate(function () {
+      localStorage.removeItem("lokalnie.testerMode");
+      window.LokalnieApi.setAuthToken("e2e-token");
+      window.LokalnieApi.enabled = true;
+      const req = (window.AppState.requests || []).find(function (r) {
+        return r && r.id === "rq-demo-magda";
+      });
+      if (!req) throw new Error("Brak rq-demo-magda");
+      req._fromApi = true;
+    });
+    await goProviderCalendar(page);
+
+    const firstProposal = [
+      {
+        id: "loop-a",
+        dateISO: "2026-07-20",
+        from: "10:00",
+        to: "10:45",
+        locationId: "loc-gb-1",
+        locationLabel: "Studio główne",
+      },
+    ];
+    await seedProposalsAndSend(page, "rq-demo-magda", firstProposal);
+    await switchRole(page, "client");
+    await page.evaluate(async function () {
+      await window.App.declineRequestProposals("rq-demo-magda");
+    });
+    const pending = await page.evaluate(function () {
+      const req = window.AppState.requests.find(function (r) {
+        return r.id === "rq-demo-magda";
+      });
+      return { status: req.status, proposals: req.proposals.length };
+    });
+    expect(pending).toEqual({ status: "pending", proposals: 0 });
+
+    await switchRole(page, "provider");
+    await goProviderCalendar(page);
+    const secondProposal = [
+      {
+        id: "loop-b",
+        dateISO: "2026-07-20",
+        from: "11:00",
+        to: "11:45",
+        locationId: "loc-gb-1",
+        locationLabel: "Studio główne",
+      },
+    ];
+    await seedProposalsAndSend(page, "rq-demo-magda", secondProposal);
+
+    const finalState = await page.evaluate(function () {
+      const req = window.AppState.requests.find(function (r) {
+        return r.id === "rq-demo-magda";
+      });
+      return { status: req.status, proposalId: req.proposals[0] && req.proposals[0].id };
+    });
+    expect(finalState).toEqual({ status: "proposed", proposalId: "loop-b" });
+    expect(calls.map(function (entry) { return entry.path; })).toEqual([
+      "/requests/rq-demo-magda/propose",
+      "/requests/rq-demo-magda/request-more",
+      "/requests/rq-demo-magda/propose",
+    ]);
+    expect(calls.every(function (entry) { return !!entry.key; })).toBe(true);
+    expect(calls[0].key).not.toBe(calls[2].key);
   });
 });

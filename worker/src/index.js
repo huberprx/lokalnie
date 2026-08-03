@@ -1,11 +1,11 @@
 import { json, id, nowIso, readJson, preflight, withCors, HttpError } from "./http.js";
 import { requireDemoUser, requireAdmin, mapUser, mapProvider } from "./auth.js";
 import { startGoogleAuth, handleGoogleCallback, logoutSession } from "./oauth.js";
-import { safeEnqueueEmail, listOutbox, processDueEmails } from "./email.js";
+import { prepareEmailOutbox, listOutbox, processDueEmails } from "./email.js";
 import { mapClient, mapBooking, mapRequest, mapMedia } from "./mappers.js";
 import { validateSlot, normalizeText, normalizeStringArray, isValidDateISO } from "./validate.js";
 import { canTransitionBooking } from "./bookings.js";
-import { withIdempotency } from "./idempotency.js";
+import { cleanupIdempotencyKeys, withIdempotency } from "./idempotency.js";
 
 const ALLOWED_IMAGE = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const MAX_UPLOAD = 5 * 1024 * 1024;
@@ -13,10 +13,27 @@ const MAX_UPLOAD = 5 * 1024 * 1024;
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") return preflight(request, env);
-    return withCors(await routeRequest(request, env), request, env);
+    try {
+      return withCors(await routeRequest(request, env), request, env);
+    } catch (err) {
+      console.error(JSON.stringify({ level: "error", err: String(err?.stack || err) }));
+      const response =
+        err instanceof HttpError
+          ? json({ error: err.code }, err.status)
+          : json(
+              {
+                error: "internal_error",
+                ...(env.ENVIRONMENT === "production"
+                  ? {}
+                  : { message: String(err?.message || err) }),
+              },
+              500
+            );
+      return withCors(response, request, env);
+    }
   },
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(processDueEmails(env));
+    ctx.waitUntil(Promise.all([processDueEmails(env), cleanupIdempotencyKeys(env)]));
   },
 };
 
@@ -110,6 +127,9 @@ async function routeRequest(request, env) {
         if (parts[2] === "propose" && request.method === "POST") return proposeRequest(request, env, rid);
         if (parts[2] === "accept" && request.method === "POST") return acceptRequest(request, env, rid);
         if (parts[2] === "decline" && request.method === "POST") return declineRequest(request, env, rid);
+        if (parts[2] === "request-more" && request.method === "POST") {
+          return requestMore(request, env, rid);
+        }
         if (!parts[2] && request.method === "GET") return getRequest(request, env, rid);
       }
 
@@ -407,7 +427,7 @@ async function createBooking(request, env) {
   return withIdempotency(
     request,
     env,
-    { userId: auth.user.id, endpoint: "POST:/bookings" },
+    { userId: auth.user.id, endpoint: "/bookings" },
     () => createBookingMutation(request, env, auth)
   );
 }
@@ -462,7 +482,7 @@ async function createBookingMutation(request, env, auth) {
   const ts = nowIso();
 
   const activeStatus = ["confirmed", "pending", "proposed"].includes(status) ? 1 : 0;
-  const insert = await env.DB.prepare(
+  const insertStatement = env.DB.prepare(
     `INSERT INTO bookings (
       id, provider_id, client_user_id, provider_client_id, client_name, client_phone, client_email,
       service_ids_json, service_names_json, date_iso, time_from, time_to, location_label, status, request_id, created_at, updated_at
@@ -500,47 +520,58 @@ async function createBookingMutation(request, env, auth) {
       body.dateISO,
       body.to,
       body.from
-    )
-    .run();
-  if (!insert.meta?.changes) return json({ error: "booking_overlap" }, 409);
-
-  // Auto-upsert CRM gdy jest provider demo
-  if (auth.provider && auth.provider.id === providerId) {
-    await upsertClientFromBooking(env, auth.provider.id, {
-      name: clientName,
-      phone: phoneResult.value,
-      email: emailResult.value,
-    });
+    );
+  const statements = [insertStatement];
+  if (auth.provider?.id === providerId) {
+    const crmClientId = id("pc");
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO provider_clients (
+          id, provider_id, name, phone, email, created_at, updated_at
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?
+        WHERE EXISTS (SELECT 1 FROM bookings WHERE id=?)
+          AND NOT EXISTS (
+            SELECT 1 FROM provider_clients
+            WHERE provider_id=? AND lower(name)=lower(?)
+          )`
+      ).bind(
+        crmClientId,
+        providerId,
+        clientName,
+        phoneResult.value,
+        emailResult.value,
+        ts,
+        ts,
+        bookingId,
+        providerId,
+        clientName
+      )
+    );
   }
-
   if (emailResult.value) {
-    await safeEnqueueEmail(env, {
-      toEmail: emailResult.value,
-      template: status === "confirmed" ? "booking_confirmed" : "booking_created",
-      payload: { bookingId, clientName, dateISO: body.dateISO, from: body.from, to: body.to, status },
-    });
+    statements.push(
+      prepareEmailOutbox(env, {
+        toEmail: emailResult.value,
+        template: status === "confirmed" ? "booking_confirmed" : "booking_created",
+        payload: {
+          bookingId,
+          clientName,
+          dateISO: body.dateISO,
+          from: body.from,
+          to: body.to,
+          status,
+        },
+        conditionSql: "EXISTS (SELECT 1 FROM bookings WHERE id=?)",
+        conditionBinds: [bookingId],
+      })
+    );
   }
+  const [insert] = await env.DB.batch(statements);
+  if (!insert.meta?.changes) return json({ error: "booking_overlap" }, 409);
 
   const row = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
   return json({ booking: mapBooking(row) }, 201);
-}
-
-async function upsertClientFromBooking(env, providerId, { name, phone, email }) {
-  const existing = await env.DB.prepare(
-    `SELECT id FROM provider_clients WHERE provider_id=? AND lower(name)=lower(?) LIMIT 1`
-  )
-    .bind(providerId, name)
-    .first();
-  if (existing) return existing.id;
-  const clientId = id("pc");
-  const ts = nowIso();
-  await env.DB.prepare(
-    `INSERT INTO provider_clients (id, provider_id, name, phone, email, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  )
-    .bind(clientId, providerId, name, phone || null, email || null, ts, ts)
-    .run();
-  return clientId;
 }
 
 async function getBooking(request, env, bookingId) {
@@ -560,7 +591,7 @@ async function patchBooking(request, env, bookingId) {
   return withIdempotency(
     request,
     env,
-    { userId: auth.user.id, endpoint: `PATCH:/bookings/${bookingId}` },
+    { userId: auth.user.id, endpoint: `/bookings/${bookingId}` },
     () => patchBookingMutation(request, env, auth, bookingId)
   );
 }
@@ -620,7 +651,8 @@ async function patchBookingMutation(request, env, auth, bookingId) {
   }
 
   const activeStatus = ["confirmed", "pending", "proposed"].includes(status) ? 1 : 0;
-  const update = await env.DB.prepare(
+  const ts = nowIso();
+  const updateStatement = env.DB.prepare(
     `UPDATE bookings
      SET status=?, date_iso=?, time_from=?, time_to=?, location_label=?, updated_at=?
      WHERE id=?
@@ -642,7 +674,7 @@ async function patchBookingMutation(request, env, auth, bookingId) {
       from,
       to,
       locationLabel,
-      nowIso(),
+      ts,
       bookingId,
       activeStatus,
       row.provider_id,
@@ -650,17 +682,22 @@ async function patchBookingMutation(request, env, auth, bookingId) {
       to,
       from,
       bookingId
-    )
-    .run();
-  if (!update.meta?.changes) return json({ error: "booking_overlap" }, 409);
-
+    );
+  const statements = [updateStatement];
   if (status !== row.status && row.client_email) {
-    await safeEnqueueEmail(env, {
-      toEmail: row.client_email,
-      template: `booking_${status}`,
-      payload: { bookingId, status, dateISO, from, to },
-    });
+    statements.push(
+      prepareEmailOutbox(env, {
+        toEmail: row.client_email,
+        template: `booking_${status}`,
+        payload: { bookingId, status, dateISO, from, to },
+        conditionSql:
+          "EXISTS (SELECT 1 FROM bookings WHERE id=? AND status=? AND updated_at=?)",
+        conditionBinds: [bookingId, status, ts],
+      })
+    );
   }
+  const [update] = await env.DB.batch(statements);
+  if (!update.meta?.changes) return json({ error: "booking_overlap" }, 409);
 
   const updated = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
   return json({ booking: mapBooking(updated) });
@@ -703,7 +740,7 @@ async function createRequest(request, env) {
   return withIdempotency(
     request,
     env,
-    { userId: auth.user.id, endpoint: "POST:/requests" },
+    { userId: auth.user.id, endpoint: "/requests" },
     () => createRequestMutation(request, env, auth)
   );
 }
@@ -750,7 +787,7 @@ async function createRequestMutation(request, env, auth) {
   const ts = nowIso();
   const clientName = clientNameResult.value;
 
-  await env.DB.prepare(
+  const insertStatement = env.DB.prepare(
     `INSERT INTO booking_requests (
       id, provider_id, client_user_id, client_name, client_phone, client_email,
       service_ids_json, service_names_json, days_json, proposals_json, status, created_at, updated_at
@@ -768,17 +805,20 @@ async function createRequestMutation(request, env, auth) {
       JSON.stringify(days),
       ts,
       ts
-    )
-    .run();
-
-  // Mail do usługodawcy (jeśli ma e-mail)
+    );
+  const statements = [insertStatement];
   if (provider?.email) {
-    await safeEnqueueEmail(env, {
-      toEmail: provider.email,
-      template: "request_new",
-      payload: { requestId, clientName, providerName: provider.name },
-    });
+    statements.push(
+      prepareEmailOutbox(env, {
+        toEmail: provider.email,
+        template: "request_new",
+        payload: { requestId, clientName, providerName: provider.name },
+        conditionSql: "EXISTS (SELECT 1 FROM booking_requests WHERE id=?)",
+        conditionBinds: [requestId],
+      })
+    );
   }
+  await env.DB.batch(statements);
 
   const row = await env.DB.prepare("SELECT * FROM booking_requests WHERE id=?").bind(requestId).first();
   return json({ request: mapRequest(row) }, 201);
@@ -790,7 +830,7 @@ async function proposeRequest(request, env, requestId) {
   return withIdempotency(
     request,
     env,
-    { userId: auth.user.id, endpoint: `POST:/requests/${requestId}/propose` },
+    { userId: auth.user.id, endpoint: `/requests/${requestId}/propose` },
     () => proposeRequestMutation(request, env, auth, requestId)
   );
 }
@@ -824,19 +864,26 @@ async function proposeRequestMutation(request, env, auth, requestId) {
     });
   }
 
-  await env.DB.prepare(
+  const ts = nowIso();
+  const updateStatement = env.DB.prepare(
     `UPDATE booking_requests SET proposals_json=?, status='proposed', updated_at=? WHERE id=?`
   )
-    .bind(JSON.stringify(normalized), nowIso(), requestId)
-    .run();
-
+    .bind(JSON.stringify(normalized), ts, requestId);
+  const statements = [updateStatement];
   if (row.client_email) {
-    await safeEnqueueEmail(env, {
-      toEmail: row.client_email,
-      template: "request_proposed",
-      payload: { requestId, proposals: normalized },
-    });
+    statements.push(
+      prepareEmailOutbox(env, {
+        toEmail: row.client_email,
+        template: "request_proposed",
+        payload: { requestId, proposals: normalized },
+        conditionSql:
+          "EXISTS (SELECT 1 FROM booking_requests WHERE id=? AND status='proposed' AND updated_at=?)",
+        conditionBinds: [requestId, ts],
+      })
+    );
   }
+  const [update] = await env.DB.batch(statements);
+  if (!update.meta?.changes) return json({ error: "request_conflict" }, 409);
 
   const updated = await env.DB.prepare("SELECT * FROM booking_requests WHERE id=?").bind(requestId).first();
   return json({ request: mapRequest(updated) });
@@ -848,7 +895,7 @@ async function acceptRequest(request, env, requestId) {
   return withIdempotency(
     request,
     env,
-    { userId: auth.user.id, endpoint: `POST:/requests/${requestId}/accept` },
+    { userId: auth.user.id, endpoint: `/requests/${requestId}/accept` },
     () => acceptRequestMutation(request, env, auth, requestId)
   );
 }
@@ -874,7 +921,7 @@ async function acceptRequestMutation(request, env, auth, requestId) {
 
   const bookingId = id("bk");
   const ts = nowIso();
-  const insert = await env.DB.prepare(
+  const insertStatement = env.DB.prepare(
     `INSERT INTO bookings (
       id, provider_id, client_user_id, client_name, client_phone, client_email,
       service_ids_json, service_names_json, date_iso, time_from, time_to, location_label,
@@ -920,28 +967,60 @@ async function acceptRequestMutation(request, env, auth, requestId) {
       chosen.to,
       chosen.from,
       requestId
-    )
-    .run();
-  if (!insert.meta?.changes) return json({ error: "booking_overlap" }, 409);
-
-  const requestUpdate = await env.DB.prepare(
+    );
+  const updateStatement = env.DB.prepare(
     `UPDATE booking_requests
      SET accepted_proposal_id=?, status='confirmed', updated_at=?
-     WHERE id=? AND client_user_id=? AND status='proposed'`
+     WHERE id=? AND client_user_id=? AND status='proposed'
+       AND EXISTS (
+         SELECT 1 FROM bookings
+         WHERE id=? AND request_id=? AND client_user_id=?
+       )`
   )
-    .bind(proposalId, ts, requestId, auth.user.id)
-    .run();
-  if (!requestUpdate.meta?.changes) {
-    await env.DB.prepare("DELETE FROM bookings WHERE id=?").bind(bookingId).run();
-    return json({ error: "request_conflict" }, 409);
-  }
-
+    .bind(
+      proposalId,
+      ts,
+      requestId,
+      auth.user.id,
+      bookingId,
+      requestId,
+      auth.user.id
+    );
+  const statements = [insertStatement, updateStatement];
   if (row.client_email) {
-    await safeEnqueueEmail(env, {
-      toEmail: row.client_email,
-      template: "booking_confirmed",
-      payload: { bookingId, requestId, dateISO: chosen.dateISO, from: chosen.from, to: chosen.to },
-    });
+    statements.push(
+      prepareEmailOutbox(env, {
+        toEmail: row.client_email,
+        template: "booking_confirmed",
+        payload: {
+          bookingId,
+          requestId,
+          dateISO: chosen.dateISO,
+          from: chosen.from,
+          to: chosen.to,
+        },
+        conditionSql: `EXISTS (
+          SELECT 1 FROM bookings AS accepted_booking
+          JOIN booking_requests AS accepted_request
+            ON accepted_request.id=accepted_booking.request_id
+          WHERE accepted_booking.id=?
+            AND accepted_request.id=?
+            AND accepted_request.status='confirmed'
+            AND accepted_request.accepted_proposal_id=?
+        )`,
+        conditionBinds: [bookingId, requestId, proposalId],
+      })
+    );
+  }
+  const [insert, requestUpdate] = await env.DB.batch(statements);
+  if (!insert.meta?.changes || !requestUpdate.meta?.changes) {
+    if (insert.meta?.changes) {
+      await env.DB.prepare("DELETE FROM bookings WHERE id=?").bind(bookingId).run();
+    }
+    return json(
+      { error: insert.meta?.changes ? "request_conflict" : "booking_overlap" },
+      409
+    );
   }
 
   const booking = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
@@ -955,7 +1034,7 @@ async function declineRequest(request, env, requestId) {
   return withIdempotency(
     request,
     env,
-    { userId: auth.user.id, endpoint: `POST:/requests/${requestId}/decline` },
+    { userId: auth.user.id, endpoint: `/requests/${requestId}/decline` },
     () => declineRequestMutation(env, auth, requestId)
   );
 }
@@ -967,11 +1046,50 @@ async function declineRequestMutation(env, auth, requestId) {
     return json({ error: "forbidden" }, 403);
   }
 
-  await env.DB.prepare(`UPDATE booking_requests SET status='rejected', updated_at=? WHERE id=?`)
-    .bind(nowIso(), requestId)
-    .run();
+  const [update] = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE booking_requests SET status='rejected', updated_at=? WHERE id=?`
+    ).bind(nowIso(), requestId),
+  ]);
+  if (!update.meta?.changes) return json({ error: "request_conflict" }, 409);
 
   const updated = await env.DB.prepare("SELECT * FROM booking_requests WHERE id=?").bind(requestId).first();
+  return json({ request: mapRequest(updated) });
+}
+
+async function requestMore(request, env, requestId) {
+  const auth = await requireDemoUser(request, env);
+  if (auth.error) return auth.error;
+  return withIdempotency(
+    request,
+    env,
+    { userId: auth.user.id, endpoint: `/requests/${requestId}/request-more` },
+    () => requestMoreMutation(env, auth, requestId)
+  );
+}
+
+async function requestMoreMutation(env, auth, requestId) {
+  const row = await env.DB.prepare("SELECT * FROM booking_requests WHERE id=?")
+    .bind(requestId)
+    .first();
+  if (!row) return json({ error: "not_found" }, 404);
+  if (!row.client_user_id || row.client_user_id !== auth.user.id) {
+    return json({ error: "forbidden" }, 403);
+  }
+  if (row.status !== "proposed") return json({ error: "request_not_proposed" }, 409);
+
+  const [update] = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE booking_requests
+       SET status='pending', proposals_json='[]', accepted_proposal_id=NULL, updated_at=?
+       WHERE id=? AND client_user_id=? AND status='proposed'`
+    ).bind(nowIso(), requestId, auth.user.id),
+  ]);
+  if (!update.meta?.changes) return json({ error: "request_conflict" }, 409);
+
+  const updated = await env.DB.prepare("SELECT * FROM booking_requests WHERE id=?")
+    .bind(requestId)
+    .first();
   return json({ request: mapRequest(updated) });
 }
 

@@ -5,7 +5,7 @@ const PROCESSING_TTL_MS = 10 * 60 * 1000;
 
 export async function withIdempotency(request, env, { userId, endpoint }, operation) {
   const key = request.headers.get("Idempotency-Key");
-  if (!key) return operation();
+  if (!key) return json({ error: "idempotency_key_required" }, 400);
 
   const normalizedKey = key.trim();
   if (!normalizedKey || normalizedKey.length > MAX_KEY_LENGTH) {
@@ -13,7 +13,7 @@ export async function withIdempotency(request, env, { userId, endpoint }, operat
   }
 
   const requestHash = await hashText(await request.clone().text());
-  const scope = `${userId}:${endpoint}:${normalizedKey}`;
+  const scope = `${userId}:${request.method.toUpperCase()}:${endpoint}:${normalizedKey}`;
   const now = nowIso();
   const staleAt = new Date(Date.now() - PROCESSING_TTL_MS).toISOString();
   const claim = await env.DB.prepare(
@@ -69,6 +69,21 @@ export async function withIdempotency(request, env, { userId, endpoint }, operat
       .run();
     throw err;
   }
+}
+
+export async function cleanupIdempotencyKeys(env, completedMaxAgeDays = 7) {
+  const completedBefore = new Date(
+    Date.now() - completedMaxAgeDays * 24 * 60 * 60 * 1000
+  ).toISOString();
+  const abandonedBefore = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const result = await env.DB.prepare(
+    `DELETE FROM idempotency_keys
+     WHERE (status='completed' AND updated_at < ?)
+        OR (status='processing' AND updated_at < ?)`
+  )
+    .bind(completedBefore, abandonedBefore)
+    .run();
+  return Number(result.meta?.changes || 0);
 }
 
 export async function hashText(value) {

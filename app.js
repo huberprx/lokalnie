@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.204";
+  const APP_VERSION = "1.0.205";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -106,6 +106,13 @@
     }
     if (err && err.status === 401) {
       return "Sesja wygasła. Zaloguj się ponownie, aby kontynuować.";
+    }
+    if (
+      err &&
+      err.status === 400 &&
+      (code === "idempotency_key_required" || code.indexOf("idempotency_key_required") !== -1)
+    ) {
+      return "Nie udało się zapisać zmiany. Spróbuj ponownie.";
     }
     return fallback || "Nie udało się zapisać zmiany. Spróbuj ponownie.";
   }
@@ -5345,7 +5352,7 @@
     const actions = waiting
       ? `<div class="visit-card__actions">${cancelBtn}</div>`
       : `<div class="visit-card__actions">
-           <button type="button" class="btn btn--ghost btn--sm" data-action="decline-request-proposals" data-request-id="${escapeHtml(r.id)}">Odrzuć propozycje</button>
+           <button type="button" class="btn btn--ghost btn--sm" data-action="decline-request-proposals" data-request-id="${escapeHtml(r.id)}">Poproś o inne terminy</button>
            ${cancelBtn}
          </div>`;
     return `
@@ -11630,15 +11637,6 @@
     const clientPhone = String(draft.clientPhone || "").trim();
     const clientEmail = String(draft.clientEmail || "").trim();
     const clientAddress = String(draft.clientAddress || "").trim();
-    // Imię klienta opcjonalne — sam blok usługi / czasu można zapisać bez kontaktu.
-    if (clientName) {
-      upsertProviderClient(p.id, {
-        name: clientName,
-        phone: clientPhone,
-        email: clientEmail,
-        address: clientAddress,
-      });
-    }
     const selected = provCalAddSelectedServices(p, draft);
     if (!selected.length) {
       showToast("Wybierz usługę.");
@@ -11773,6 +11771,16 @@
         showToast(apiMutationErrorMessage(err, "Nie udało się zapisać zmiany terminu."));
         return;
       }
+    }
+    // CRM aktualizujemy dopiero po potwierdzonym create/PATCH booking.
+    // Dzięki temu błąd rezerwacji nie zostawia lokalnego ani zdalnego kontaktu.
+    if (clientName) {
+      upsertProviderClient(p.id, {
+        name: clientName,
+        phone: clientPhone,
+        email: clientEmail,
+        address: clientAddress,
+      });
     }
     window.AppState.provCalDate = booking.dateISO;
     window.AppState.provCalPickerMonth = booking.dateISO.slice(0, 7);
@@ -17357,44 +17365,35 @@
   async function declineRequestProposals(requestId) {
     const req = (window.AppState.requests || []).find((r) => r.id === requestId);
     if (!req) return;
-    const reqBefore = cloneMutationState(req);
     const bk = (window.AppState.bookings || []).find((b) => b.requestId === req.id);
-    const bkBefore = cloneMutationState(bk);
-    req.proposals = [];
-    req.acceptedProposalId = null;
-    req.status = "rejected";
-    clearProposeHoldExpiry(req);
-    if (bk) {
-      bk.status = "rejected";
-      clearProposeHoldExpiry(bk);
-    }
     if (shouldPersistApiMutation() && req._fromApi) {
       try {
-        await window.LokalnieApi.declineRequestFromApp(req.id, "decline-proposals");
+        await window.LokalnieApi.requestMoreRequestFromApp(req.id);
       } catch (err) {
-        Object.keys(req).forEach(function (key) {
-          delete req[key];
-        });
-        Object.assign(req, reqBefore);
-        if (bk && bkBefore) {
-          Object.keys(bk).forEach(function (key) {
-            delete bk[key];
-          });
-          Object.assign(bk, bkBefore);
-        }
-        saveState();
-        renderAll();
-        showToast(apiMutationErrorMessage(err, "Nie udało się odrzucić propozycji."));
+        showToast(apiMutationErrorMessage(err, "Nie udało się poprosić o inne terminy."));
         return;
       }
     }
+    req.proposals = [];
+    req.acceptedProposalId = null;
+    req.status = "pending";
+    clearProposeHoldExpiry(req);
+    if (bk) {
+      bk.dateISO = "";
+      bk.from = "";
+      bk.to = "";
+      bk.locationId = null;
+      bk.locationLabel = "";
+      bk.status = "pending";
+      clearProposeHoldExpiry(bk);
+    }
     pushNotification(
       "provider",
-      `${req.clientName || "Klient"} odrzucił(a) propozycję terminów — ${(req.serviceNames || []).join(", ")}.`
+      `${req.clientName || "Klient"} prosi o inne terminy — ${(req.serviceNames || []).join(", ")}.`
     );
     saveState();
     renderAll();
-    showToast("Propozycja odrzucona. Możesz wysłać nową prośbę o termin.");
+    showToast("Poprosiliśmy o inne terminy.");
   }
 
   /** Klient wycofuje prośbę o termin (zanim zarezerwuje jedną z propozycji). */

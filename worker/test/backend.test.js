@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { requireAdmin, requireDemoUser } from "../src/auth.js";
 import { canTransitionBooking, hasOverlap } from "../src/bookings.js";
-import { safeEnqueueEmail, sendViaResend } from "../src/email.js";
+import { sendViaResend } from "../src/email.js";
 import { json, withCors } from "../src/http.js";
 import { withIdempotency } from "../src/idempotency.js";
 import { isValidDateISO, validateSlot } from "../src/validate.js";
@@ -110,13 +110,13 @@ describe("idempotency", () => {
     const first = await withIdempotency(
       makeRequest(),
       { DB },
-      { userId: "user-1", endpoint: "POST:/bookings" },
+      { userId: "user-1", endpoint: "/bookings" },
       operation
     );
     const replay = await withIdempotency(
       makeRequest(),
       { DB },
-      { userId: "user-1", endpoint: "POST:/bookings" },
+      { userId: "user-1", endpoint: "/bookings" },
       operation
     );
 
@@ -124,6 +124,19 @@ describe("idempotency", () => {
     expect(replay.status).toBe(201);
     expect(await replay.json()).toEqual({ booking: { id: "bk_1" } });
     expect(operation).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires a key before running a mutation", async () => {
+    const operation = vi.fn(async () => json({ ok: true }));
+    const response = await withIdempotency(
+      new Request("https://api.lokalnie.app/bookings", { method: "POST" }),
+      { DB: { prepare: vi.fn() } },
+      { userId: "user-1", endpoint: "/bookings" },
+      operation
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "idempotency_key_required" });
+    expect(operation).not.toHaveBeenCalled();
   });
 });
 
@@ -135,30 +148,6 @@ describe("email and CORS", () => {
         { id: "em_1", template: "booking_confirmed", payload_json: "{}", to_email: "a@example.com" }
       )
     ).resolves.toEqual({ id: "dev_em_1", simulated: true });
-  });
-
-  it("does not fail a completed mutation when outbox enqueue fails", async () => {
-    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      await expect(
-        safeEnqueueEmail(
-          {
-            DB: {
-              prepare() {
-                throw new Error("d1_outbox_unavailable");
-              },
-            },
-          },
-          {
-            toEmail: "client@example.com",
-            template: "booking_confirmed",
-            payload: { bookingId: "bk-1" },
-          }
-        )
-      ).resolves.toBeNull();
-    } finally {
-      errorLog.mockRestore();
-    }
   });
 
   it("echoes only an allowed origin and varies by Origin", () => {
@@ -176,7 +165,7 @@ describe("email and CORS", () => {
     expect(blocked.headers.get("Access-Control-Allow-Origin")).toBeNull();
   });
 
-  it("blocks localhost in production unless APP_ORIGIN is local", () => {
+  it("always blocks localhost in production", () => {
     const request = new Request("https://api.lokalnie.app/health", {
       headers: { Origin: "http://localhost:8080" },
     });
@@ -189,8 +178,6 @@ describe("email and CORS", () => {
       APP_ORIGIN: "http://localhost:8080",
     });
     expect(production.headers.get("Access-Control-Allow-Origin")).toBeNull();
-    expect(localProduction.headers.get("Access-Control-Allow-Origin")).toBe(
-      "http://localhost:8080"
-    );
+    expect(localProduction.headers.get("Access-Control-Allow-Origin")).toBeNull();
   });
 });
