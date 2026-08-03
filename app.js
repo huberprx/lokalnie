@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.186";
+  const APP_VERSION = "1.0.187";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
 
@@ -3384,13 +3384,19 @@
     opts = opts || {};
     const backOnSearch = !!opts.backOnSearch;
     const withHome = !!opts.withHome || backOnSearch;
+    const loggedIn = isLoggedIn();
     const items = [
       { tab: "search", label: "Szukaj", icon: "search" },
       { tab: "favorites", label: "Ulubione", icon: "heart" },
       { tab: "myCalendar", label: "Kalendarz", icon: "calendar" },
-      { tab: "account", label: "Menu", icon: "profile", menu: true },
+      // Jak OLX: ikona konta → ekran konta (gość) albo menu (zalogowany)
+      loggedIn
+        ? { tab: "account", label: "Konto", icon: "profile", menu: true }
+        : { tab: "account", label: "Konto", icon: "profile" },
     ];
     const menuOpen = !!window.AppState.appMenuOpen;
+    const onAccountScreen =
+      active === "account" || active === "auth" || window.AppState.screen.client === "account" || window.AppState.screen.client === "auth";
     const homeButton = withHome
       ? `<button type="button" class="bottom-nav__item${backOnSearch || active === "search" ? " bottom-nav__item--active" : ""}"
           data-action="${backOnSearch ? "close-provider" : "go-screen"}" data-screen="search" aria-label="${backOnSearch ? "Wróć" : "Strona główna"}" ${backOnSearch || active === "search" ? 'aria-current="page"' : ""}>
@@ -3404,11 +3410,14 @@
             if (it.menu) {
               return `
           <button type="button" class="bottom-nav__item${menuOpen ? " bottom-nav__item--active" : ""}"
-            data-action="toggle-app-menu" aria-label="Menu" aria-expanded="${menuOpen ? "true" : "false"}" aria-controls="app-menu-panel">
+            data-action="toggle-app-menu" aria-label="Konto" aria-expanded="${menuOpen ? "true" : "false"}" aria-controls="app-menu-panel">
             <span class="bottom-nav__icon bottom-nav__icon--${it.icon}" aria-hidden="true"></span>
           </button>`;
             }
-            const isActive = active === it.tab && !(withHome && it.tab === "search") && !menuOpen;
+            const isActive =
+              (it.tab === "account" ? onAccountScreen : active === it.tab) &&
+              !(withHome && it.tab === "search") &&
+              !menuOpen;
             const pendingCount = it.tab === "myCalendar" ? clientPendingAttentionCount() : 0;
             const badge = renderCountBadge(pendingCount, "count-badge bottom-nav__badge");
             const aria =
@@ -3484,8 +3493,8 @@
           </div>`
       : `<div class="app-menu__guest">
             <p class="app-menu__guest-lead">Przeglądaj oferty bez konta. Zaloguj się, żeby rezerwować i zarządzać wizytami.</p>
-            <button type="button" class="btn btn--primary app-menu__guest-login" data-action="google-login">
-              Zaloguj przez Google
+            <button type="button" class="btn btn--primary app-menu__guest-login" data-action="open-auth">
+              Zaloguj się
             </button>
           </div>`;
 
@@ -4096,7 +4105,78 @@
     ensureClientProfile();
   }
 
+  function renderGuestAccount() {
+    return `
+      <div class="app-screen app-screen--client app-screen--guest-account">
+        <div class="app-scroll guest-account">
+          <section class="guest-account__hero">
+            <span class="guest-account__avatar" aria-hidden="true"></span>
+            <h2 class="guest-account__title">Witaj na Lokalnie!</h2>
+            <p class="guest-account__lead">
+              Zaloguj się, aby rezerwować wizyty, zapisywać ulubione i zarządzać kalendarzem.
+              Nie masz jeszcze konta? Załóż je w kilka chwil przez Google.
+            </p>
+            <button type="button" class="btn btn--primary guest-account__cta" data-action="open-auth">
+              Zaloguj się
+            </button>
+          </section>
+          <section class="guest-account__section" aria-label="Ustawienia i informacje">
+            <h3 class="guest-account__section-title">Ustawienia i informacje</h3>
+            <nav class="guest-account__links">
+              <button type="button" class="guest-account__link" data-action="open-legal" data-doc="privacy">
+                <span>Polityka prywatności</span>
+                <span class="guest-account__chevron" aria-hidden="true"></span>
+              </button>
+              <button type="button" class="guest-account__link" data-action="open-legal" data-doc="terms">
+                <span>Regulamin</span>
+                <span class="guest-account__chevron" aria-hidden="true"></span>
+              </button>
+              <button type="button" class="guest-account__link" data-action="open-legal" data-doc="contact">
+                <span>Kontakt</span>
+                <span class="guest-account__chevron" aria-hidden="true"></span>
+              </button>
+            </nav>
+          </section>
+        </div>
+        ${bottomNav("account")}
+      </div>`;
+  }
+
+  function renderAuthLogin() {
+    return `
+      <div class="app-screen app-screen--client app-screen--auth">
+        <div class="app-scroll auth-login">
+          <header class="auth-login__head">
+            <button type="button" class="screen-head__back" data-action="close-auth" aria-label="Wróć">
+              <span class="screen-head__back-icon" aria-hidden="true"></span>
+            </button>
+          </header>
+          <h2 class="auth-login__title">Witamy na Lokalnie!</h2>
+          <p class="auth-login__sub">Zaloguj się lub załóż konto przez Google — to wystarczy.</p>
+          <button type="button" class="auth-login__google" data-action="google-login">
+            <span class="auth-login__google-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="20" height="20" focusable="false">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+              </svg>
+            </span>
+            <span class="auth-login__google-label">Kontynuuj przez konto Google</span>
+          </button>
+          <p class="auth-login__legal">
+            Kontynuując, akceptujesz
+            <button type="button" class="auth-login__legal-link" data-action="open-legal" data-doc="terms">Regulamin</button>
+            i
+            <button type="button" class="auth-login__legal-link" data-action="open-legal" data-doc="privacy">Politykę prywatności</button>.
+          </p>
+        </div>
+      </div>`;
+  }
+
   function renderAccount() {
+    if (!isLoggedIn()) return renderGuestAccount();
+
     const cp = ensureClientProfile();
     const notes = cp.notifications;
     const hasProvider = hasProviderRole();
@@ -5726,6 +5806,8 @@
         return renderMyCalendar();
       case "account":
         return renderAccount();
+      case "auth":
+        return renderAuthLogin();
       case "profile":
         return renderProfile(window.AppState.params.client && window.AppState.params.client.slug);
       case "booking":
@@ -15583,8 +15665,12 @@
   }
 
   function goScreen(screen) {
-    const gated = screen === "favorites" || screen === "myCalendar" || screen === "account";
+    // Konto (gość) i panel logowania — bez wymuszania OAuth.
+    const gated = screen === "favorites" || screen === "myCalendar";
     if (gated && !requireLogin({ type: "screen", screen: screen })) return;
+    if (screen === "account" && isLoggedIn()) {
+      // Zalogowany: ustawienia konta; menu boczne zostaje osobno.
+    }
 
     window.AppState.appMenuOpen = false;
     if (screen !== "search" && screen !== "favorites") {
@@ -15596,7 +15682,11 @@
     }
     // Ekrany klienta (konto, ulubione…) — przełącz rolę, jeśli jesteśmy jako usługodawca.
     if (
-      (screen === "account" || screen === "favorites" || screen === "search" || screen === "myCalendar") &&
+      (screen === "account" ||
+        screen === "auth" ||
+        screen === "favorites" ||
+        screen === "search" ||
+        screen === "myCalendar") &&
       window.AppState.activeRole === "provider"
     ) {
       window.AppState.activeRole = "client";
@@ -15604,6 +15694,22 @@
     window.AppState.screen.client = screen;
     updateAppHeader(window.AppState.activeRole || "client");
     saveState();
+    renderAll();
+  }
+
+  function openAuth() {
+    window.AppState.appMenuOpen = false;
+    window.AppState.activeRole = "client";
+    window.AppState.screen.client = "auth";
+    saveState();
+    updateAppHeader("client");
+    renderAll();
+  }
+
+  function closeAuth() {
+    window.AppState.screen.client = "account";
+    saveState();
+    updateAppHeader("client");
     renderAll();
   }
 
@@ -16752,7 +16858,7 @@
       /* ignore */
     }
     showToast("Zaloguj się, aby kontynuować.");
-    googleLogin();
+    openAuth();
     return false;
   }
 
@@ -16939,7 +17045,7 @@
         userEl.classList.remove("app-header__user--guest");
       } else {
         userEl.innerHTML =
-          `<button type="button" class="app-header__login" data-action="google-login">Moje konto</button>`;
+          `<button type="button" class="app-header__login" data-action="go-screen" data-screen="account">Moje konto</button>`;
         userEl.setAttribute("aria-label", "Moje konto");
         userEl.dataset.role = "guest";
         userEl.classList.add("app-header__user--guest");
@@ -17443,6 +17549,15 @@
       case "reset-demo": resetDemo(); break;
       case "test-login": event.preventDefault(); testLogin(d.target); break;
       case "google-login": event.preventDefault(); googleLogin(); break;
+      case "open-auth":
+        event.preventDefault();
+        closeAppMenu();
+        openAuth();
+        break;
+      case "close-auth":
+        event.preventDefault();
+        closeAuth();
+        break;
       case "open-my-calendar": event.preventDefault(); openMyCalendar(); break;
       case "logout": logout(); break;
       case "go-home":
