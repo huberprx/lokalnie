@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.194";
+  const APP_VERSION = "1.0.195";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -168,14 +168,21 @@
       providerCardInfoExpanded: false,
       /** Profil klienta (Booksy-like): imię, telefon, e-mail, powiadomienia. */
       clientProfile: null,
-      /** Onboarding po świeżym Google OAuth: "choose" | "provider" | null. */
+      /** Formularz nowego profilu usługodawcy: "provider" | null (wybór roli usunięty — zawsze klient). */
       onboarding: null,
-      /** Profil usługodawcy utworzony przez użytkownika (null = użyj mocka „Grzesiu Barber”). */
+      /** Aktywny profil usługodawcy (referencja z providerProfiles). */
       myProvider: null,
-      /** Rola provider z konta (Google) — gdy myProvider jest ustawiony. */
+      /** Id aktywnego profilu z providerProfiles. */
+      activeProviderId: null,
+      /** Własne profile usługodawcy (max MAX_PROVIDER_PROFILES). */
+      providerProfiles: [],
+      /** Rola provider z konta — gdy jest ≥1 własny profil. */
       providerRoleActive: false,
     };
   }
+
+  /** Max własnych profili usługodawcy pod jednym kontem. */
+  const MAX_PROVIDER_PROFILES = 2;
 
   const CURRENT_LOCATION_LABEL = "Obecna lokalizacja";
   const SEARCH_RADIUS_OPTIONS = [5, 10, 15, 20, 25, 30, 40, 50];
@@ -381,6 +388,107 @@
       cp.notifications = { visitReminders: true, statusChanges: true, marketing: false };
     }
     return cp;
+  }
+
+  function listOwnedProviders() {
+    ensureProviderProfiles();
+    return window.AppState.providerProfiles || [];
+  }
+
+  function canAddProviderProfile() {
+    return isLoggedIn() && listOwnedProviders().length < MAX_PROVIDER_PROFILES;
+  }
+
+  function ensureProviderProfiles() {
+    if (!window.AppState) return [];
+    if (!Array.isArray(window.AppState.providerProfiles)) {
+      window.AppState.providerProfiles = [];
+    }
+    // Migracja: stary pojedynczy myProvider → lista.
+    const legacy = window.AppState.myProvider;
+    if (
+      legacy &&
+      typeof legacy === "object" &&
+      (legacy._mine || legacy._fromApi) &&
+      !window.AppState.providerProfiles.some(function (p) {
+        return p && p.id === legacy.id;
+      })
+    ) {
+      window.AppState.providerProfiles.push(legacy);
+    }
+    // Deduplikacja po id + limit.
+    const seen = Object.create(null);
+    window.AppState.providerProfiles = window.AppState.providerProfiles
+      .filter(function (p) {
+        if (!p || typeof p !== "object" || !p.id || seen[p.id]) return false;
+        seen[p.id] = true;
+        return true;
+      })
+      .slice(0, MAX_PROVIDER_PROFILES);
+
+    const list = window.AppState.providerProfiles;
+    if (!list.length) {
+      window.AppState.myProvider = null;
+      window.AppState.activeProviderId = null;
+      if (!isTesterMode()) window.AppState.providerRoleActive = false;
+      return list;
+    }
+
+    let activeId = window.AppState.activeProviderId;
+    let active = list.find(function (p) {
+      return p.id === activeId;
+    });
+    if (!active && legacy && legacy.id) {
+      active = list.find(function (p) {
+        return p.id === legacy.id;
+      });
+    }
+    if (!active) active = list[0];
+    window.AppState.activeProviderId = active.id;
+    window.AppState.myProvider = active;
+    window.AppState.providerRoleActive = true;
+    return list;
+  }
+
+  function selectOwnedProvider(providerId) {
+    const list = listOwnedProviders();
+    const found = list.find(function (p) {
+      return p.id === providerId;
+    });
+    if (!found) return null;
+    window.AppState.activeProviderId = found.id;
+    window.AppState.myProvider = found;
+    window.AppState.providerRoleActive = true;
+    return found;
+  }
+
+  function addOwnedProvider(profile) {
+    if (!profile || !profile.id) return null;
+    ensureProviderProfiles();
+    const list = window.AppState.providerProfiles;
+    if (list.length >= MAX_PROVIDER_PROFILES) return null;
+    if (
+      list.some(function (p) {
+        return p.id === profile.id;
+      })
+    ) {
+      return selectOwnedProvider(profile.id);
+    }
+    list.push(profile);
+    return selectOwnedProvider(profile.id);
+  }
+
+  function seedTesterProviderProfiles() {
+    ensureProviderProfiles();
+    if (window.AppState.providerProfiles.length) return;
+    const mock = getProviderById(MY_PROVIDER_ID);
+    if (!mock) return;
+    addOwnedProvider(
+      Object.assign({}, mock, {
+        _mine: true,
+        avatarInitials: mock.avatarInitials || accountInitials(mock.name) || "GB",
+      })
+    );
   }
 
   const BOOKING_FUTURE_OPTS = [
@@ -3164,11 +3272,20 @@
           stored.clientProfile && typeof stored.clientProfile === "object"
             ? stored.clientProfile
             : base.clientProfile,
-        onboarding: stored.onboarding === "choose" || stored.onboarding === "provider" ? stored.onboarding : null,
+        onboarding: stored.onboarding === "provider" ? "provider" : null,
         myProvider: stored.myProvider && typeof stored.myProvider === "object" ? stored.myProvider : base.myProvider,
+        activeProviderId:
+          typeof stored.activeProviderId === "string" ? stored.activeProviderId : base.activeProviderId,
+        providerProfiles: Array.isArray(stored.providerProfiles)
+          ? stored.providerProfiles.filter(function (p) {
+              return p && typeof p === "object";
+            }).slice(0, MAX_PROVIDER_PROFILES)
+          : base.providerProfiles.slice(),
         providerRoleActive:
           typeof stored.providerRoleActive === "boolean" ? stored.providerRoleActive : base.providerRoleActive,
       };
+      ensureClientProfile();
+      ensureProviderProfiles();
     } else {
       window.AppState = base;
     }
@@ -3230,6 +3347,10 @@
       (window.AppState.screen.client === "myCalendar" || window.AppState.screen.client === "profile")
     ) {
       window.AppState.screen.client = "search";
+    }
+
+    if (window.AppState.loggedIn && isTesterMode() && !listOwnedProviders().length) {
+      seedTesterProviderProfiles();
     }
 
     return window.AppState;
@@ -3466,33 +3587,45 @@
     const cp = ensureClientProfile();
     const activeRole = window.AppState.activeRole || "client";
     const clientActive = activeRole === "client";
-    const providerActive = activeRole === "provider";
-    const provider = hasProviderRole() ? myProvider() : null;
+    const providers = loggedIn ? listOwnedProviders() : [];
+    const activeProviderId = window.AppState.activeProviderId || (myProvider() && myProvider().id);
     const editIcon = `<span class="app-menu__profile-edit-icon" aria-hidden="true"></span>`;
 
-    const providerBlock = provider
-      ? `<div class="app-menu__profile app-menu__profile--provider${providerActive ? " app-menu__profile--active" : ""}">
-           <button type="button" class="app-menu__profile-main" data-action="switch-role" data-role="provider" aria-pressed="${providerActive ? "true" : "false"}">
+    const providerBlocks = providers
+      .map(function (provider, idx) {
+        const isActive = activeRole === "provider" && provider.id === activeProviderId;
+        const label = providers.length > 1 ? "Usługodawca " + (idx + 1) : "Profil usługodawcy";
+        return `<div class="app-menu__profile app-menu__profile--provider${isActive ? " app-menu__profile--active" : ""}">
+           <button type="button" class="app-menu__profile-main" data-action="switch-role" data-role="provider" data-provider-id="${escapeHtml(provider.id)}" aria-pressed="${isActive ? "true" : "false"}">
              <span class="app-menu__avatar app-menu__avatar--provider">${
                provider.avatarUrl
                  ? `<img class="app-menu__avatar-img" src="${escapeHtml(provider.avatarUrl)}" alt="" />`
                  : `<span class="app-menu__avatar-initials">${escapeHtml(provider.avatarInitials || "?")}</span>`
              }</span>
              <span class="app-menu__profile-text">
-               <span class="app-menu__profile-label">Profil usługodawcy</span>
+               <span class="app-menu__profile-label">${escapeHtml(label)}</span>
                <span class="app-menu__profile-name">${escapeHtml(provider.name)}</span>
              </span>
            </button>
-           <button type="button" class="app-menu__profile-edit" data-action="edit-provider-profile"
+           <button type="button" class="app-menu__profile-edit" data-action="edit-provider-profile" data-provider-id="${escapeHtml(provider.id)}"
              aria-label="Edytuj profil usługodawcy" title="Edytuj profil">${editIcon}</button>
-         </div>`
-      : `<button type="button" class="app-menu__profile app-menu__profile--add" data-action="add-provider-profile">
+         </div>`;
+      })
+      .join("");
+
+    // Dodawanie firmy tylko w kontekście klienta (max 2).
+    const addProviderBlock =
+      loggedIn && clientActive && canAddProviderProfile()
+        ? `<button type="button" class="app-menu__profile app-menu__profile--add" data-action="add-provider-profile">
            <span class="app-menu__avatar app-menu__avatar--add" aria-hidden="true">+</span>
            <span class="app-menu__profile-text">
              <span class="app-menu__profile-label">Profil usługodawcy</span>
-             <span class="app-menu__profile-name">Dodaj profil</span>
+             <span class="app-menu__profile-name">${
+               providers.length ? "Dodaj kolejny profil" : "Dodaj profil"
+             }</span>
            </span>
-         </button>`;
+         </button>`
+        : "";
 
     const profilesBlock = loggedIn
       ? `<div class="app-menu__profiles" role="group" aria-label="Przełącz profil">
@@ -3507,7 +3640,8 @@
               <button type="button" class="app-menu__profile-edit" data-action="edit-client-profile"
                 aria-label="Edytuj profil klienta" title="Edytuj profil">${editIcon}</button>
             </div>
-            ${providerBlock}
+            ${providerBlocks}
+            ${addProviderBlock}
           </div>`
       : `<div class="app-menu__guest">
             <p class="app-menu__guest-lead">Przeglądaj oferty bez konta. Zaloguj się, żeby rezerwować i zarządzać wizytami.</p>
@@ -4197,7 +4331,27 @@
 
     const cp = ensureClientProfile();
     const notes = cp.notifications;
-    const hasProvider = hasProviderRole();
+    const providers = listOwnedProviders();
+    const providerRows = providers
+      .map(function (p) {
+        return `<div class="account-provider-row">
+            <div class="account-provider-row__text">
+              <span class="settings__hint">${escapeHtml(p.name || "Usługodawca")}</span>
+              <span class="settings-contact__toggle-hint">${escapeHtml(p.category || p.city || "Profil firmowy")}</span>
+            </div>
+            <button type="button" class="btn btn--ghost account-actions__btn account-actions__btn--sm"
+              data-action="switch-role" data-role="provider" data-provider-id="${escapeHtml(p.id)}">Otwórz</button>
+          </div>`;
+      })
+      .join("");
+    const addProviderBtn = canAddProviderProfile()
+      ? `<button type="button" class="btn btn--ghost account-actions__btn" data-action="add-provider-profile">
+           ${providers.length ? "Dodaj kolejny profil usługodawcy" : "Dodaj profil usługodawcy"}
+         </button>
+         <p class="settings__help settings__help--tight">Możesz mieć maksymalnie ${MAX_PROVIDER_PROFILES} profile firmowe.</p>`
+      : providers.length
+        ? `<p class="settings__help settings__help--tight">Osiągnięto limit ${MAX_PROVIDER_PROFILES} profili usługodawcy.</p>`
+        : "";
 
     return `
       <div class="app-screen app-screen--client app-screen--account">
@@ -4285,13 +4439,12 @@
                 </label>
               </div>
             </div>
-            ${
-              hasProvider
-                ? `<div class="settings__row settings__row--actions">
-                    <button type="button" class="btn btn--ghost account-actions__btn" data-action="switch-role" data-role="provider">Przełącz na usługodawcę</button>
-                  </div>`
-                : ""
-            }
+            <div class="settings__row settings__row--actions" data-field="account-providers">
+              <span class="settings__key">Profile usługodawcy</span>
+              <p class="settings__help">Najpierw jesteś klientem. Firmę dodajesz opcjonalnie — maksymalnie ${MAX_PROVIDER_PROFILES}.</p>
+              ${providerRows}
+              ${addProviderBtn}
+            </div>
             <div class="settings__row settings__row--actions">
               <button type="button" class="btn btn--ghost account-actions__btn account-actions__btn--logout" data-action="logout">Wyloguj</button>
             </div>
@@ -5868,7 +6021,10 @@
   }
 
   function myProvider() {
+    ensureProviderProfiles();
     if (window.AppState && window.AppState.myProvider) return window.AppState.myProvider;
+    // Tester / demo bez własnej listy — katalogowy mock.
+    if (isTesterMode()) return getProviderById(MY_PROVIDER_ID);
     return getProviderById(MY_PROVIDER_ID);
   }
 
@@ -5877,9 +6033,9 @@
     return (p && p.id) || MY_PROVIDER_ID;
   }
 
-  /** Czy aktywna rola usługodawcy (lokalny profil albo konto Google z providerem). */
+  /** Czy konto ma ≥1 własny profil usługodawcy. */
   function hasProviderRole() {
-    if (window.AppState && window.AppState.myProvider) return true;
+    if (listOwnedProviders().length > 0) return true;
     if (window.AppState && window.AppState.providerRoleActive) return true;
     const user = data().CURRENT_USER || {};
     return !!(user.providerRole && user.providerRole.active);
@@ -5888,30 +6044,32 @@
   /** Aktualizuje lokalną rolę po OAuth (/me) — przed renderem menu. */
   function applyApiAuth(me) {
     if (!me || !window.AppState) return;
+    ensureClientProfile();
     const hasApiProvider = !!(me.user && me.user.roles && me.user.roles.provider) || !!me.provider;
-    if (window.AppState.myProvider) return; // lokalny profil wygrywa
+    ensureProviderProfiles();
+    if (listOwnedProviders().length) return; // lokalne profile wygrywają
     if (!hasApiProvider) {
-      if (window.AppState.providerRoleActive) window.AppState.providerRoleActive = false;
+      window.AppState.providerRoleActive = false;
       return;
     }
-    window.AppState.providerRoleActive = true;
     const apiSlug =
       window.LokalnieApi && window.LokalnieApi.toAppProviderId
         ? window.LokalnieApi.toAppProviderId(me.provider && me.provider.id)
         : (me.provider && me.provider.slug) || (me.provider && me.provider.id);
-    window.AppState.myProvider = {
+    const name = (me.provider && me.provider.name) || "Mój profil";
+    addOwnedProvider({
       id: apiSlug || "my-provider",
       slug: (me.provider && me.provider.slug) || apiSlug || "my-provider",
       apiId: me.provider && me.provider.id,
-      name: (me.provider && me.provider.name) || "Mój profil",
+      name: name,
       category: (me.provider && me.provider.category) || "",
       city: (me.provider && me.provider.city) || "",
       address: (me.provider && me.provider.address) || "",
       about: (me.provider && me.provider.about) || "",
       avatarUrl: null,
-      avatarInitials: "MP",
+      avatarInitials: accountInitials(name) || "MP",
       _fromApi: true,
-    };
+    });
   }
 
   function providerOpenRequests() {
@@ -15377,80 +15535,54 @@
   }
 
   function renderRoleHTML(role) {
-    if (window.AppState && window.AppState.onboarding) {
-      return renderOnboarding(window.AppState.onboarding);
+    if (window.AppState && window.AppState.onboarding === "choose") {
+      // Stary wybór roli — konto zawsze startuje jako klient.
+      window.AppState.onboarding = null;
+    }
+    if (window.AppState && window.AppState.onboarding === "provider") {
+      return renderOnboardingProvider();
     }
     return role === "provider" ? renderProvider(window.AppState.screen.provider) : renderClient(window.AppState.screen.client);
   }
 
-  /** Pierwszy login z Google: wybór ścieżki (klient / firma). */
-  function renderOnboarding(step) {
+  /** Formularz dodawania profilu usługodawcy (z konta klienta). */
+  function renderOnboardingProvider() {
     const cp = ensureClientProfile();
-    if (step === "provider") {
-      return `
-        <div class="app-screen app-screen--onboarding">
-          <div class="app-scroll onboarding">
-            <header class="onboarding__head">
-              <button type="button" class="screen-head__back" data-action="onboarding-back" aria-label="Wróć">
-                <span class="screen-head__back-icon" aria-hidden="true"></span>
-              </button>
-              <div>
-                <p class="onboarding__kicker">Lokalnie</p>
-                <h2 class="onboarding__title">Twoja firma</h2>
-                <p class="onboarding__sub">Kilka pól — resztę uzupełnisz w ustawieniach.</p>
-              </div>
-            </header>
-            <div class="onboarding__card onboarding__card--form">
-              <label class="onboarding__field">
-                <span>Nazwa firmy / Twoje imię</span>
-                <input type="text" data-role="onb-provider-name" placeholder="${escapeHtml(cp.name || "np. Studio Urody Ana")}" value="${escapeHtml(cp.name || "")}" />
-              </label>
-              <label class="onboarding__field">
-                <span>Kategoria</span>
-                <input type="text" data-role="onb-provider-category" placeholder="np. fryzjer, kosmetyczka, trener" />
-              </label>
-              <label class="onboarding__field">
-                <span>Miasto</span>
-                <input type="text" data-role="onb-provider-city" placeholder="np. Warszawa" />
-              </label>
-              <label class="onboarding__field">
-                <span>Adres (opcjonalnie)</span>
-                <input type="text" data-role="onb-provider-address" placeholder="ulica, nr" />
-              </label>
-              <button type="button" class="btn btn--primary onboarding__cta" data-action="onboarding-provider-submit">
-                Utwórz profil usługodawcy
-              </button>
-              <p class="onboarding__note">Możesz to zmienić później w ustawieniach firmy.</p>
-            </div>
-          </div>
-        </div>`;
-    }
-
+    const n = listOwnedProviders().length;
     return `
       <div class="app-screen app-screen--onboarding">
         <div class="app-scroll onboarding">
-          <header class="onboarding__head onboarding__head--center">
-            <img class="onboarding__logo" src="assets/icons/logo-1024.png" alt="" width="64" height="64" />
-            <h2 class="onboarding__title">Jak chcesz zacząć?</h2>
-            <p class="onboarding__sub">Możesz zmienić rolę później w menu.</p>
+          <header class="onboarding__head">
+            <button type="button" class="screen-head__back" data-action="onboarding-back" aria-label="Wróć">
+              <span class="screen-head__back-icon" aria-hidden="true"></span>
+            </button>
+            <div>
+              <p class="onboarding__kicker">Lokalnie</p>
+              <h2 class="onboarding__title">${n ? "Kolejna firma" : "Twoja firma"}</h2>
+              <p class="onboarding__sub">Kilka pól — resztę uzupełnisz w ustawieniach. Max ${MAX_PROVIDER_PROFILES} profile.</p>
+            </div>
           </header>
-          <div class="onboarding__choices">
-            <button type="button" class="onboarding__choice" data-action="onboarding-choose-client">
-              <span class="onboarding__choice-ico onboarding__choice-ico--client" aria-hidden="true"></span>
-              <span class="onboarding__choice-text">
-                <span class="onboarding__choice-title">Szukam usług</span>
-                <span class="onboarding__choice-sub">Rezerwuj wizyty u lokalnych specjalistów.</span>
-              </span>
-              <span class="onboarding__choice-arrow" aria-hidden="true"></span>
+          <div class="onboarding__card onboarding__card--form">
+            <label class="onboarding__field">
+              <span>Nazwa firmy / Twoje imię</span>
+              <input type="text" data-role="onb-provider-name" placeholder="${escapeHtml(cp.name || "np. Studio Urody Ana")}" value="${escapeHtml(n ? "" : cp.name || "")}" />
+            </label>
+            <label class="onboarding__field">
+              <span>Kategoria</span>
+              <input type="text" data-role="onb-provider-category" placeholder="np. fryzjer, kosmetyczka, trener" />
+            </label>
+            <label class="onboarding__field">
+              <span>Miasto</span>
+              <input type="text" data-role="onb-provider-city" placeholder="np. Warszawa" />
+            </label>
+            <label class="onboarding__field">
+              <span>Adres (opcjonalnie)</span>
+              <input type="text" data-role="onb-provider-address" placeholder="ulica, nr" />
+            </label>
+            <button type="button" class="btn btn--primary onboarding__cta" data-action="onboarding-provider-submit">
+              Utwórz profil usługodawcy
             </button>
-            <button type="button" class="onboarding__choice" data-action="onboarding-choose-provider">
-              <span class="onboarding__choice-ico onboarding__choice-ico--provider" aria-hidden="true"></span>
-              <span class="onboarding__choice-text">
-                <span class="onboarding__choice-title">Oferuję usługi</span>
-                <span class="onboarding__choice-sub">Ustaw kalendarz, usługi i przyjmuj rezerwacje.</span>
-              </span>
-              <span class="onboarding__choice-arrow" aria-hidden="true"></span>
-            </button>
+            <p class="onboarding__note">Możesz to zmienić później w ustawieniach firmy.</p>
           </div>
         </div>
       </div>`;
@@ -17170,11 +17302,12 @@
     }
     setTesterMode(true);
     window.AppState.loggedIn = true;
-    window.AppState.activeRole = role;
     window.AppState.onboarding = null;
+    ensureClientProfile();
+    seedTesterProviderProfiles();
+    window.AppState.activeRole = role;
     window.AppState.screen[role] = DEFAULT_SCREEN[role];
-    // Demo ma obie role (klient + usługodawca).
-    window.AppState.providerRoleActive = true;
+    if (role === "provider") selectOwnedProvider((listOwnedProviders()[0] || {}).id);
     saveState();
     updateAppHeader(role);
     renderAll();
@@ -17194,15 +17327,6 @@
     if (!token || !window.LokalnieApi) return false;
     window.LokalnieApi.setAuthToken(token);
 
-    const pending = peekPendingIntent();
-    const skipOnboarding = !!(
-      pending &&
-      (pending.type === "confirm-booking" ||
-        pending.type === "send-request" ||
-        pending.type === "toggle-fav" ||
-        pending.type === "screen")
-    );
-
     // Świeży login z Google — nie ciągnij starego demo, ale przywróć draft rezerwacji.
     setTesterMode(false);
     try {
@@ -17214,6 +17338,8 @@
     window.AppState.loggedIn = true;
     window.AppState.activeRole = "client";
     window.AppState.screen.client = DEFAULT_SCREEN.client;
+    window.AppState.onboarding = null;
+    ensureClientProfile();
     restorePendingBrowseState();
     saveState();
     updateAppHeader("client");
@@ -17222,29 +17348,27 @@
 
     void window.LokalnieApi.request("/me").then(function (me) {
       if (me && me.user) {
-        applyApiAuth(me);
         const cp = ensureClientProfile();
         if (me.user.name) cp.name = me.user.name;
         if (me.user.email) cp.email = me.user.email;
-        const hasProvider = !!(me.user.roles && me.user.roles.provider) || !!me.provider;
-        window.AppState.onboarding = hasProvider || skipOnboarding ? null : "choose";
+        applyApiAuth(me);
+        // Zawsze start jako klient — firmę dodaje się później z konta.
+        window.AppState.activeRole = "client";
+        window.AppState.onboarding = null;
         saveState();
         renderAll();
-        showToast(
-          hasProvider || skipOnboarding
-            ? "Zalogowano przez Google."
-            : "Zalogowano. Jak chcesz zacząć?"
-        );
+        showToast("Zalogowano. Profil klienta jest gotowy.");
         void window.LokalnieApi.syncFromServer().then(function () {
           saveState();
           renderAll();
-          if (!window.AppState.onboarding) resumePendingIntent();
+          resumePendingIntent();
         });
       } else {
-        window.AppState.onboarding = skipOnboarding ? null : "choose";
+        ensureClientProfile();
+        window.AppState.onboarding = null;
         saveState();
         renderAll();
-        if (!window.AppState.onboarding) resumePendingIntent();
+        resumePendingIntent();
       }
     });
     return true;
@@ -17252,6 +17376,7 @@
 
   function onboardingChooseClient() {
     window.AppState.onboarding = null;
+    window.AppState.activeRole = "client";
     saveState();
     renderAll();
     if (peekPendingIntent()) {
@@ -17262,27 +17387,38 @@
   }
 
   function onboardingChooseProvider() {
-    window.AppState.onboarding = "provider";
-    saveState();
-    renderAll();
+    // Legacy — zamiast wyboru roli od razu formularz firmy (z limitem).
+    addProviderProfile();
   }
 
   function onboardingBack() {
-    window.AppState.onboarding = "choose";
+    window.AppState.onboarding = null;
+    window.AppState.activeRole = "client";
+    window.AppState.screen.client = "account";
     saveState();
+    updateAppHeader("client");
     renderAll();
   }
 
   function onboardingProviderSubmit() {
+    if (!canAddProviderProfile()) {
+      showToast("Możesz mieć maksymalnie " + MAX_PROVIDER_PROFILES + " profile usługodawcy.");
+      window.AppState.onboarding = null;
+      saveState();
+      renderAll();
+      return;
+    }
     const cp = ensureClientProfile();
     const name = readOnboardingInput("onb-provider-name") || cp.name || "Mój profil";
     const city = readOnboardingInput("onb-provider-city");
     const category = readOnboardingInput("onb-provider-category");
     const address = readOnboardingInput("onb-provider-address");
+    const n = listOwnedProviders().length;
+    const id = n === 0 ? "my-provider" : "my-provider-" + (n + 1) + "-" + Date.now().toString(36);
 
-    window.AppState.myProvider = {
-      id: "my-provider",
-      slug: "my-provider",
+    const created = addOwnedProvider({
+      id: id,
+      slug: id,
       name: name,
       category: category || "",
       city: city || "",
@@ -17291,8 +17427,11 @@
       avatarUrl: null,
       avatarInitials: accountInitials(name) || "MP",
       _mine: true,
-    };
-    window.AppState.providerRoleActive = true;
+    });
+    if (!created) {
+      showToast("Nie udało się dodać profilu.");
+      return;
+    }
     window.AppState.onboarding = null;
     window.AppState.activeRole = "provider";
     window.AppState.screen.provider = "settings";
@@ -17310,6 +17449,13 @@
 
   function addProviderProfile() {
     if (!requireLogin({ type: "menu" })) return;
+    if (!canAddProviderProfile()) {
+      showToast("Możesz mieć maksymalnie " + MAX_PROVIDER_PROFILES + " profile usługodawcy.");
+      return;
+    }
+    // Dodawanie tylko z kontekstu klienta.
+    window.AppState.activeRole = "client";
+    updateAppHeader("client");
     closeAppMenuThen(function () {
       window.AppState.onboarding = "provider";
       saveState();
@@ -17368,12 +17514,16 @@
     }
   }
 
-  function switchRole(role) {
+  function switchRole(role, providerId) {
     if (INSTANCES.indexOf(role) === -1) return;
     if (!requireLogin({ type: "menu" })) return;
-    if (role === "provider" && !hasProviderRole()) {
-      addProviderProfile();
-      return;
+    if (role === "provider") {
+      if (!hasProviderRole()) {
+        addProviderProfile();
+        return;
+      }
+      if (providerId) selectOwnedProvider(providerId);
+      else ensureProviderProfiles();
     }
     window.AppState.activeRole = role;
     updateAppHeader(role);
@@ -17391,8 +17541,9 @@
     });
   }
 
-  function editProviderProfile() {
-    if (!myProvider()) {
+  function editProviderProfile(providerId) {
+    if (providerId) selectOwnedProvider(providerId);
+    if (!hasProviderRole() || !myProvider()) {
       showToast("Brak profilu usługodawcy.");
       return;
     }
@@ -17665,14 +17816,17 @@
         event.preventDefault();
         showSimulator();
         break;
-      case "switch-role": switchRole(d.role); break;
+      case "switch-role":
+        event.preventDefault();
+        switchRole(d.role, d.providerId);
+        break;
       case "edit-client-profile":
         event.preventDefault();
         editClientProfile();
         break;
       case "edit-provider-profile":
         event.preventDefault();
-        editProviderProfile();
+        editProviderProfile(d.providerId);
         break;
       case "go-screen": goScreen(d.screen); break;
       case "toggle-app-menu":

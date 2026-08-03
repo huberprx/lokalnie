@@ -16943,6 +16943,39 @@ body.prov-cal-resizing * {
   width: 100%;
 }
 
+.account-provider-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.account-provider-row:first-of-type {
+  border-top: none;
+  padding-top: 0.15rem;
+}
+
+.account-provider-row__text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.account-actions__btn--sm {
+  width: auto !important;
+  flex: 0 0 auto;
+  min-height: 2.1rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.82rem;
+}
+
+.settings__row[data-field="account-providers"] .settings__help--tight {
+  margin: 0.15rem 0 0;
+}
+
 .settings__row[data-field="account-notifications"] {
   gap: 0.55rem;
 }
