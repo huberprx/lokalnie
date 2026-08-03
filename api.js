@@ -160,6 +160,8 @@
 
   async function syncFromServer() {
     if (!window.AppState) return { ok: false, reason: "no_state" };
+    // Gość bez sesji — nie ciągnij demo-usera z API do lokalnego stanu.
+    if (!getAuthToken()) return { ok: false, reason: "guest" };
     try {
       const me = await request("/me");
       if (window.App && typeof window.App.applyApiAuth === "function") {

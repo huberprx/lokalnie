@@ -43,7 +43,9 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.183";
+  const APP_VERSION = "1.0.184";
+  const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
+  const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
 
   const PWA = {
     registration: null,
@@ -3433,6 +3435,7 @@
   }
 
   function renderAppMenu() {
+    const loggedIn = isLoggedIn();
     const cp = ensureClientProfile();
     const activeRole = window.AppState.activeRole || "client";
     const clientActive = activeRole === "client";
@@ -3464,6 +3467,28 @@
            </span>
          </button>`;
 
+    const profilesBlock = loggedIn
+      ? `<div class="app-menu__profiles" role="group" aria-label="Przełącz profil">
+            <div class="app-menu__profile app-menu__profile--client${clientActive ? " app-menu__profile--active" : ""}">
+              <button type="button" class="app-menu__profile-main" data-action="switch-role" data-role="client" aria-pressed="${clientActive ? "true" : "false"}">
+                <span class="app-menu__avatar app-menu__avatar--client">${renderClientMenuAvatar()}</span>
+                <span class="app-menu__profile-text">
+                  <span class="app-menu__profile-label">Profil klienta</span>
+                  <span class="app-menu__profile-name">${escapeHtml(cp.name || "Użytkownik")}</span>
+                </span>
+              </button>
+              <button type="button" class="app-menu__profile-edit" data-action="edit-client-profile"
+                aria-label="Edytuj profil klienta" title="Edytuj profil">${editIcon}</button>
+            </div>
+            ${providerBlock}
+          </div>`
+      : `<div class="app-menu__guest">
+            <p class="app-menu__guest-lead">Przeglądaj oferty bez konta. Zaloguj się, żeby rezerwować i zarządzać wizytami.</p>
+            <button type="button" class="btn btn--primary app-menu__guest-login" data-action="google-login">
+              Zaloguj przez Google
+            </button>
+          </div>`;
+
     // Markup zawsze w stanie „zamknięty” — klasę --open dokładamy w JS,
     // żeby zadziałała animacja wysuwania z boku.
     return `
@@ -3483,20 +3508,7 @@
             </button>
           </div>
 
-          <div class="app-menu__profiles" role="group" aria-label="Przełącz profil">
-            <div class="app-menu__profile app-menu__profile--client${clientActive ? " app-menu__profile--active" : ""}">
-              <button type="button" class="app-menu__profile-main" data-action="switch-role" data-role="client" aria-pressed="${clientActive ? "true" : "false"}">
-                <span class="app-menu__avatar app-menu__avatar--client">${renderClientMenuAvatar()}</span>
-                <span class="app-menu__profile-text">
-                  <span class="app-menu__profile-label">Profil klienta</span>
-                  <span class="app-menu__profile-name">${escapeHtml(cp.name || "Użytkownik")}</span>
-                </span>
-              </button>
-              <button type="button" class="app-menu__profile-edit" data-action="edit-client-profile"
-                aria-label="Edytuj profil klienta" title="Edytuj profil">${editIcon}</button>
-            </div>
-            ${providerBlock}
-          </div>
+          ${profilesBlock}
 
           <nav class="app-menu__links" aria-label="Informacje">
             ${
@@ -3507,7 +3519,11 @@
             <button type="button" class="app-menu__link" data-action="open-legal" data-doc="privacy">Polityka prywatności</button>
             <button type="button" class="app-menu__link" data-action="open-legal" data-doc="terms">Regulamin</button>
             <button type="button" class="app-menu__link" data-action="open-legal" data-doc="contact">Kontakt</button>
-            <button type="button" class="app-menu__link app-menu__link--logout" data-action="logout">Wyloguj</button>
+            ${
+              loggedIn
+                ? `<button type="button" class="app-menu__link app-menu__link--logout" data-action="logout">Wyloguj</button>`
+                : ""
+            }
           </nav>
 
           <div class="app-menu__version" data-role="app-version">
@@ -3563,6 +3579,7 @@
   }
 
   function toggleAppMenu() {
+    // Gość też może otworzyć menu (login + regulamin); gate jest na akcjach konta.
     if (window.AppState.appMenuOpen) closeAppMenu();
     else openAppMenu();
   }
@@ -15326,9 +15343,7 @@
       }
     }
     closeProviderCardMenu();
-    if (window.AppState.loggedIn && window.AppState.activeRole) {
-      updateAppHeader(window.AppState.activeRole);
-    }
+    updateAppHeader(window.AppState.activeRole || "client");
     const prevBottomNavTab = captureBottomNavTab();
     const prevScreens = lastRenderedScreens;
     // Zachowaj scroll osi czasu — inaczej każdy klik (np. w godzinę przy panelu „+”)
@@ -15568,6 +15583,9 @@
   }
 
   function goScreen(screen) {
+    const gated = screen === "favorites" || screen === "myCalendar" || screen === "account";
+    if (gated && !requireLogin({ type: "screen", screen: screen })) return;
+
     window.AppState.appMenuOpen = false;
     if (screen !== "search" && screen !== "favorites") {
       window.AppState.searchOpenSlug = null;
@@ -15584,9 +15602,7 @@
       window.AppState.activeRole = "client";
     }
     window.AppState.screen.client = screen;
-    if (window.AppState.loggedIn) {
-      updateAppHeader(window.AppState.activeRole || "client");
-    }
+    updateAppHeader(window.AppState.activeRole || "client");
     saveState();
     renderAll();
   }
@@ -15830,6 +15846,7 @@
 
   function toggleFav(slug) {
     if (!slug) return;
+    if (!requireLogin({ type: "toggle-fav", slug: slug })) return;
     const i = window.AppState.favorites.indexOf(slug);
     if (i === -1) window.AppState.favorites.push(slug);
     else window.AppState.favorites.splice(i, 1);
@@ -16044,6 +16061,7 @@
   }
 
   function confirmBooking() {
+    if (!requireLogin({ type: "confirm-booking" })) return;
     const draft = window.AppState.draft;
     if (!draft || !draft.slotId) {
       showToast("Wybierz godzinę.");
@@ -16128,6 +16146,7 @@
   }
 
   function sendRequest(slug) {
+    if (!requireLogin({ type: "send-request", slug: slug })) return;
     const draft = window.AppState.draft;
     const p = getProviderBySlug(slug);
     if (!p) return;
@@ -16658,13 +16677,18 @@
   function resetDemo() {
     try {
       localStorage.removeItem(STATE_KEY);
+      sessionStorage.removeItem(PENDING_INTENT_KEY);
+      sessionStorage.removeItem(PENDING_DRAFT_KEY);
+      sessionStorage.removeItem("lokalnie.pendingSlug");
     } catch (err) {
       // ignore
     }
+    if (window.LokalnieApi && window.LokalnieApi.clearAuthToken) {
+      window.LokalnieApi.clearAuthToken();
+    }
     window.AppState = defaultState();
     saveState();
-    renderAll();
-    showSimulator();
+    goMarketplace();
   }
 
   function showToast(message) {
@@ -16679,36 +16703,123 @@
   }
 
   function showPage(page) {
-    const home = document.getElementById("page-home");
     const app = document.getElementById("page-app");
-    if (!home || !app) return;
-    if (page === "app") {
-      home.hidden = true;
-      app.hidden = false;
-      window.scrollTo(0, 0);
-    } else {
-      app.hidden = true;
-      home.hidden = false;
-    }
+    if (!app) return;
+    // Landing/symulator usunięty — zawsze marketplace (#page-app).
+    app.hidden = false;
+    if (page === "app" || page === "home") window.scrollTo(0, 0);
   }
 
   function showSimulator() {
-    showPage("home");
-    const sim = document.getElementById("simulator");
-    if (sim) {
-      requestAnimationFrame(function () {
-        sim.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
+    goMarketplace();
+  }
+
+  function isLoggedIn() {
+    return !!(window.AppState && window.AppState.loggedIn);
+  }
+
+  function setPendingIntent(intent) {
+    try {
+      if (intent) sessionStorage.setItem(PENDING_INTENT_KEY, JSON.stringify(intent));
+      else sessionStorage.removeItem(PENDING_INTENT_KEY);
+    } catch (err) {
+      /* ignore */
     }
   }
 
-  /** Wejście do marketplace (lista usługodawców) zamiast panelu głównego / odkryj. */
+  function takePendingIntent() {
+    try {
+      const raw = sessionStorage.getItem(PENDING_INTENT_KEY);
+      sessionStorage.removeItem(PENDING_INTENT_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  /** Gate Allegro/OLX: przeglądanie OK, akcje konta → login. */
+  function requireLogin(intent) {
+    if (isLoggedIn()) return true;
+    setPendingIntent(intent || { type: "marketplace" });
+    try {
+      if (window.AppState && window.AppState.draft) {
+        sessionStorage.setItem(PENDING_DRAFT_KEY, JSON.stringify(window.AppState.draft));
+      }
+      if (window.AppState && window.AppState.searchOpenSlug) {
+        sessionStorage.setItem("lokalnie.pendingSlug", String(window.AppState.searchOpenSlug));
+      }
+    } catch (err) {
+      /* ignore */
+    }
+    showToast("Zaloguj się, aby kontynuować.");
+    googleLogin();
+    return false;
+  }
+
+  function peekPendingIntent() {
+    try {
+      const raw = sessionStorage.getItem(PENDING_INTENT_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function restorePendingBrowseState() {
+    try {
+      const draftRaw = sessionStorage.getItem(PENDING_DRAFT_KEY);
+      sessionStorage.removeItem(PENDING_DRAFT_KEY);
+      if (draftRaw) {
+        const draft = JSON.parse(draftRaw);
+        if (draft && typeof draft === "object") {
+          window.AppState.draft = draft;
+          if (draft.slug) {
+            window.AppState.searchOpenSlug = draft.slug;
+            window.AppState.screen.client = "booking";
+          }
+        }
+      }
+      const slug = sessionStorage.getItem("lokalnie.pendingSlug");
+      sessionStorage.removeItem("lokalnie.pendingSlug");
+      if (slug && !window.AppState.searchOpenSlug) {
+        window.AppState.searchOpenSlug = slug;
+      }
+    } catch (err) {
+      /* ignore */
+    }
+  }
+
+  function resumePendingIntent() {
+    const intent = takePendingIntent();
+    if (!intent || !intent.type) return;
+    if (intent.type === "screen" && intent.screen) {
+      goScreen(intent.screen);
+      return;
+    }
+    if (intent.type === "confirm-booking") {
+      confirmBooking();
+      return;
+    }
+    if (intent.type === "send-request" && intent.slug) {
+      sendRequest(intent.slug);
+      return;
+    }
+    if (intent.type === "toggle-fav" && intent.slug) {
+      toggleFav(intent.slug);
+      return;
+    }
+    if (intent.type === "menu") {
+      openAppMenu();
+    }
+  }
+
+  /** Marketplace — dostępny też bez logowania (jak Allegro/OLX). */
   function goMarketplace() {
-    window.AppState.loggedIn = true;
     window.AppState.activeRole = "client";
     window.AppState.screen.client = "search";
     window.AppState.searchOpenSlug = null;
     window.AppState.appMenuOpen = false;
+    window.AppState.onboarding = null;
     saveState();
     updateAppHeader("client");
     renderAll();
@@ -16731,24 +16842,15 @@
       return;
     }
     setEmbedMode(false);
-    if (hash === "simulator") {
-      showSimulator();
+    if (hash === "simulator" || hash === "calendar") {
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+      goMarketplace();
       return;
     }
     const providerMatch = hash.match(/^provider\/(.+)$/);
     if (providerMatch && providerMatch[1]) {
-      showSimulator();
+      goMarketplace();
       openProvider(decodeURIComponent(providerMatch[1]));
-      return;
-    }
-    if (hash === "calendar") {
-      showPage("home");
-      const cal = document.getElementById("calendar");
-      if (cal) {
-        requestAnimationFrame(function () {
-          cal.scrollIntoView({ behavior: "smooth", block: "start" });
-        });
-      }
     }
   }
 
@@ -16824,20 +16926,30 @@
   function updateAppHeader(activeRole) {
     const role = activeRole || "client";
     const userEl = document.getElementById("app-header-user");
+    const loggedIn = isLoggedIn();
     if (userEl) {
-      const roleLabel = role === "provider" ? "Profil usługodawcy" : "Profil klienta";
-      const name = appHeaderUserName(role) || "Użytkownik";
-      userEl.innerHTML =
-        `<span class="app-header__user-role">${escapeHtml(roleLabel)}</span>` +
-        `<span class="app-header__user-name">${escapeHtml(name)}</span>`;
-      userEl.setAttribute("aria-label", roleLabel + ": " + name);
-      userEl.dataset.role = role;
+      if (loggedIn) {
+        const roleLabel = role === "provider" ? "Profil usługodawcy" : "Profil klienta";
+        const name = appHeaderUserName(role) || "Użytkownik";
+        userEl.innerHTML =
+          `<span class="app-header__user-role">${escapeHtml(roleLabel)}</span>` +
+          `<span class="app-header__user-name">${escapeHtml(name)}</span>`;
+        userEl.setAttribute("aria-label", roleLabel + ": " + name);
+        userEl.dataset.role = role;
+        userEl.classList.remove("app-header__user--guest");
+      } else {
+        userEl.innerHTML =
+          `<button type="button" class="app-header__login" data-action="google-login">Zaloguj</button>`;
+        userEl.setAttribute("aria-label", "Zaloguj się");
+        userEl.dataset.role = "guest";
+        userEl.classList.add("app-header__user--guest");
+      }
     }
 
     const pageApp = document.getElementById("page-app");
-    if (pageApp) pageApp.dataset.activeRole = role;
+    if (pageApp) pageApp.dataset.activeRole = loggedIn ? role : "client";
 
-    const canSwitchProvider = hasProviderRole();
+    const canSwitchProvider = loggedIn && hasProviderRole();
     const roleSwitch = document.getElementById("app-role-switch");
     if (roleSwitch) roleSwitch.hidden = !canSwitchProvider;
 
@@ -16849,23 +16961,10 @@
 
     renderAppHeaderNav(role);
     syncAppHeaderMenuBtn(!!window.AppState.appMenuOpen);
-
-    const onMyCalendar = role === "client" && window.AppState.screen.client === "myCalendar";
-    document.querySelectorAll('#page-home [data-action="open-my-calendar"]').forEach(function (btn) {
-      btn.classList.toggle("site-nav__link--active", onMyCalendar);
-      btn.setAttribute("aria-current", onMyCalendar ? "page" : "false");
-    });
   }
 
   function openMyCalendar() {
-    window.AppState.loggedIn = true;
-    window.AppState.activeRole = "client";
-    window.AppState.screen.client = "myCalendar";
-    window.AppState.searchOpenSlug = null;
-    saveState();
-    updateAppHeader("client");
-    renderAll();
-    showPage("app");
+    goScreen("myCalendar");
   }
 
   function testLogin(startRole) {
@@ -16894,7 +16993,16 @@
     if (!token || !window.LokalnieApi) return false;
     window.LokalnieApi.setAuthToken(token);
 
-    // Świeży login z Google zaczyna czysty — inaczej nadpisuje go stary stan demo.
+    const pending = peekPendingIntent();
+    const skipOnboarding = !!(
+      pending &&
+      (pending.type === "confirm-booking" ||
+        pending.type === "send-request" ||
+        pending.type === "toggle-fav" ||
+        pending.type === "screen")
+    );
+
+    // Świeży login z Google — nie ciągnij starego demo, ale przywróć draft rezerwacji.
     try {
       localStorage.removeItem(STATE_KEY);
     } catch (err) {
@@ -16904,6 +17012,7 @@
     window.AppState.loggedIn = true;
     window.AppState.activeRole = "client";
     window.AppState.screen.client = DEFAULT_SCREEN.client;
+    restorePendingBrowseState();
     saveState();
     updateAppHeader("client");
     showPage("app");
@@ -16916,18 +17025,24 @@
         if (me.user.name) cp.name = me.user.name;
         if (me.user.email) cp.email = me.user.email;
         const hasProvider = !!(me.user.roles && me.user.roles.provider) || !!me.provider;
-        window.AppState.onboarding = hasProvider ? null : "choose";
+        window.AppState.onboarding = hasProvider || skipOnboarding ? null : "choose";
         saveState();
         renderAll();
-        showToast(hasProvider ? "Zalogowano przez Google." : "Zalogowano. Jak chcesz zacząć?");
+        showToast(
+          hasProvider || skipOnboarding
+            ? "Zalogowano przez Google."
+            : "Zalogowano. Jak chcesz zacząć?"
+        );
         void window.LokalnieApi.syncFromServer().then(function () {
           saveState();
           renderAll();
+          if (!window.AppState.onboarding) resumePendingIntent();
         });
       } else {
-        window.AppState.onboarding = "choose";
+        window.AppState.onboarding = skipOnboarding ? null : "choose";
         saveState();
         renderAll();
+        if (!window.AppState.onboarding) resumePendingIntent();
       }
     });
     return true;
@@ -16937,6 +17052,10 @@
     window.AppState.onboarding = null;
     saveState();
     renderAll();
+    if (peekPendingIntent()) {
+      resumePendingIntent();
+      return;
+    }
     goMarketplace();
   }
 
@@ -16988,6 +17107,7 @@
   }
 
   function addProviderProfile() {
+    if (!requireLogin({ type: "menu" })) return;
     closeAppMenuThen(function () {
       window.AppState.onboarding = "provider";
       saveState();
@@ -17017,13 +17137,15 @@
     }
     try {
       localStorage.removeItem(STATE_KEY);
+      sessionStorage.removeItem(PENDING_INTENT_KEY);
+      sessionStorage.removeItem(PENDING_DRAFT_KEY);
+      sessionStorage.removeItem("lokalnie.pendingSlug");
     } catch (err) {
       /* ignore */
     }
     window.AppState = defaultState();
     saveState();
-    renderAll();
-    showPage("home");
+    goMarketplace();
     showToast("Wylogowano.");
   }
 
@@ -17045,6 +17167,11 @@
 
   function switchRole(role) {
     if (INSTANCES.indexOf(role) === -1) return;
+    if (!requireLogin({ type: "menu" })) return;
+    if (role === "provider" && !hasProviderRole()) {
+      addProviderProfile();
+      return;
+    }
     window.AppState.activeRole = role;
     updateAppHeader(role);
     closeAppMenuThen(function () {
@@ -20205,9 +20332,23 @@
     bindAvailDaySwipe();
     bindAvailTimePickers();
     loadState();
+    // Stary flow ustawiał loggedIn przy samym wejściu w marketplace — bez tokena = gość.
+    try {
+      const token =
+        window.LokalnieApi && window.LokalnieApi.getAuthToken
+          ? window.LokalnieApi.getAuthToken()
+          : "";
+      if (window.AppState.loggedIn && !token) {
+        window.AppState.loggedIn = false;
+        window.AppState.activeRole = "client";
+        window.AppState.onboarding = null;
+        saveState();
+      }
+    } catch (err) {
+      /* ignore */
+    }
     // Callback Google OAuth: #access_token=...
     const justAuthed = consumeAuthHash();
-    // Najpierw wejdź w appę — inaczej przy opóźnionym/starym JS widać landing „Zaloguj się”.
     try {
       if (justAuthed) {
         /* finishGoogleLogin już pokazał app */
@@ -20237,7 +20378,13 @@
     bindPwaInstallPrompt();
     registerServiceWorker();
 
-    if (window.LokalnieApi && window.LokalnieApi.enabled) {
+    if (
+      window.LokalnieApi &&
+      window.LokalnieApi.enabled &&
+      window.AppState.loggedIn &&
+      window.LokalnieApi.getAuthToken &&
+      window.LokalnieApi.getAuthToken()
+    ) {
       void window.LokalnieApi.syncFromServer().then(function (result) {
         if (result && result.ok) {
           saveState();

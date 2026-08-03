@@ -17,154 +17,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=681" />
+  <link rel="stylesheet" href="styles.css?v=682" />
 </head>
 <body>
 
-  <!-- ══════════════════════════════════════════════
-       STRONA GŁÓWNA (landing) — widoczna bez logowania
-       ══════════════════════════════════════════════ -->
-  <div id="page-home" hidden>
-    <header class="site-header">
-      <div class="site-header__inner">
-        <a href="#" class="logo" aria-label="Lokalnie — strona główna">
-          <span class="logo-mark" aria-hidden="true"><img class="logo-mark__img" src="assets/icons/logo-1024.png" alt="" width="40" height="40" /></span>
-          <span class="logo-text">Lokalnie</span>
-        </a>
-        <nav class="site-nav" aria-label="Menu główne">
-          <button type="button" class="site-nav__link" data-action="open-my-calendar">Mój kalendarz</button>
-        </nav>
-        <div class="site-header__actions">
-          <button type="button" class="site-nav__action site-nav__action--primary" data-action="google-login">
-            Zaloguj przez Google
-          </button>
-          <button type="button" class="site-nav__action" data-action="reset-demo">
-            Zresetuj demo
-          </button>
-        </div>
-      </div>
-    </header>
-
-    <main class="page">
-      <section class="hero">
-        <h1 class="hero__title">Rezerwuj usługi lokalnie</h1>
-        <p class="hero__subtitle">
-          Jedna aplikacja, dwie perspektywy: zobacz ten sam proces oczami klienta
-          i usługodawcy. Przełącz podgląd między telefonem a desktopem i klikaj
-          przez cały przepływ rezerwacji.
-        </p>
-        <div class="hero__cta">
-          <button type="button" class="btn btn--primary" data-action="google-login">
-            Zaloguj przez Google
-          </button>
-          <button type="button" class="btn btn--ghost" data-action="test-login" data-target="client">
-            Demo jako klient
-          </button>
-          <button type="button" class="btn btn--ghost" data-action="test-login" data-target="provider">
-            Demo jako usługodawca
-          </button>
-        </div>
-      </section>
-
-      <section class="simulator" id="simulator">
-        <div class="simulator__stage">
-          <!-- Podgląd KLIENTA -->
-          <div class="sim-preview" data-side="client">
-            <div class="sim-toolbar">
-              <div class="sim-toolbar__label">
-                <span class="sim-dot sim-dot--client"></span>
-                Klient
-              </div>
-              <div class="sim-viewtoggle" role="radiogroup" aria-label="Widok podglądu klienta">
-                <button type="button" data-side="client" data-view="mobile" aria-pressed="true">Mobile</button>
-                <button type="button" data-side="client" data-view="desktop" aria-pressed="false">Desktop</button>
-              </div>
-            </div>
-            <div class="sim-viewport">
-              <div class="device-frame" data-view="mobile" data-instance="client">
-                <div class="app-mount" id="app-client"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Podgląd USŁUGODAWCY -->
-          <div class="sim-preview" data-side="provider">
-            <div class="sim-toolbar">
-              <div class="sim-toolbar__label">
-                <span class="sim-dot sim-dot--provider"></span>
-                Usługodawca
-              </div>
-              <div class="sim-viewtoggle" role="radiogroup" aria-label="Widok podglądu usługodawcy">
-                <button type="button" data-side="provider" data-view="mobile" aria-pressed="true">Mobile</button>
-                <button type="button" data-side="provider" data-view="desktop" aria-pressed="false">Desktop</button>
-              </div>
-            </div>
-            <div class="sim-viewport">
-              <div class="device-frame" data-view="mobile" data-instance="provider">
-                <div class="app-mount" id="app-provider"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="calendar-block" id="calendar">
-        <div class="calendar-block__header">
-          <h2>Podłącz swój kalendarz Google</h2>
-          <p>Opcjonalnie — osadź kalendarz Google, aby testować zajętość terminów po obu stronach.</p>
-        </div>
-        <div class="calendar-block__grid">
-          <section class="calendar-section" aria-labelledby="calendar-user-title">
-            <div class="calendar-section-header">
-              <h2 id="calendar-user-title">Kalendarz Google · klient</h2>
-              <p>Podłącz swój kalendarz, aby testować rezerwacje po stronie klienta.</p>
-            </div>
-            <form class="calendar-connect" data-role="user">
-              <input
-                type="text"
-                name="calendarId"
-                placeholder="ID kalendarza, np. twoj@email.com"
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <button type="submit">Połącz</button>
-            </form>
-            <div class="calendar-frame calendar-frame--user" data-role="user">
-              <p class="calendar-placeholder">Wklej ID kalendarza Google i kliknij „Połącz".</p>
-            </div>
-          </section>
-
-          <section class="calendar-section" aria-labelledby="calendar-provider-title">
-            <div class="calendar-section-header">
-              <h2 id="calendar-provider-title">Kalendarz Google · usługodawca</h2>
-              <p>Podłącz kalendarz usługodawcy, aby sprawdzać terminy i rezerwacje.</p>
-            </div>
-            <form class="calendar-connect" data-role="provider">
-              <input
-                type="text"
-                name="calendarId"
-                placeholder="ID kalendarza, np. studio@email.com"
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <button type="submit">Połącz</button>
-            </form>
-            <div class="calendar-frame calendar-frame--provider" data-role="provider">
-              <p class="calendar-placeholder">Wklej ID kalendarza Google i kliknij „Połącz".</p>
-            </div>
-          </section>
-        </div>
-      </section>
-    </main>
-
-    <footer class="site-footer">
-      <p>Wersja podglądu · interfejs w budowie</p>
-    </footer>
-  </div><!-- /#page-home -->
-
-  <!-- ══════════════════════════════════════════════
-       PEŁNOEKRANOWA APLIKACJA — pojawia się po zalogowaniu
-       ══════════════════════════════════════════════ -->
+  <!-- Marketplace — widoczny od razu, także bez logowania -->
   <div id="page-app" data-active-role="client">
     <header class="app-header">
       <div class="app-header__inner">
@@ -191,9 +48,7 @@
   <div class="toast" id="app-toast" role="status" aria-live="polite" hidden></div>
 
   <script src="data.js?v=27"></script>
-  <script src="api.js?v=4"></script>
-  <script src="app.js?v=693"></script>
-  <script src="simulator.js?v=12"></script>
-  <script src="calendar.js"></script>
+  <script src="api.js?v=5"></script>
+  <script src="app.js?v=694"></script>
 </body>
 </html>
