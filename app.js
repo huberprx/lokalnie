@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.195";
+  const APP_VERSION = "1.0.196";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -365,7 +365,9 @@
   }
 
   function ensureClientProfile() {
-    const u = data().CURRENT_USER || {};
+    // Dane demo tylko w podglądzie testera — realne konto startuje puste,
+    // inaczej nowy użytkownik rezerwuje z cudzym numerem telefonu.
+    const u = isTesterMode() ? data().CURRENT_USER || {} : {};
     let cp = window.AppState.clientProfile;
     if (!cp || typeof cp !== "object") {
       const srcNotes = (u.notifications && typeof u.notifications === "object" && u.notifications) || {};
@@ -387,6 +389,16 @@
     if (!cp.notifications || typeof cp.notifications !== "object") {
       cp.notifications = { visitReminders: true, statusChanges: true, marketing: false };
     }
+    return cp;
+  }
+
+  /** Podgląd testera: uzupełnij puste pola danymi demo (realne konto zostaje puste). */
+  function seedTesterClientProfile() {
+    const cp = ensureClientProfile();
+    const u = data().CURRENT_USER || {};
+    if (!cp.name) cp.name = String(u.name || "");
+    if (!cp.phone) cp.phone = String(u.phone || "");
+    if (!cp.email) cp.email = String(u.email || "");
     return cp;
   }
 
@@ -4242,10 +4254,7 @@
     const nameEl = document.querySelector('[data-role="account-name"]');
     const phoneEl = document.querySelector('[data-role="account-phone"]');
     const emailEl = document.querySelector('[data-role="account-email"]');
-    if (nameEl) {
-      const n = String(nameEl.value || "").trim();
-      cp.name = n || cp.name || "Użytkownik";
-    }
+    if (nameEl) cp.name = String(nameEl.value || "").trim();
     if (phoneEl) cp.phone = String(phoneEl.value || "").trim();
     if (emailEl) cp.email = String(emailEl.value || "").trim();
     const rem = document.querySelector('[data-role="account-notif-reminders"]');
@@ -4255,6 +4264,21 @@
     if (status) cp.notifications.statusChanges = !!status.checked;
     if (marketing) cp.notifications.marketing = !!marketing.checked;
     ensureClientProfile();
+    queueClientProfileSync();
+  }
+
+  let clientProfileSyncTimer = null;
+
+  /** Zapis profilu klienta na serwer — bez tego dane giną przy kolejnym logowaniu. */
+  function queueClientProfileSync() {
+    if (isTesterMode()) return;
+    if (!window.LokalnieApi || !window.LokalnieApi.updateMe) return;
+    if (!window.LokalnieApi.getAuthToken || !window.LokalnieApi.getAuthToken()) return;
+    if (clientProfileSyncTimer) clearTimeout(clientProfileSyncTimer);
+    clientProfileSyncTimer = setTimeout(function () {
+      clientProfileSyncTimer = null;
+      void window.LokalnieApi.updateMe(ensureClientProfile());
+    }, 800);
   }
 
   function renderGuestAccount() {
@@ -4402,8 +4426,9 @@
                 role: "account-email",
                 type: "email",
                 value: cp.email || "",
-                attrs: 'autocomplete="email" inputmode="email"',
+                attrs: 'autocomplete="email" inputmode="email" readonly aria-readonly="true"',
               })}
+              <p class="settings__help settings__help--tight">E-mail pochodzi z konta Google i służy do logowania.</p>
             </div>
             <div class="settings__row" data-field="account-notifications">
               <span class="settings__key">Powiadomienia</span>
@@ -17303,7 +17328,7 @@
     setTesterMode(true);
     window.AppState.loggedIn = true;
     window.AppState.onboarding = null;
-    ensureClientProfile();
+    seedTesterClientProfile();
     seedTesterProviderProfiles();
     window.AppState.activeRole = role;
     window.AppState.screen[role] = DEFAULT_SCREEN[role];
@@ -17346,31 +17371,43 @@
     showPage("app");
     renderAll();
 
-    void window.LokalnieApi.request("/me").then(function (me) {
-      if (me && me.user) {
-        const cp = ensureClientProfile();
-        if (me.user.name) cp.name = me.user.name;
-        if (me.user.email) cp.email = me.user.email;
-        applyApiAuth(me);
-        // Zawsze start jako klient — firmę dodaje się później z konta.
-        window.AppState.activeRole = "client";
-        window.AppState.onboarding = null;
-        saveState();
-        renderAll();
-        showToast("Zalogowano. Profil klienta jest gotowy.");
-        void window.LokalnieApi.syncFromServer().then(function () {
+    void window.LokalnieApi.request("/me")
+      .then(function (me) {
+        if (me && me.user) {
+          const cp = ensureClientProfile();
+          if (me.user.name) cp.name = me.user.name;
+          if (me.user.email) cp.email = me.user.email;
+          if (me.user.phone) cp.phone = me.user.phone;
+          applyApiAuth(me);
+          // Zawsze start jako klient — firmę dodaje się później z konta.
+          window.AppState.activeRole = "client";
+          window.AppState.onboarding = null;
           saveState();
           renderAll();
-          resumePendingIntent();
-        });
-      } else {
+          showToast("Zalogowano. Profil klienta jest gotowy.");
+          return window.LokalnieApi.syncFromServer().then(function () {
+            saveState();
+            renderAll();
+            resumePendingIntent();
+          });
+        }
         ensureClientProfile();
         window.AppState.onboarding = null;
         saveState();
         renderAll();
         resumePendingIntent();
-      }
-    });
+        return null;
+      })
+      .catch(function (err) {
+        console.warn("[Lokalnie] /me failed", err);
+        ensureClientProfile();
+        window.AppState.onboarding = null;
+        saveState();
+        renderAll();
+        showToast("Zalogowano, ale nie pobrano profilu. Sprawdź połączenie.");
+        // Nie gub akcji, która wymusiła logowanie (rezerwacja / ulubione).
+        resumePendingIntent();
+      });
     return true;
   }
 
@@ -18801,9 +18838,9 @@
       '[data-role="account-notif-reminders"], [data-role="account-notif-status"], [data-role="account-notif-marketing"]'
     );
     if (accountNotif) {
+      // Bez renderAll — etykiety są stałe, a pełny render zjeżdża widok na górę.
       captureClientAccountFields();
       saveState();
-      renderAll();
       return;
     }
 

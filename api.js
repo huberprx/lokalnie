@@ -246,6 +246,30 @@
     }
   }
 
+  /** Zapis profilu klienta na serwerze (e-mail zostaje z konta Google). */
+  async function updateMe(profile) {
+    if (!profile || !getAuthToken()) return null;
+    const notes = profile.notifications || {};
+    try {
+      const res = await request("/me", {
+        method: "PATCH",
+        json: {
+          name: profile.name || "",
+          phone: profile.phone || "",
+          notifications: {
+            reminder: !!notes.visitReminders,
+            booking: !!notes.statusChanges,
+            marketing: !!notes.marketing,
+          },
+        },
+      });
+      return (res && res.user) || null;
+    } catch (err) {
+      console.warn("[LokalnieApi] updateMe failed", err);
+      return null;
+    }
+  }
+
   async function upsertClient(appProviderId, client) {
     if (!client || !client.name) return null;
     try {
@@ -430,6 +454,7 @@
     mediaUrl: mediaUrl,
     request: request,
     syncFromServer: syncFromServer,
+    updateMe: updateMe,
     upsertClient: upsertClient,
     createBookingFromApp: createBookingFromApp,
     createRequestFromApp: createRequestFromApp,
