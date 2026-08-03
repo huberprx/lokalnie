@@ -2546,8 +2546,22 @@ body.cancel-visit-dialog-open {
 }
 
 .app-screen--settings .app-scroll,
-.app-screen--service-edit .app-scroll {
+.app-screen--service-edit .app-scroll,
+.app-screen--account .app-scroll {
   background: #eef0f4;
+}
+
+/* Desktop: ustawienia / konto — wąska kolumna (nie na pełną szerokość) */
+@media (min-width: 900px) {
+  .app-screen--settings .app-scroll,
+  .app-screen--account .app-scroll,
+  .app-screen--service-edit .app-scroll {
+    max-width: 40rem;
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    box-sizing: border-box;
+  }
 }
 
 .screen-head {
