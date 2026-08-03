@@ -43,12 +43,21 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.196";
+  const APP_VERSION = "1.0.204";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
 
+  function isProductionHostname() {
+    if (window.LokalnieApi && typeof window.LokalnieApi.isProductionHostname === "function") {
+      return window.LokalnieApi.isProductionHostname();
+    }
+    const host = String(window.location.hostname || "").toLowerCase().replace(/\.$/, "");
+    return host === "lokalnie.app" || host.endsWith(".lokalnie.app");
+  }
+
   function isTesterMode() {
+    if (isProductionHostname()) return false;
     try {
       return localStorage.getItem(TESTER_KEY) === "1";
     } catch (err) {
@@ -58,11 +67,65 @@
 
   function setTesterMode(on) {
     try {
-      if (on) localStorage.setItem(TESTER_KEY, "1");
+      if (on && !isProductionHostname()) localStorage.setItem(TESTER_KEY, "1");
       else localStorage.removeItem(TESTER_KEY);
     } catch (err) {
       /* ignore */
     }
+  }
+
+  function hasApiToken() {
+    return !!(
+      window.LokalnieApi &&
+      window.LokalnieApi.getAuthToken &&
+      window.LokalnieApi.getAuthToken()
+    );
+  }
+
+  function shouldPersistApiMutation() {
+    return !!(
+      !isTesterMode() &&
+      hasApiToken() &&
+      window.LokalnieApi &&
+      window.LokalnieApi.enabled
+    );
+  }
+
+  function apiMutationErrorMessage(err, fallback) {
+    const code = String(
+      (err && err.data && (err.data.error || err.data.code)) || (err && err.message) || ""
+    ).toLowerCase();
+    if (
+      (err && err.status === 409) ||
+      code === "slot_taken" ||
+      code === "booking_overlap" ||
+      code.indexOf("slot_taken") !== -1 ||
+      code.indexOf("booking_overlap") !== -1
+    ) {
+      return "Termin został właśnie zajęty";
+    }
+    if (err && err.status === 401) {
+      return "Sesja wygasła. Zaloguj się ponownie, aby kontynuować.";
+    }
+    return fallback || "Nie udało się zapisać zmiany. Spróbuj ponownie.";
+  }
+
+  function cloneMutationState(value) {
+    return value == null ? value : JSON.parse(JSON.stringify(value));
+  }
+
+  function stableLocalActionId(target, action) {
+    if (!target || typeof target !== "object") {
+      return action + "-" + Date.now().toString(36);
+    }
+    if (!target._localActionIds || typeof target._localActionIds !== "object") {
+      target._localActionIds = {};
+    }
+    if (!target._localActionIds[action]) {
+      target._localActionIds[action] =
+        action + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9);
+    }
+    return target._localActionIds[action];
   }
 
   const PWA = {
@@ -78,15 +141,16 @@
   }
 
   function defaultState() {
+    const includeDemo = !isProductionHostname();
     return {
       role: { client: "client", provider: "provider" },
       screen: { client: DEFAULT_SCREEN.client, provider: DEFAULT_SCREEN.provider },
       params: { client: {}, provider: {} },
       favorites: [],
-      bookings: (data().DEMO_BOOKINGS || []).map(function (b) {
+      bookings: (includeDemo ? data().DEMO_BOOKINGS || [] : []).map(function (b) {
         return Object.assign({}, b);
       }),
-      requests: (data().DEMO_REQUESTS || []).map(function (r) {
+      requests: (includeDemo ? data().DEMO_REQUESTS || [] : []).map(function (r) {
         return Object.assign({}, r, {
           days: Array.isArray(r.days) ? r.days.map(function (d) { return Object.assign({}, d); }) : [],
           proposals: Array.isArray(r.proposals) ? r.proposals.map(function (p) { return Object.assign({}, p); }) : [],
@@ -168,7 +232,7 @@
       providerCardInfoExpanded: false,
       /** Profil klienta (Booksy-like): imię, telefon, e-mail, powiadomienia. */
       clientProfile: null,
-      /** Formularz nowego profilu usługodawcy: "provider" | null (wybór roli usunięty — zawsze klient). */
+      /** Onboarding: "client" (po Google) | "provider" (dodaj firmę) | null. */
       onboarding: null,
       /** Aktywny profil usługodawcy (referencja z providerProfiles). */
       myProvider: null,
@@ -299,10 +363,22 @@
   }
 
   function getProviderBySlug(slug) {
+    if (!slug) return null;
+    const owned = (window.AppState && window.AppState.providerProfiles) || [];
+    const fromOwned = owned.find(function (p) {
+      return p && p.slug === slug;
+    });
+    if (fromOwned) return fromOwned;
     return (data().PROVIDERS || []).find((p) => p.slug === slug) || null;
   }
 
   function getProviderById(id) {
+    if (!id) return null;
+    const owned = (window.AppState && window.AppState.providerProfiles) || [];
+    const fromOwned = owned.find(function (p) {
+      return p && p.id === id;
+    });
+    if (fromOwned) return fromOwned;
     return (data().PROVIDERS || []).find((p) => p.id === id) || null;
   }
 
@@ -352,7 +428,9 @@
   ];
 
   function demoTodayISO() {
-    return (data().DEMO_TODAY_ISO || "2026-07-16");
+    if (!isProductionHostname()) return data().DEMO_TODAY_ISO || "2026-07-16";
+    const today = new Date();
+    return today.getFullYear() + "-" + pad(today.getMonth() + 1) + "-" + pad(today.getDate());
   }
 
   function addDaysISO(iso, days) {
@@ -827,12 +905,29 @@
     });
   }
 
+  /** Katalog: mocki + własne aktywne profile (widoczne i kompletne). */
+  function catalogProviders() {
+    const owned = (window.AppState && window.AppState.providerProfiles) || [];
+    // Własny profil zastępuje odpowiadający mu mock — także po dezaktywacji.
+    const base = (data().PROVIDERS || []).filter(function (p) {
+      return !owned.some(function (op) {
+        return op && p && (op.id === p.id || op.slug === p.slug);
+      });
+    });
+    owned.forEach(function (op) {
+      if (!op || !op.visibleInSearch || !isProviderProfileActive(op)) return;
+      base.push(op);
+    });
+    return base;
+  }
+
   function filterProviders() {
     const q = (window.AppState.searchQuery || "").toLowerCase();
     const cat = window.AppState.searchCategory || "";
     const sub = window.AppState.searchSubcategory || "";
-    return (data().PROVIDERS || []).filter((p) => {
+    return catalogProviders().filter((p) => {
       if (!p.visibleInSearch) return false;
+      if (!isProviderProfileActive(p) && isOwnedProvider(p)) return false;
       if (cat && p.category !== cat) return false;
       if (sub && p.subcategory !== sub) return false;
       if (!matchesSearchLocation(p)) return false;
@@ -1544,7 +1639,9 @@
             <span class="selection-summary__duration">${escapeHtml(durationText)}</span>
             <span class="selection-summary__price">${escapeHtml(priceText)}</span>
           </div>
-          <button type="button" class="btn btn--primary selection-summary__cta" data-action="send-request" data-slug="${escapeHtml(p.slug)}"${ctx.canSendRequest ? "" : " disabled"}>Wyślij prośbę o termin</button>
+          <button type="button" class="btn btn--primary selection-summary__cta" data-action="send-request" data-slug="${escapeHtml(p.slug)}"${
+            ctx.canSendRequest && !p.deactivated ? "" : " disabled"
+          }>Wyślij prośbę o termin</button>
         </div>`;
     }
 
@@ -3144,8 +3241,16 @@
         screen: Object.assign({}, base.screen, stored.screen),
         params: Object.assign({}, base.params, stored.params),
         favorites: Array.isArray(stored.favorites) ? stored.favorites : base.favorites,
-        bookings: Array.isArray(stored.bookings) ? stored.bookings : base.bookings,
-        requests: Array.isArray(stored.requests) ? stored.requests : base.requests,
+        bookings: isProductionHostname()
+          ? []
+          : Array.isArray(stored.bookings)
+            ? stored.bookings
+            : base.bookings,
+        requests: isProductionHostname()
+          ? []
+          : Array.isArray(stored.requests)
+            ? stored.requests
+            : base.requests,
         notifications: Array.isArray(stored.notifications) ? stored.notifications : base.notifications,
         simView: Object.assign({}, base.simView, stored.simView),
         loggedIn: typeof stored.loggedIn === "boolean" ? stored.loggedIn : base.loggedIn,
@@ -3284,7 +3389,7 @@
           stored.clientProfile && typeof stored.clientProfile === "object"
             ? stored.clientProfile
             : base.clientProfile,
-        onboarding: stored.onboarding === "provider" ? "provider" : null,
+        onboarding: stored.onboarding === "client" ? "client" : null,
         myProvider: stored.myProvider && typeof stored.myProvider === "object" ? stored.myProvider : base.myProvider,
         activeProviderId:
           typeof stored.activeProviderId === "string" ? stored.activeProviderId : base.activeProviderId,
@@ -3302,8 +3407,8 @@
       window.AppState = base;
     }
 
-    // Dopnij brakujące wizyty demo (np. po starym localStorage).
-    const demoBookings = data().DEMO_BOOKINGS || [];
+    // Dopnij brakujące wizyty demo (np. po starym localStorage), ale nigdy po prawdziwym OAuth na prod.
+    const demoBookings = isProductionHostname() ? [] : data().DEMO_BOOKINGS || [];
     if (demoBookings.length) {
       const existingById = Object.create(null);
       (window.AppState.bookings || []).forEach(function (b) {
@@ -3324,7 +3429,7 @@
     }
 
     // Dopnij brakujące prośby o termin z demo (+ uzupełnij telefon / e-mail).
-    const demoRequests = data().DEMO_REQUESTS || [];
+    const demoRequests = isProductionHostname() ? [] : data().DEMO_REQUESTS || [];
     if (demoRequests.length) {
       if (!Array.isArray(window.AppState.requests)) window.AppState.requests = [];
       const existingReq = Object.create(null);
@@ -4319,6 +4424,12 @@
   }
 
   function renderAuthLogin() {
+    const testerControls = isProductionHostname()
+      ? ""
+      : `<button type="button" class="auth-login__tester" data-action="test-login" data-target="client">
+            Kontynuuj jako tester
+          </button>
+          <p class="auth-login__tester-hint">Bez Google — do lokalnych testów bramki i rezerwacji.</p>`;
     return `
       <div class="app-screen app-screen--client app-screen--auth">
         <div class="app-scroll auth-login">
@@ -4340,6 +4451,7 @@
             </span>
             <span class="auth-login__google-label">Kontynuuj przez konto Google</span>
           </button>
+          ${testerControls}
           <p class="auth-login__legal">
             Kontynuując, akceptujesz
             <button type="button" class="auth-login__legal-link" data-action="open-legal" data-doc="terms">Regulamin</button>
@@ -4358,10 +4470,15 @@
     const providers = listOwnedProviders();
     const providerRows = providers
       .map(function (p) {
+        const status = p.deactivated
+          ? "Dezaktywowany"
+          : !isProviderProfileActive(p)
+            ? "Nieaktywny — uzupełnij wymagane dane"
+            : categoryLabel(p.category) || p.city || "Profil firmowy";
         return `<div class="account-provider-row">
             <div class="account-provider-row__text">
               <span class="settings__hint">${escapeHtml(p.name || "Usługodawca")}</span>
-              <span class="settings-contact__toggle-hint">${escapeHtml(p.category || p.city || "Profil firmowy")}</span>
+              <span class="settings-contact__toggle-hint">${escapeHtml(status)}</span>
             </div>
             <button type="button" class="btn btn--ghost account-actions__btn account-actions__btn--sm"
               data-action="switch-role" data-role="provider" data-provider-id="${escapeHtml(p.id)}">Otwórz</button>
@@ -5228,7 +5345,7 @@
     const actions = waiting
       ? `<div class="visit-card__actions">${cancelBtn}</div>`
       : `<div class="visit-card__actions">
-           <button type="button" class="btn btn--ghost btn--sm" data-action="decline-request-proposals" data-request-id="${escapeHtml(r.id)}">Poproś o inne terminy</button>
+           <button type="button" class="btn btn--ghost btn--sm" data-action="decline-request-proposals" data-request-id="${escapeHtml(r.id)}">Odrzuć propozycje</button>
            ${cancelBtn}
          </div>`;
     return `
@@ -5725,7 +5842,7 @@
             <span class="time-row__range">${range}</span>
             ${placeHtml}
           </div>
-          <button type="button" class="btn btn--primary btn--sm time-row__btn" data-action="book-slot" data-slot="${escapeHtml(s.id)}">Rezeruj</button>
+          <button type="button" class="btn btn--primary btn--sm time-row__btn" data-action="book-slot" data-slot="${escapeHtml(s.id)}">Rezerwuj</button>
         </div>`;
       })
       .join("");
@@ -5909,9 +6026,22 @@
               <div class="profile__info">
                 <h2 class="profile__name">${escapeHtml(p.name)}</h2>
                 <p class="profile__cat">${escapeHtml(providerCategoryLine(p))}</p>
-                <p class="profile__addr">${escapeHtml(p.address || "Usługa online")}${p.address ? " · " + p.distanceKm.toFixed(1) + " km" : ""}</p>
+                <p class="profile__addr">${escapeHtml(
+                  p.address || (p.city ? p.city : "Usługa online")
+                )}${
+                  p.address && typeof p.distanceKm === "number"
+                    ? " · " + p.distanceKm.toFixed(1) + " km"
+                    : p.city && !p.address
+                      ? ""
+                      : ""
+                }</p>
               </div>
             </div>
+            ${
+              isOwnedProvider(p) && !isProviderProfileActive(p)
+                ? renderProviderCompletenessBanner(p, { publicView: true })
+                : ""
+            }
             ${p.about ? `<p class="profile__about">${escapeHtml(p.about)}</p>` : ""}
             ${renderProfileContact(p)}
             ${
@@ -6058,6 +6188,156 @@
     return (p && p.id) || MY_PROVIDER_ID;
   }
 
+  function isOwnedProvider(p) {
+    if (!p || !p.id) return false;
+    return listOwnedProviders().some(function (x) {
+      return x && x.id === p.id;
+    });
+  }
+
+  function providerHasAvailabilityBlocks(p) {
+    if (!p) return false;
+    if (Array.isArray(p.availability)) {
+      for (let i = 0; i < p.availability.length; i++) {
+        const day = p.availability[i];
+        if (day && Array.isArray(day.blocks) && day.blocks.length) return true;
+      }
+    }
+    const weekly =
+      data().WEEKLY_HOURS && (data().WEEKLY_HOURS[p.id] || data().WEEKLY_HOURS[p.slug]);
+    if (weekly && typeof weekly === "object") {
+      return Object.keys(weekly).some(function (k) {
+        return Array.isArray(weekly[k]) && weekly[k].length > 0;
+      });
+    }
+    return false;
+  }
+
+  /**
+   * Braki do aktywnego profilu (katalog Booksy-like).
+   * Zwraca [{ id, label, tab? }] — tab: settings|services|availability.
+   */
+  function providerProfileGaps(p) {
+    const gaps = [];
+    if (!p) return gaps;
+    if (!String(p.name || "").trim()) {
+      gaps.push({ id: "name", label: "Nazwa firmy", tab: "settings" });
+    }
+    if (!String(p.category || "").trim()) {
+      gaps.push({ id: "category", label: "Kategoria", tab: "settings" });
+    }
+    if (!String(p.city || "").trim()) {
+      gaps.push({ id: "city", label: "Miasto", tab: "settings" });
+    }
+    ensureProviderContact(p);
+    if (String(p.phone || "").replace(/\D/g, "").length < 9) {
+      gaps.push({ id: "phone", label: "Telefon (min. 9 cyfr)", tab: "settings" });
+    }
+    if (!Array.isArray(p.services) || p.services.length < 1) {
+      gaps.push({ id: "services", label: "Co najmniej 1 usługa", tab: "services" });
+    }
+    if (!providerHasAvailabilityBlocks(p)) {
+      gaps.push({ id: "availability", label: "Co najmniej 1 blok dostępności", tab: "availability" });
+    }
+    return gaps;
+  }
+
+  function isProviderProfileActive(p) {
+    return !!p && !p.deactivated && providerProfileGaps(p).length === 0;
+  }
+
+  /** Jeśli profil niekompletny — wyłącz widoczność w katalogu. */
+  function enforceProviderCatalogVisibility(p) {
+    if (!p) return false;
+    if (p.visibleInSearch && !isProviderProfileActive(p)) {
+      p.visibleInSearch = false;
+      return true;
+    }
+    return false;
+  }
+
+  function renderProviderCompletenessBanner(p, opts) {
+    opts = opts || {};
+    const publicView = !!opts.publicView;
+    if (p && p.deactivated) {
+      return `
+        <div class="profile-gap profile-gap--deactivated${publicView ? " profile-gap--public" : " profile-gap--settings"}"
+          data-role="provider-completeness" role="status">
+          <p class="profile-gap__title">Profil dezaktywowany</p>
+          <p class="profile-gap__lead">${
+            publicView
+              ? "Usługodawca obecnie nie przyjmuje nowych rezerwacji."
+              : "Profil jest ukryty i nie przyjmuje nowych rezerwacji. Możesz go ponownie aktywować w sekcji „Zarządzanie profilem”."
+          }</p>
+        </div>`;
+    }
+    const gaps = providerProfileGaps(p);
+    if (!gaps.length) return "";
+    const items = gaps
+      .map(function (g) {
+        if (publicView || !g.tab) {
+          return `<li>${escapeHtml(g.label)}</li>`;
+        }
+        return `<li><button type="button" class="profile-gap__link" data-action="provider-tab" data-tab="${escapeHtml(
+          g.tab
+        )}">${escapeHtml(g.label)}</button></li>`;
+      })
+      .join("");
+    if (publicView) {
+      return `
+        <div class="profile-gap profile-gap--public" data-role="provider-completeness" role="status">
+          <p class="profile-gap__title">Profil nieaktywny w katalogu</p>
+          <p class="profile-gap__lead">Usługodawca musi uzupełnić:</p>
+          <ul class="profile-gap__list">${items}</ul>
+        </div>`;
+    }
+    return `
+      <div class="profile-gap profile-gap--settings" data-role="provider-completeness" role="status">
+        <p class="profile-gap__title">Uzupełnij, by profil był aktywny</p>
+        <p class="profile-gap__lead">Bez tego nie włączysz widoczności w katalogu:</p>
+        <ul class="profile-gap__list">${items}</ul>
+      </div>`;
+  }
+
+  /** Odśwież banner braków + przełącznik widoczności bez pełnego renderAll. */
+  function syncProviderCompletenessUi() {
+    const p = myProvider();
+    if (!p) return;
+    enforceProviderCatalogVisibility(p);
+    const html = renderProviderCompletenessBanner(p);
+    const nodes = document.querySelectorAll('[data-role="provider-completeness"]');
+    if (nodes.length) {
+      nodes.forEach(function (el) {
+        if (!html) {
+          el.remove();
+          return;
+        }
+        const tmp = document.createElement("div");
+        tmp.innerHTML = html.trim();
+        const next = tmp.firstElementChild;
+        if (next) el.replaceWith(next);
+      });
+    } else if (html) {
+      const settingsRoot = document.querySelector(".app-screen--settings .settings");
+      if (settingsRoot) settingsRoot.insertAdjacentHTML("afterbegin", html);
+    }
+    const toggle = document.querySelector('[data-role="settings-visible-search"]');
+    if (toggle) {
+      const active = isProviderProfileActive(p);
+      toggle.disabled = !active;
+      if (!active) toggle.checked = false;
+      const row = toggle.closest(".settings__row--toggle");
+      const hint = row && row.querySelector(".settings__hint");
+      if (hint) {
+        hint.textContent = p.visibleInSearch
+          ? "Widoczny w wyszukiwaniu"
+          : active
+            ? "Ukryty — tylko z linku"
+            : "Niedostępna — uzupełnij braki profilu";
+      }
+    }
+  }
+
   /** Czy konto ma ≥1 własny profil usługodawcy. */
   function hasProviderRole() {
     if (listOwnedProviders().length > 0) return true;
@@ -6069,6 +6349,12 @@
   /** Aktualizuje lokalną rolę po OAuth (/me) — przed renderem menu. */
   function applyApiAuth(me) {
     if (!me || !window.AppState) return;
+    if (isProductionHostname() && hasApiToken()) {
+      // Po prawdziwym OAuth stan wizyt/prośb pochodzi wyłącznie z API.
+      // Nie próbujemy rozpoznawać demo po opcjonalnych flagach rekordu.
+      window.AppState.bookings = [];
+      window.AppState.requests = [];
+    }
     ensureClientProfile();
     const hasApiProvider = !!(me.user && me.user.roles && me.user.roles.provider) || !!me.provider;
     ensureProviderProfiles();
@@ -6441,6 +6727,7 @@
           </div>`
               : ""
           }
+          ${renderProviderCompletenessBanner(myProvider())}
           <div class="stat-row" role="region" aria-label="Statystyki" data-h-scroll>
             <button type="button" class="stat-card stat-card--link${
               listMode === "visits" ? " is-active" : ""
@@ -11334,7 +11621,7 @@
     renderAll();
   }
 
-  function confirmProvCalAdd() {
+  async function confirmProvCalAdd() {
     captureProvCalAddClientName();
     const draft = ensureProvCalAddDraft();
     const p = myProvider();
@@ -11392,6 +11679,8 @@
       return s.name;
     });
     let booking = null;
+    let bookingBefore = null;
+    const rescheduleQueueBefore = cloneMutationState(ensureProvCalRescheduleQueue());
     const editing = !!draft.bookingId;
     if (editing) {
       booking = (window.AppState.bookings || []).find(function (b) {
@@ -11401,6 +11690,7 @@
         showToast("Nie znaleziono terminu.");
         return;
       }
+      bookingBefore = cloneMutationState(booking);
       const prevDateISO = booking.dateISO;
       const prevFrom = booking.from;
       const prevTo = booking.to;
@@ -11431,7 +11721,7 @@
       }
     } else {
       booking = {
-        id: "bk-" + Date.now(),
+        id: "bk-" + stableLocalActionId(draft, "provider-create-booking"),
         providerId: p.id,
         providerName: p.name,
         clientName: clientName,
@@ -11448,7 +11738,41 @@
         status: "confirmed",
         side: "provider",
       };
+      if (shouldPersistApiMutation()) {
+        try {
+          await window.LokalnieApi.createBookingFromApp(booking);
+        } catch (err) {
+          showToast(apiMutationErrorMessage(err, "Nie udało się dodać terminu."));
+          renderAll();
+          return;
+        }
+      }
       window.AppState.bookings.push(booking);
+    }
+    if (shouldPersistApiMutation() && booking && editing && booking._fromApi) {
+      try {
+        await window.LokalnieApi.patchBookingFromApp(
+          booking,
+          {
+            status: booking.status,
+            dateISO: booking.dateISO,
+            from: booking.from,
+            to: booking.to,
+            locationLabel: booking.locationLabel,
+          },
+          "edit-booking"
+        );
+      } catch (err) {
+        Object.keys(booking).forEach(function (key) {
+          delete booking[key];
+        });
+        Object.assign(booking, bookingBefore);
+        window.AppState.provCalRescheduleQueue = rescheduleQueueBefore || [];
+        saveState();
+        renderAll();
+        showToast(apiMutationErrorMessage(err, "Nie udało się zapisać zmiany terminu."));
+        return;
+      }
     }
     window.AppState.provCalDate = booking.dateISO;
     window.AppState.provCalPickerMonth = booking.dateISO.slice(0, 7);
@@ -11472,33 +11796,6 @@
           : "Termin zapisany ✓"
         : "Termin dodany ✓"
     );
-    if (window.LokalnieApi && window.LokalnieApi.enabled && booking) {
-      if (!editing || !booking._fromApi) {
-        void window.LokalnieApi.createBookingFromApp(booking).then(function () {
-          if (booking.id) {
-            window.AppState.provCalSelection = normalizeProvCalSelection({
-              kind: "booking",
-              bookingId: booking.id,
-              dateISO: booking.dateISO,
-              fromMin: timeToMinutes(booking.from),
-              toMin: timeToMinutes(booking.to),
-            });
-          }
-          saveState();
-        });
-      } else {
-        void window.LokalnieApi.request("/bookings/" + encodeURIComponent(booking.id), {
-          method: "PATCH",
-          json: {
-            status: booking.status,
-            dateISO: booking.dateISO,
-            from: booking.from,
-            to: booking.to,
-            locationLabel: booking.locationLabel,
-          },
-        }).catch(function () {});
-      }
-    }
   }
 
   function renderProvCalAddPanel() {
@@ -12579,6 +12876,7 @@
             </div>
             ${pickBtn}
           </header>
+          ${renderProviderCompletenessBanner(p)}
           <div class="service-list${pickMode ? " service-list--pick" : ""}">${list}</div>`;
   }
 
@@ -14797,6 +15095,7 @@
             <div class="avail-list__head">
               <h3 class="avail-list__heading">Godziny dostępności</h3>
             </div>
+            ${renderProviderCompletenessBanner(p)}
             <div class="avail-list-viewport" data-role="avail-list-viewport">
               <div class="avail-list" data-role="avail-list">${list}</div>
             </div>
@@ -15149,9 +15448,9 @@
     const emailOn = !!p.emailVisible;
     return `
       <div class="settings__row settings__row--contact" data-field="contact">
-        <p class="settings__help">Dane do kontaktu z klientem.</p>
+        <p class="settings__help">Dane do kontaktu z klientem. Telefon jest wymagany do aktywnego profilu.</p>
         ${renderSettingsFloatField({
-          label: "Telefon",
+          label: "Telefon (wymagane)",
           role: "settings-phone",
           type: "tel",
           value: p.phone || "",
@@ -15232,22 +15531,44 @@
       .join("");
   }
 
+  function renderSettingsCategoryOptions(selected) {
+    const opts = (data().CATEGORIES || [])
+      .map(function (c) {
+        return `<option value="${escapeHtml(c.id)}"${c.id === selected ? " selected" : ""}>${escapeHtml(c.label)}</option>`;
+      })
+      .join("");
+    return `<option value="">Wybierz kategorię</option>${opts}`;
+  }
+
   function renderSettingsProfile(p) {
     ensureProviderBookingRules(p);
     return `
       <div class="settings__row settings__row--contact" data-field="profile">
-        <p class="settings__help">Nazwa i opis na stronie rezerwacji.</p>
+        <p class="settings__help">Nazwa i opis na stronie rezerwacji. Pola oznaczone jako wymagane są potrzebne do aktywnego profilu.</p>
         ${renderSettingsFloatField({
-          label: "Nazwa",
+          label: "Nazwa (wymagane)",
           role: "settings-name",
           value: p.name || "",
           attrs: 'maxlength="60" autocomplete="organization"',
         })}
         ${renderSettingsFloatField({
+          tag: "select",
+          label: "Kategoria (wymagane)",
+          role: "settings-category",
+          optionsHtml: renderSettingsCategoryOptions(p.category || ""),
+          attrs: 'aria-label="Kategoria"',
+        })}
+        ${renderSettingsFloatField({
+          label: "Miasto (wymagane)",
+          role: "settings-city",
+          value: p.city || "",
+          attrs: 'maxlength="60" autocomplete="address-level2"',
+        })}
+        ${renderSettingsFloatField({
           label: "Adres główny",
           role: "settings-address",
           value: p.address || "",
-          attrs: 'maxlength="120" autocomplete="street-address" title="Puste = usługi online"',
+          attrs: 'maxlength="120" autocomplete="street-address" title="Puste = usługi online / dojazd"',
         })}
         ${renderSettingsFloatField({
           tag: "textarea",
@@ -15324,12 +15645,16 @@
     if (!p) return;
     ensureProviderBookingRules(p);
     const nameEl = document.querySelector('[data-role="settings-name"]');
+    const catEl = document.querySelector('[data-role="settings-category"]');
+    const cityEl = document.querySelector('[data-role="settings-city"]');
     const addrEl = document.querySelector('[data-role="settings-address"]');
     const aboutEl = document.querySelector('[data-role="settings-about"]');
     if (nameEl) {
       const n = String(nameEl.value || "").trim();
       p.name = n || p.name || "Firma";
     }
+    if (catEl) p.category = String(catEl.value || "").trim();
+    if (cityEl) p.city = String(cityEl.value || "").trim();
     if (addrEl) p.address = String(addrEl.value || "").trim();
     if (aboutEl) p.about = String(aboutEl.value || "").trim();
     captureProviderSocialFields();
@@ -15346,6 +15671,37 @@
     }
     if (cancelEl) p.bookingRules.cancelHours = Number(cancelEl.value) || 0;
     if (policyEl) p.bookingRules.policy = String(policyEl.value || "").trim();
+    enforceProviderCatalogVisibility(p);
+  }
+
+  function renderProviderProfileManagement(p) {
+    const deactivated = !!p.deactivated;
+    return `
+      <div class="settings__row settings__row--profile-management" data-field="profile-management">
+        <div class="profile-management__item">
+          <div class="profile-management__text">
+            <span class="settings__hint">${deactivated ? "Aktywuj profil ponownie" : "Dezaktywuj profil"}</span>
+            <span class="settings-contact__toggle-hint">${
+              deactivated
+                ? "Profil znów będzie dostępny do edycji i publikacji."
+                : "Ukryje profil i zablokuje nowe rezerwacje. Dane pozostaną zapisane."
+            }</span>
+          </div>
+          <button type="button" class="btn btn--ghost profile-management__btn${
+            deactivated ? "" : " profile-management__btn--danger"
+          }" data-action="${deactivated ? "reactivate-provider-profile" : "deactivate-provider-profile"}">
+            ${deactivated ? "Aktywuj profil" : "Dezaktywuj"}
+          </button>
+        </div>
+        <div class="profile-management__item profile-management__item--delete">
+          <div class="profile-management__text">
+            <span class="settings__hint">Usuń profil</span>
+            <span class="settings-contact__toggle-hint">Trwale usuwa profil firmy, usługi i ustawienia. Tej operacji nie można cofnąć.</span>
+          </div>
+          <button type="button" class="btn btn--danger profile-management__btn"
+            data-action="delete-provider-profile">Usuń profil</button>
+        </div>
+      </div>`;
   }
 
   function renderSettings() {
@@ -15353,16 +15709,26 @@
     if (!p) return renderDashboard();
     ensureProviderContact(p);
     ensureProviderBookingRules(p);
+    enforceProviderCatalogVisibility(p);
     const visible = !!p.visibleInSearch;
+    const active = isProviderProfileActive(p);
     const visibilityRow = `
       <div class="settings__row settings__row--toggle" data-field="visibleInSearch">
         <div class="settings__toggle-text">
           <span class="settings__key">Widoczność w katalogu</span>
-          <span class="settings__hint">${visible ? "Widoczny w wyszukiwaniu" : "Ukryty — tylko z linku"}</span>
+          <span class="settings__hint">${
+            visible
+              ? "Widoczny w wyszukiwaniu"
+              : p.deactivated
+                ? "Wyłączona — profil dezaktywowany"
+                : active
+                ? "Ukryty — tylko z linku"
+                : "Niedostępna — uzupełnij braki profilu"
+          }</span>
         </div>
         <label class="settings__toggle">
           <input type="checkbox" class="avail-edit__switch" data-role="settings-visible-search"
-            ${visible ? "checked" : ""} aria-label="Widoczność w katalogu" />
+            ${visible ? "checked" : ""} ${active ? "" : "disabled"} aria-label="Widoczność w katalogu" />
         </label>
       </div>`;
     return `
@@ -15378,11 +15744,13 @@
             </div>
           </header>
           <div class="settings">
+            ${renderProviderCompletenessBanner(p)}
             ${renderSettingsGroup("Dane firmy", renderSettingsProfile(p))}
             ${renderSettingsGroup("Kontakt", renderSettingsContact(p))}
             ${renderSettingsGroup("Social media", renderSettingsSocial(p))}
             ${renderSettingsGroup("Lokalizacje (miejsce wykonywania usług)", renderSettingsLocations(p))}
             ${renderSettingsGroup("Rezerwacje online", visibilityRow + renderSettingsBookingRules(p))}
+            ${renderSettingsGroup("Zarządzanie profilem", renderProviderProfileManagement(p))}
           </div>
         </div>
         ${providerBottomNav("settings")}
@@ -15562,56 +15930,77 @@
   function renderRoleHTML(role) {
     if (window.AppState && window.AppState.onboarding === "choose") {
       // Stary wybór roli — konto zawsze startuje jako klient.
-      window.AppState.onboarding = null;
+      window.AppState.onboarding = "client";
+    }
+    if (window.AppState && window.AppState.onboarding === "client") {
+      return renderOnboardingClient();
     }
     if (window.AppState && window.AppState.onboarding === "provider") {
-      return renderOnboardingProvider();
+      // Stary mini-formularz usunięty — nie blokuj UI; profil dodaje się z konta klienta.
+      window.AppState.onboarding = null;
     }
     return role === "provider" ? renderProvider(window.AppState.screen.provider) : renderClient(window.AppState.screen.client);
   }
 
-  /** Formularz dodawania profilu usługodawcy (z konta klienta). */
-  function renderOnboardingProvider() {
+  /** Czy po Google pokazać pierwsze okno profilu klienta (brak telefonu = profil nieukończony). */
+  function needsClientOnboarding(meUser) {
+    if (!meUser) return true;
+    return !String(meUser.phone || "").trim();
+  }
+
+  /** Pierwsze okno po rejestracji Google — dane z konta Google (imię, e-mail, zdjęcie). */
+  function renderOnboardingClient() {
     const cp = ensureClientProfile();
-    const n = listOwnedProviders().length;
+    const avatarUrl = window.AppState.clientAvatarUrl || "";
+    const initials = accountInitials(cp.name || cp.email || "U");
     return `
       <div class="app-screen app-screen--onboarding">
         <div class="app-scroll onboarding">
-          <header class="onboarding__head">
-            <button type="button" class="screen-head__back" data-action="onboarding-back" aria-label="Wróć">
-              <span class="screen-head__back-icon" aria-hidden="true"></span>
-            </button>
-            <div>
-              <p class="onboarding__kicker">Lokalnie</p>
-              <h2 class="onboarding__title">${n ? "Kolejna firma" : "Twoja firma"}</h2>
-              <p class="onboarding__sub">Kilka pól — resztę uzupełnisz w ustawieniach. Max ${MAX_PROVIDER_PROFILES} profile.</p>
-            </div>
+          <header class="onboarding__head onboarding__head--center">
+            <img class="onboarding__logo" src="assets/icons/logo-1024.png" alt="" width="56" height="56" />
+            <p class="onboarding__kicker">Konto Google</p>
+            <h2 class="onboarding__title">Twój profil klienta</h2>
+            <p class="onboarding__sub">Pobraliśmy dane z Google. Sprawdź je i podaj telefon — usługodawca będzie mógł się z Tobą skontaktować.</p>
           </header>
-          <div class="onboarding__card onboarding__card--form">
+          <div class="onboarding__card onboarding__card--form onboarding__card--client">
+            <div class="onboarding__avatar-row">
+              <span class="onboarding__avatar" aria-hidden="true">
+                ${
+                  avatarUrl
+                    ? `<img class="onboarding__avatar-img" src="${escapeHtml(avatarUrl)}" alt="" />`
+                    : `<span class="onboarding__avatar-initials">${escapeHtml(initials)}</span>`
+                }
+              </span>
+              <div class="onboarding__avatar-text">
+                <span class="onboarding__avatar-label">Z konta Google</span>
+                <span class="onboarding__avatar-name">${escapeHtml(cp.name || "Użytkownik")}</span>
+              </div>
+            </div>
             <label class="onboarding__field">
-              <span>Nazwa firmy / Twoje imię</span>
-              <input type="text" data-role="onb-provider-name" placeholder="${escapeHtml(cp.name || "np. Studio Urody Ana")}" value="${escapeHtml(n ? "" : cp.name || "")}" />
+              <span>Imię i nazwisko</span>
+              <input type="text" data-role="onb-client-name" maxlength="60" autocomplete="name"
+                value="${escapeHtml(cp.name || "")}" placeholder="np. Anna Kowalska" />
             </label>
             <label class="onboarding__field">
-              <span>Kategoria</span>
-              <input type="text" data-role="onb-provider-category" placeholder="np. fryzjer, kosmetyczka, trener" />
+              <span>E-mail</span>
+              <input type="email" data-role="onb-client-email" value="${escapeHtml(cp.email || "")}"
+                readonly aria-readonly="true" autocomplete="email" />
             </label>
+            <p class="onboarding__field-hint">E-mail z Google — służy do logowania.</p>
             <label class="onboarding__field">
-              <span>Miasto</span>
-              <input type="text" data-role="onb-provider-city" placeholder="np. Warszawa" />
+              <span>Telefon <span class="onboarding__optional">(wymagane)</span></span>
+              <input type="tel" data-role="onb-client-phone" value="${escapeHtml(cp.phone || "")}"
+                placeholder="+48 500 100 200" autocomplete="tel" inputmode="tel" required aria-required="true" />
             </label>
-            <label class="onboarding__field">
-              <span>Adres (opcjonalnie)</span>
-              <input type="text" data-role="onb-provider-address" placeholder="ulica, nr" />
-            </label>
-            <button type="button" class="btn btn--primary onboarding__cta" data-action="onboarding-provider-submit">
-              Utwórz profil usługodawcy
+            <button type="button" class="btn btn--primary onboarding__cta" data-action="onboarding-client-submit">
+              Zaczynamy
             </button>
-            <p class="onboarding__note">Możesz to zmienić później w ustawieniach firmy.</p>
+            <p class="onboarding__note">Firmę usługodawcy możesz dodać później w koncie klienta.</p>
           </div>
         </div>
       </div>`;
   }
+
 
   // ─────────────────────────────────────────────────────────
   // Render do kontenerów (symulator + pełny ekran)
@@ -16333,6 +16722,11 @@
   }
 
   function startBooking(slug) {
+    const p = getProviderBySlug(slug);
+    if (p && p.deactivated) {
+      showToast("Ten profil jest dezaktywowany i nie przyjmuje nowych rezerwacji.");
+      return;
+    }
     const draft = window.AppState.draft;
     if (!draft || !draft.serviceIds || !draft.serviceIds.length) {
       showToast("Wybierz co najmniej jedną usługę.");
@@ -16411,7 +16805,7 @@
     confirmBooking();
   }
 
-  function confirmBooking() {
+  async function confirmBooking() {
     if (!requireLogin({ type: "confirm-booking" })) return;
     const draft = window.AppState.draft;
     if (!draft || !draft.slotId) {
@@ -16420,6 +16814,10 @@
     }
     const p = getProviderBySlug(draft.slug);
     if (!p) return;
+    if (p.deactivated) {
+      showToast("Ten profil jest dezaktywowany i nie przyjmuje nowych rezerwacji.");
+      return;
+    }
 
     const slotOpts = slotOptsForServiceIds(p, draft.serviceIds || []);
     const slots = computeSlots(p, draft.dateISO, draftTotals(p).duration || 15, slotOpts);
@@ -16438,7 +16836,7 @@
     const svcs = draftServices(p);
     const cp = ensureClientProfile();
     const booking = {
-      id: "bk-" + Date.now(),
+      id: "bk-" + stableLocalActionId(draft, "client-create-booking"),
       providerId: p.id,
       providerName: p.name,
       clientName: cp.name || "Klient",
@@ -16454,6 +16852,15 @@
       status: "confirmed",
       side: "client",
     };
+    if (shouldPersistApiMutation()) {
+      try {
+        await window.LokalnieApi.createBookingFromApp(booking);
+      } catch (err) {
+        showToast(apiMutationErrorMessage(err, "Nie udało się potwierdzić rezerwacji."));
+        renderAll();
+        return;
+      }
+    }
     window.AppState.bookings.push(booking);
     window.AppState.draft = null;
     window.AppState.searchOpenSlug = null;
@@ -16461,11 +16868,6 @@
     saveState();
     renderAll();
     showToast("Rezerwacja potwierdzona ✓");
-    if (window.LokalnieApi && window.LokalnieApi.enabled) {
-      void window.LokalnieApi.createBookingFromApp(booking).then(function () {
-        saveState();
-      });
-    }
   }
 
   function toggleRequestDay(dateISO) {
@@ -16496,11 +16898,15 @@
     if (!refreshBookingDraftUI()) renderAll();
   }
 
-  function sendRequest(slug) {
+  async function sendRequest(slug) {
     if (!requireLogin({ type: "send-request", slug: slug })) return;
     const draft = window.AppState.draft;
     const p = getProviderBySlug(slug);
     if (!p) return;
+    if (p.deactivated) {
+      showToast("Ten profil jest dezaktywowany i nie przyjmuje nowych rezerwacji.");
+      return;
+    }
     if (!draft || !draft.serviceIds || !draft.serviceIds.length) {
       showToast("Wybierz co najmniej jedną usługę.");
       return;
@@ -16519,7 +16925,7 @@
     const cp = ensureClientProfile();
     const clientName = cp.name || "Klient";
     const req = {
-      id: "rq-" + Date.now(),
+      id: "rq-" + stableLocalActionId(draft, "client-create-request"),
       providerId: p.id,
       providerName: p.name,
       clientName: clientName,
@@ -16533,12 +16939,16 @@
       acceptedProposalId: null,
       status: "pending",
     };
-    window.AppState.requests.push(req);
-    if (window.LokalnieApi && window.LokalnieApi.enabled) {
-      void window.LokalnieApi.createRequestFromApp(req).then(function () {
-        saveState();
-      });
+    if (shouldPersistApiMutation()) {
+      try {
+        await window.LokalnieApi.createRequestFromApp(req);
+      } catch (err) {
+        showToast(apiMutationErrorMessage(err, "Nie udało się wysłać zapytania."));
+        renderAll();
+        return;
+      }
     }
+    window.AppState.requests.push(req);
 
     // Widoczne u klienta jako "oczekująca" wizyta bez terminu
     window.AppState.bookings.push({
@@ -16676,7 +17086,7 @@
     renderAll();
   }
 
-  function proposeConfirm(requestId) {
+  async function proposeConfirm(requestId) {
     const req = (window.AppState.requests || []).find((r) => r.id === requestId);
     const p = myProvider();
     if (!req || !p) return;
@@ -16686,6 +17096,9 @@
       draft && draft.requestId === req.id && Array.isArray(draft.proposals) ? draft.proposals : null;
     const chosen = fromPanel && fromPanel.length ? fromPanel : requestProposalDraft(req);
     if (!chosen.length) return;
+    const reqBefore = cloneMutationState(req);
+    const bk = (window.AppState.bookings || []).find((b) => b.requestId === req.id);
+    const bkBefore = cloneMutationState(bk);
 
     req.proposals = chosen.map(function (c) {
       return Object.assign({}, c);
@@ -16697,7 +17110,6 @@
     applyProposeHoldExpiry(req, p);
 
     // Wizyta klienta czeka bez terminu — konkretną godzinę wybierze on sam z propozycji.
-    const bk = (window.AppState.bookings || []).find((b) => b.requestId === req.id);
     if (bk) {
       bk.dateISO = "";
       bk.from = "";
@@ -16706,6 +17118,22 @@
       bk.locationLabel = "";
       bk.status = "proposed";
       applyProposeHoldExpiry(bk, p);
+    }
+    if (shouldPersistApiMutation()) {
+      try {
+        await window.LokalnieApi.proposeRequestFromApp(req);
+      } catch (err) {
+        Object.keys(req).forEach(function (key) { delete req[key]; });
+        Object.assign(req, reqBefore);
+        if (bk && bkBefore) {
+          Object.keys(bk).forEach(function (key) { delete bk[key]; });
+          Object.assign(bk, bkBefore);
+        }
+        saveState();
+        renderAll();
+        showToast(apiMutationErrorMessage(err, "Nie udało się wysłać propozycji."));
+        return;
+      }
     }
 
     const holdNote = formatProposeDeadline(req.proposeExpiresAt);
@@ -16725,14 +17153,9 @@
     saveState();
     renderAll();
     showToast(`Wysłano ${req.proposals.length} ${proposalCountLabel(req.proposals.length)} klientowi.`);
-    if (window.LokalnieApi && window.LokalnieApi.enabled) {
-      void window.LokalnieApi.proposeRequestFromApp(req).then(function () {
-        saveState();
-      });
-    }
   }
 
-  function acceptProposal(bookingId) {
+  async function acceptProposal(bookingId) {
     const bk = (window.AppState.bookings || []).find((b) => b.id === bookingId);
     if (!bk) return;
     if (bk.dateISO && bk.from && bk.to) {
@@ -16741,24 +17164,45 @@
         return;
       }
     }
+    const bkBefore = cloneMutationState(bk);
+    const req = (window.AppState.requests || []).find((r) => r.id === bk.requestId);
+    const reqBefore = cloneMutationState(req);
     bk.status = "confirmed";
     delete bk.reschedulePrevDateISO;
     delete bk.reschedulePrevFrom;
     delete bk.reschedulePrevTo;
     clearProposeHoldExpiry(bk);
-    const req = (window.AppState.requests || []).find((r) => r.id === bk.requestId);
     if (req) {
       req.status = "confirmed";
       clearProposeHoldExpiry(req);
+    }
+    if (shouldPersistApiMutation() && bk._fromApi) {
+      try {
+        await window.LokalnieApi.updateBookingStatusFromApp(bk.id, "confirmed");
+      } catch (err) {
+        Object.keys(bk).forEach(function (key) { delete bk[key]; });
+        Object.assign(bk, bkBefore);
+        if (req && reqBefore) {
+          Object.keys(req).forEach(function (key) { delete req[key]; });
+          Object.assign(req, reqBefore);
+        }
+        saveState();
+        renderAll();
+        showToast(apiMutationErrorMessage(err, "Nie udało się potwierdzić terminu."));
+        return;
+      }
     }
     saveState();
     renderAll();
     showToast("Termin potwierdzony ✓");
   }
 
-  function rejectProposal(bookingId) {
+  async function rejectProposal(bookingId) {
     const bk = (window.AppState.bookings || []).find((b) => b.id === bookingId);
     if (!bk) return;
+    const bkBefore = cloneMutationState(bk);
+    const linkedReq = (window.AppState.requests || []).find((r) => r.id === bk.requestId);
+    const reqBefore = cloneMutationState(linkedReq);
     // Odrzucenie propozycji zmiany terminu → wróć do poprzedniego confirmed.
     if (bk.reschedulePrevDateISO && bk.reschedulePrevFrom && bk.reschedulePrevTo) {
       bk.dateISO = bk.reschedulePrevDateISO;
@@ -16769,6 +17213,18 @@
       delete bk.reschedulePrevTo;
       bk.status = "confirmed";
       clearProposeHoldExpiry(bk);
+      if (shouldPersistApiMutation() && bk._fromApi) {
+        try {
+          await window.LokalnieApi.updateBookingStatusFromApp(bk.id, "confirmed");
+        } catch (err) {
+          Object.keys(bk).forEach(function (key) { delete bk[key]; });
+          Object.assign(bk, bkBefore);
+          saveState();
+          renderAll();
+          showToast(apiMutationErrorMessage(err, "Nie udało się odrzucić zmiany terminu."));
+          return;
+        }
+      }
       saveState();
       renderAll();
       showToast("Zmiana odrzucona — przywrócono poprzedni termin.");
@@ -16776,10 +17232,30 @@
     }
     bk.status = "rejected";
     clearProposeHoldExpiry(bk);
-    const req = (window.AppState.requests || []).find((r) => r.id === bk.requestId);
+    const req = linkedReq;
     if (req) {
       req.status = "pending"; // wraca do puli — pętla propozycji
       clearProposeHoldExpiry(req);
+    }
+    if (shouldPersistApiMutation()) {
+      try {
+        if (req && req._fromApi) {
+          await window.LokalnieApi.declineRequestFromApp(req.id, "reject-proposal");
+        } else if (bk._fromApi) {
+          await window.LokalnieApi.updateBookingStatusFromApp(bk.id, "rejected");
+        }
+      } catch (err) {
+        Object.keys(bk).forEach(function (key) { delete bk[key]; });
+        Object.assign(bk, bkBefore);
+        if (req && reqBefore) {
+          Object.keys(req).forEach(function (key) { delete req[key]; });
+          Object.assign(req, reqBefore);
+        }
+        saveState();
+        renderAll();
+        showToast(apiMutationErrorMessage(err, "Nie udało się odrzucić propozycji."));
+        return;
+      }
     }
     saveState();
     renderAll();
@@ -16787,7 +17263,7 @@
   }
 
   /** Klient rezerwuje jedną z propozycji — pozostałe tracą ważność. */
-  function acceptRequestProposal(requestId, proposalId) {
+  async function acceptRequestProposal(requestId, proposalId) {
     const req = (window.AppState.requests || []).find((r) => r.id === requestId);
     if (!req) return;
     const prop = (req.proposals || []).find(function (c) {
@@ -16795,7 +17271,10 @@
     });
     if (!prop) return;
 
+    const reqBefore = cloneMutationState(req);
     let bk = (window.AppState.bookings || []).find((b) => b.requestId === req.id);
+    const bkBefore = cloneMutationState(bk);
+    let createdLocalBooking = false;
     // exceptRequestId: holdy z tej samej prośby (nakładające się propozycje) nie blokują wyboru.
     if (
       !assertNoBookingOverlap(
@@ -16822,6 +17301,7 @@
         side: "client",
       };
       window.AppState.bookings.push(bk);
+      createdLocalBooking = true;
     }
     bk.dateISO = prop.dateISO;
     bk.from = prop.from;
@@ -16836,6 +17316,31 @@
     req.proposals = [Object.assign({}, prop)];
     clearProposeHoldExpiry(req);
 
+    if (shouldPersistApiMutation()) {
+      try {
+        const res = await window.LokalnieApi.acceptRequestFromApp(req.id, prop.id);
+        if (res && res.booking && bk) {
+          bk.id = res.booking.id;
+          bk._fromApi = true;
+        }
+      } catch (err) {
+        Object.keys(req).forEach(function (key) { delete req[key]; });
+        Object.assign(req, reqBefore);
+        if (createdLocalBooking) {
+          window.AppState.bookings = (window.AppState.bookings || []).filter(function (item) {
+            return item !== bk;
+          });
+        } else if (bk && bkBefore) {
+          Object.keys(bk).forEach(function (key) { delete bk[key]; });
+          Object.assign(bk, bkBefore);
+        }
+        saveState();
+        renderAll();
+        showToast(apiMutationErrorMessage(err, "Nie udało się zaakceptować terminu."));
+        return;
+      }
+    }
+
     pushNotification(
       "provider",
       `${req.clientName || "Klient"} zarezerwował(a) termin: ${proposalRangeLabel(prop)} — ${(req.serviceNames || []).join(", ")}.`
@@ -16847,60 +17352,86 @@
     saveState();
     renderAll();
     showToast("Termin zarezerwowany ✓");
-    if (window.LokalnieApi && window.LokalnieApi.enabled) {
-      void window.LokalnieApi.acceptRequestFromApp(req.id, prop.id).then(function (res) {
-        if (res && res.booking && bk) {
-          bk.id = res.booking.id;
-          bk._fromApi = true;
-          saveState();
-        }
-      });
-    }
   }
 
-  function declineRequestProposals(requestId) {
+  async function declineRequestProposals(requestId) {
     const req = (window.AppState.requests || []).find((r) => r.id === requestId);
     if (!req) return;
+    const reqBefore = cloneMutationState(req);
+    const bk = (window.AppState.bookings || []).find((b) => b.requestId === req.id);
+    const bkBefore = cloneMutationState(bk);
     req.proposals = [];
     req.acceptedProposalId = null;
-    req.status = "pending";
+    req.status = "rejected";
     clearProposeHoldExpiry(req);
-    const bk = (window.AppState.bookings || []).find((b) => b.requestId === req.id);
     if (bk) {
-      bk.dateISO = "";
-      bk.from = "";
-      bk.to = "";
-      bk.locationId = null;
-      bk.locationLabel = "";
-      bk.status = "pending";
+      bk.status = "rejected";
       clearProposeHoldExpiry(bk);
+    }
+    if (shouldPersistApiMutation() && req._fromApi) {
+      try {
+        await window.LokalnieApi.declineRequestFromApp(req.id, "decline-proposals");
+      } catch (err) {
+        Object.keys(req).forEach(function (key) {
+          delete req[key];
+        });
+        Object.assign(req, reqBefore);
+        if (bk && bkBefore) {
+          Object.keys(bk).forEach(function (key) {
+            delete bk[key];
+          });
+          Object.assign(bk, bkBefore);
+        }
+        saveState();
+        renderAll();
+        showToast(apiMutationErrorMessage(err, "Nie udało się odrzucić propozycji."));
+        return;
+      }
     }
     pushNotification(
       "provider",
-      `${req.clientName || "Klient"} prosi o inne terminy — ${(req.serviceNames || []).join(", ")}.`
+      `${req.clientName || "Klient"} odrzucił(a) propozycję terminów — ${(req.serviceNames || []).join(", ")}.`
     );
     saveState();
     renderAll();
-    showToast("Poprosiliśmy o inne terminy.");
+    showToast("Propozycja odrzucona. Możesz wysłać nową prośbę o termin.");
   }
 
   /** Klient wycofuje prośbę o termin (zanim zarezerwuje jedną z propozycji). */
-  function cancelClientRequest(requestId) {
+  async function cancelClientRequest(requestId) {
     const req = (window.AppState.requests || []).find(function (r) {
       return r && r.id === requestId;
     });
     if (!req) return;
     if (req.status !== "pending" && req.status !== "proposed") return;
+    const reqBefore = cloneMutationState(req);
+    const bk = (window.AppState.bookings || []).find(function (b) {
+      return b && b.requestId === req.id;
+    });
+    const bkBefore = cloneMutationState(bk);
     req.status = "cancelled";
     req.proposals = [];
     req.acceptedProposalId = null;
     clearProposeHoldExpiry(req);
-    const bk = (window.AppState.bookings || []).find(function (b) {
-      return b && b.requestId === req.id;
-    });
     if (bk) {
       bk.status = "cancelled";
       clearProposeHoldExpiry(bk);
+    }
+    if (shouldPersistApiMutation() && req._fromApi) {
+      try {
+        await window.LokalnieApi.declineRequestFromApp(req.id, "cancel-request");
+      } catch (err) {
+        Object.keys(req).forEach(function (key) { delete req[key]; });
+        Object.assign(req, reqBefore);
+        if (bk && bkBefore) {
+          Object.keys(bk).forEach(function (key) { delete bk[key]; });
+          Object.assign(bk, bkBefore);
+        }
+        saveState();
+        renderAll();
+        showToast(apiMutationErrorMessage(err, "Nie udało się anulować prośby."));
+        return;
+      }
     }
     pushNotification(
       "provider",
@@ -16912,17 +17443,35 @@
     hapticTap(12);
   }
 
-  function rejectRequest(requestId) {
+  async function rejectRequest(requestId) {
     const req = (window.AppState.requests || []).find((r) => r && r.id === requestId);
     if (!req) return;
+    const reqBefore = cloneMutationState(req);
+    const bk = (window.AppState.bookings || []).find((b) => b && b.requestId === req.id);
+    const bkBefore = cloneMutationState(bk);
     req.status = "rejected";
     req.proposals = [];
     req.acceptedProposalId = null;
     clearProposeHoldExpiry(req);
-    const bk = (window.AppState.bookings || []).find((b) => b && b.requestId === req.id);
     if (bk) {
       bk.status = "rejected";
       clearProposeHoldExpiry(bk);
+    }
+    if (shouldPersistApiMutation() && req._fromApi) {
+      try {
+        await window.LokalnieApi.declineRequestFromApp(req.id, "reject-request");
+      } catch (err) {
+        Object.keys(req).forEach(function (key) { delete req[key]; });
+        Object.assign(req, reqBefore);
+        if (bk && bkBefore) {
+          Object.keys(bk).forEach(function (key) { delete bk[key]; });
+          Object.assign(bk, bkBefore);
+        }
+        saveState();
+        renderAll();
+        showToast(apiMutationErrorMessage(err, "Nie udało się odrzucić prośby."));
+        return;
+      }
     }
     if (replyRequestId() === req.id) {
       window.AppState.provCalReplyRequestId = null;
@@ -17003,9 +17552,11 @@
     document.body.classList.add("cancel-visit-dialog-open");
   }
 
-  function cancelVisit(bookingId) {
+  async function cancelVisit(bookingId) {
     const bk = (window.AppState.bookings || []).find((b) => b.id === bookingId);
     if (!bk) return;
+    const bkBefore = cloneMutationState(bk);
+    const queueBefore = cloneMutationState(ensureProvCalRescheduleQueue());
     bk.status = "cancelled";
     delete bk.reschedulePrevDateISO;
     delete bk.reschedulePrevFrom;
@@ -17015,6 +17566,19 @@
     });
     if (!window.AppState.provCalRescheduleQueue.length) {
       window.AppState.provCalRescheduleOpen = false;
+    }
+    if (shouldPersistApiMutation() && bk._fromApi) {
+      try {
+        await window.LokalnieApi.updateBookingStatusFromApp(bk.id, "cancelled");
+      } catch (err) {
+        Object.keys(bk).forEach(function (key) { delete bk[key]; });
+        Object.assign(bk, bkBefore);
+        window.AppState.provCalRescheduleQueue = queueBefore || [];
+        saveState();
+        renderAll();
+        showToast(apiMutationErrorMessage(err, "Nie udało się odwołać wizyty."));
+        return;
+      }
     }
     closeCancelVisitDialog();
     saveState();
@@ -17291,7 +17855,9 @@
         userEl.classList.remove("app-header__user--guest");
       } else {
         userEl.innerHTML =
-          `<button type="button" class="app-header__tester" data-action="test-login" data-target="client">Podgląd testera</button>` +
+          (isProductionHostname()
+            ? ""
+            : `<button type="button" class="app-header__tester" data-action="test-login" data-target="client">Podgląd testera</button>`) +
           `<button type="button" class="app-header__login" data-action="go-screen" data-screen="account">Moje konto</button>`;
         userEl.setAttribute("aria-label", "Konto gościa");
         userEl.dataset.role = "guest";
@@ -17321,23 +17887,42 @@
   }
 
   function testLogin(startRole) {
+    if (isProductionHostname()) {
+      setTesterMode(false);
+      showToast("Podgląd testera jest dostępny tylko lokalnie.");
+      return;
+    }
     const role = INSTANCES.indexOf(startRole) !== -1 ? startRole : "client";
+    const pending = peekPendingIntent();
     if (window.LokalnieApi && window.LokalnieApi.clearAuthToken) {
       window.LokalnieApi.clearAuthToken();
     }
     setTesterMode(true);
     window.AppState.loggedIn = true;
-    window.AppState.onboarding = null;
     seedTesterClientProfile();
     seedTesterProviderProfiles();
     window.AppState.activeRole = role;
-    window.AppState.screen[role] = DEFAULT_SCREEN[role];
+    // Po bramce — dokończ akcję. Bez pending (np. z nagłówka) pokaż 1. okno onboardingu.
+    if (pending && role === "client") {
+      window.AppState.onboarding = null;
+      restorePendingBrowseState();
+      if (window.AppState.screen.client === "auth" || window.AppState.screen.client === "account") {
+        window.AppState.screen.client = window.AppState.draft ? "booking" : DEFAULT_SCREEN.client;
+      }
+    } else if (role === "client") {
+      window.AppState.onboarding = "client";
+      window.AppState.screen.client = DEFAULT_SCREEN.client;
+    } else {
+      window.AppState.onboarding = null;
+      window.AppState.screen[role] = DEFAULT_SCREEN[role];
+    }
     if (role === "provider") selectOwnedProvider((listOwnedProviders()[0] || {}).id);
     saveState();
     updateAppHeader(role);
     renderAll();
     showPage("app");
-    showToast("Podgląd testera — bez Google.");
+    showToast(pending ? "Podgląd testera — bez Google." : "Podgląd testera — pierwsze okno jak po Google.");
+    if (pending) resumePendingIntent();
   }
 
   function googleLogin() {
@@ -17374,53 +17959,95 @@
     void window.LokalnieApi.request("/me")
       .then(function (me) {
         if (me && me.user) {
-          const cp = ensureClientProfile();
-          if (me.user.name) cp.name = me.user.name;
-          if (me.user.email) cp.email = me.user.email;
-          if (me.user.phone) cp.phone = me.user.phone;
+          applyGoogleUserToClientProfile(me.user);
           applyApiAuth(me);
-          // Zawsze start jako klient — firmę dodaje się później z konta.
           window.AppState.activeRole = "client";
-          window.AppState.onboarding = null;
+          const showOnboarding = needsClientOnboarding(me.user);
+          window.AppState.onboarding = showOnboarding ? "client" : null;
           saveState();
           renderAll();
-          showToast("Zalogowano. Profil klienta jest gotowy.");
+          showToast(showOnboarding ? "Zalogowano. Sprawdź swój profil." : "Zalogowano.");
           return window.LokalnieApi.syncFromServer().then(function () {
+            // Sync nie może zjeść ekranu onboardingu.
+            if (showOnboarding) window.AppState.onboarding = "client";
             saveState();
             renderAll();
-            resumePendingIntent();
+            if (!showOnboarding) resumePendingIntent();
           });
         }
         ensureClientProfile();
-        window.AppState.onboarding = null;
+        window.AppState.onboarding = "client";
         saveState();
         renderAll();
-        resumePendingIntent();
         return null;
       })
       .catch(function (err) {
         console.warn("[Lokalnie] /me failed", err);
         ensureClientProfile();
-        window.AppState.onboarding = null;
+        window.AppState.onboarding = "client";
         saveState();
         renderAll();
-        showToast("Zalogowano, ale nie pobrano profilu. Sprawdź połączenie.");
-        // Nie gub akcji, która wymusiła logowanie (rezerwacja / ulubione).
-        resumePendingIntent();
+        showToast("Zalogowano, ale nie pobrano profilu. Uzupełnij dane ręcznie.");
       });
     return true;
   }
 
-  function onboardingChooseClient() {
+  function applyGoogleUserToClientProfile(user) {
+    if (!user) return ensureClientProfile();
+    const cp = ensureClientProfile();
+    if (user.name) cp.name = String(user.name);
+    if (user.email) cp.email = String(user.email);
+    if (user.phone) cp.phone = String(user.phone);
+    if (user.notifications && typeof user.notifications === "object") {
+      if (typeof user.notifications.reminder === "boolean") {
+        cp.notifications.visitReminders = user.notifications.reminder;
+      }
+      if (typeof user.notifications.booking === "boolean") {
+        cp.notifications.statusChanges = user.notifications.booking;
+      }
+      if (typeof user.notifications.marketing === "boolean") {
+        cp.notifications.marketing = user.notifications.marketing;
+      }
+    }
+    if (user.avatarKey && window.LokalnieApi && window.LokalnieApi.mediaUrl) {
+      window.AppState.clientAvatarUrl = window.LokalnieApi.mediaUrl(user.avatarKey);
+    }
+    return cp;
+  }
+
+  function onboardingClientSubmit() {
+    const cp = ensureClientProfile();
+    const name = readOnboardingInput("onb-client-name");
+    const phone = readOnboardingInput("onb-client-phone");
+    const phoneEl = document.querySelector('[data-role="onb-client-phone"]');
+    if (!phone || phone.replace(/\D/g, "").length < 9) {
+      showToast("Podaj numer telefonu — to wymagane.");
+      if (phoneEl) {
+        phoneEl.focus();
+        phoneEl.classList.add("onboarding__field-invalid");
+      }
+      return;
+    }
+    if (phoneEl) phoneEl.classList.remove("onboarding__field-invalid");
+    if (name) cp.name = name;
+    cp.phone = phone;
+    // E-mail zostaje z Google (pole readonly).
     window.AppState.onboarding = null;
     window.AppState.activeRole = "client";
     saveState();
+    queueClientProfileSync();
+    updateAppHeader("client");
     renderAll();
+    showToast("Profil zapisany. Miłego szukania!");
     if (peekPendingIntent()) {
       resumePendingIntent();
       return;
     }
     goMarketplace();
+  }
+
+  function onboardingChooseClient() {
+    onboardingClientSubmit();
   }
 
   function onboardingChooseProvider() {
@@ -17437,51 +18064,57 @@
     renderAll();
   }
 
-  function onboardingProviderSubmit() {
+  function readOnboardingInput(field) {
+    const el = document.querySelector('[data-role="' + field + '"]');
+    return el ? String(el.value || "").trim() : "";
+  }
+
+  /** Tworzy profil usługodawcy i od razu otwiera pełne ustawienia (bez mini-formularza). */
+  function createProviderProfileAndOpenSettings() {
     if (!canAddProviderProfile()) {
       showToast("Możesz mieć maksymalnie " + MAX_PROVIDER_PROFILES + " profile usługodawcy.");
-      window.AppState.onboarding = null;
-      saveState();
-      renderAll();
-      return;
+      return false;
     }
     const cp = ensureClientProfile();
-    const name = readOnboardingInput("onb-provider-name") || cp.name || "Mój profil";
-    const city = readOnboardingInput("onb-provider-city");
-    const category = readOnboardingInput("onb-provider-category");
-    const address = readOnboardingInput("onb-provider-address");
     const n = listOwnedProviders().length;
+    const name = cp.name || "Mój profil";
     const id = n === 0 ? "my-provider" : "my-provider-" + (n + 1) + "-" + Date.now().toString(36);
-
     const created = addOwnedProvider({
       id: id,
       slug: id,
       name: name,
-      category: category || "",
-      city: city || "",
-      address: address || "",
+      category: "",
+      city: "",
+      address: "",
       about: "",
+      phone: String(cp.phone || ""),
+      email: String(cp.email || ""),
+      emailVisible: false,
+      services: [],
+      availability: [],
+      visibleInSearch: false,
       avatarUrl: null,
       avatarInitials: accountInitials(name) || "MP",
       _mine: true,
     });
     if (!created) {
       showToast("Nie udało się dodać profilu.");
-      return;
+      return false;
     }
     window.AppState.onboarding = null;
     window.AppState.activeRole = "provider";
     window.AppState.screen.provider = "settings";
     saveState();
     updateAppHeader("provider");
-    renderAll();
-    showPage("app");
-    showToast("Profil usługodawcy gotowy. Uzupełnij dane firmy.");
+    return true;
   }
 
-  function readOnboardingInput(field) {
-    const el = document.querySelector('[data-role="' + field + '"]');
-    return el ? String(el.value || "").trim() : "";
+  function onboardingProviderSubmit() {
+    // Legacy action — ten sam flow co „Dodaj profil”.
+    if (!createProviderProfileAndOpenSettings()) return;
+    renderAll();
+    showPage("app");
+    showToast("Uzupełnij dane firmy w ustawieniach.");
   }
 
   function addProviderProfile() {
@@ -17490,13 +18123,11 @@
       showToast("Możesz mieć maksymalnie " + MAX_PROVIDER_PROFILES + " profile usługodawcy.");
       return;
     }
-    // Dodawanie tylko z kontekstu klienta.
-    window.AppState.activeRole = "client";
-    updateAppHeader("client");
     closeAppMenuThen(function () {
-      window.AppState.onboarding = "provider";
-      saveState();
+      if (!createProviderProfileAndOpenSettings()) return;
       renderAll();
+      showPage("app");
+      showToast("Uzupełnij dane firmy w ustawieniach.");
     });
   }
 
@@ -17512,6 +18143,45 @@
     } catch (err) {
       return false;
     }
+  }
+
+  let apiUnauthorizedHandling = false;
+  function onApiUnauthorized() {
+    if (apiUnauthorizedHandling || !window.AppState) return;
+    apiUnauthorizedHandling = true;
+    try {
+      if (window.AppState.draft) {
+        sessionStorage.setItem(PENDING_DRAFT_KEY, JSON.stringify(window.AppState.draft));
+        if (window.AppState.draft.slug) {
+          sessionStorage.setItem("lokalnie.pendingSlug", String(window.AppState.draft.slug));
+        }
+      }
+      if (!peekPendingIntent()) {
+        setPendingIntent({
+          type: "screen",
+          screen:
+            window.AppState.screen && window.AppState.screen.client
+              ? window.AppState.screen.client
+              : "search",
+        });
+      }
+    } catch (err) {
+      /* zachowanie draftu jest best effort */
+    }
+    setTesterMode(false);
+    window.AppState.loggedIn = false;
+    window.AppState.activeRole = "client";
+    window.AppState.onboarding = null;
+    window.AppState.appMenuOpen = false;
+    window.AppState.screen.client = "auth";
+    saveState();
+    updateAppHeader("client");
+    renderAll();
+    showPage("app");
+    showToast("Sesja wygasła. Zaloguj się ponownie, aby kontynuować.");
+    window.setTimeout(function () {
+      apiUnauthorizedHandling = false;
+    }, 0);
   }
 
   function logout() {
@@ -17592,6 +18262,57 @@
     });
   }
 
+  function deactivateProviderProfile() {
+    const p = myProvider();
+    if (!p || p.deactivated) return;
+    captureProviderProfileFields();
+    captureProviderContactFields();
+    p.deactivated = true;
+    p.visibleInSearch = false;
+    saveState();
+    renderAll();
+    showToast("Profil został dezaktywowany.");
+  }
+
+  function reactivateProviderProfile() {
+    const p = myProvider();
+    if (!p || !p.deactivated) return;
+    p.deactivated = false;
+    p.visibleInSearch = false;
+    saveState();
+    renderAll();
+    showToast(
+      providerProfileGaps(p).length
+        ? "Profil aktywowany. Uzupełnij braki, aby opublikować go w katalogu."
+        : "Profil aktywowany. Możesz włączyć jego widoczność w katalogu."
+    );
+  }
+
+  function deleteProviderProfile() {
+    const p = myProvider();
+    if (!p) return;
+    const name = p.name || "ten profil";
+    const confirmed = window.confirm(
+      `Czy na pewno chcesz trwale usunąć profil „${name}”?\n\nUsługi i ustawienia profilu zostaną usunięte. Tej operacji nie można cofnąć.`
+    );
+    if (!confirmed) return;
+
+    const remaining = listOwnedProviders().filter(function (item) {
+      return item && item.id !== p.id;
+    });
+    window.AppState.providerProfiles = remaining;
+    window.AppState.myProvider = null;
+    window.AppState.activeProviderId = null;
+    window.AppState.providerRoleActive = remaining.length > 0;
+    if (remaining.length) selectOwnedProvider(remaining[0].id);
+    window.AppState.activeRole = "client";
+    window.AppState.screen.client = "account";
+    saveState();
+    updateAppHeader("client");
+    renderAll();
+    showToast("Profil usługodawcy został usunięty.");
+  }
+
   function setClientAvatarFromFile(file) {
     if (!file || !/^image\//.test(file.type)) {
       showToast("Wybierz plik graficzny.");
@@ -17645,6 +18366,7 @@
     testLogin: testLogin,
     googleLogin: googleLogin,
     logout: logout,
+    onApiUnauthorized: onApiUnauthorized,
     applyApiAuth: applyApiAuth,
     switchRole: switchRole,
     showPage: showPage,
@@ -17652,6 +18374,11 @@
     computeSlots: computeSlots,
     assertNoBookingOverlap: assertNoBookingOverlap,
     usesDesktopLayout: usesDesktopLayout,
+    openProvCalEdit: openProvCalEdit,
+    confirmProvCalAdd: confirmProvCalAdd,
+    declineRequestProposals: declineRequestProposals,
+    cancelClientRequest: cancelClientRequest,
+    rejectRequest: rejectRequest,
   };
 
   // ─────────────────────────────────────────────────────────
@@ -17865,6 +18592,18 @@
         event.preventDefault();
         editProviderProfile(d.providerId);
         break;
+      case "deactivate-provider-profile":
+        event.preventDefault();
+        deactivateProviderProfile();
+        break;
+      case "reactivate-provider-profile":
+        event.preventDefault();
+        reactivateProviderProfile();
+        break;
+      case "delete-provider-profile":
+        event.preventDefault();
+        deleteProviderProfile();
+        break;
       case "go-screen": goScreen(d.screen); break;
       case "toggle-app-menu":
         event.preventDefault();
@@ -17885,6 +18624,10 @@
       case "onboarding-choose-provider":
         event.preventDefault();
         onboardingChooseProvider();
+        break;
+      case "onboarding-client-submit":
+        event.preventDefault();
+        onboardingClientSubmit();
         break;
       case "onboarding-back":
         event.preventDefault();
@@ -18794,13 +19537,30 @@
     if (visibleSearchToggle) {
       const p = myProvider();
       if (p) {
+        captureProviderProfileFields();
+        captureProviderContactFields();
         const on = !!visibleSearchToggle.checked;
+        if (on && !isProviderProfileActive(p)) {
+          visibleSearchToggle.checked = false;
+          p.visibleInSearch = false;
+          saveState();
+          showToast("Uzupełnij braki profilu, zanim włączysz widoczność w katalogu.");
+          withSettingsScroll(function () {
+            renderAll();
+          });
+          return;
+        }
         p.visibleInSearch = on;
         saveState();
-        // Bez renderAll — inaczej scroll ustawień wraca na górę.
         const row = visibleSearchToggle.closest(".settings__row--toggle");
         const hint = row && row.querySelector(".settings__hint");
-        if (hint) hint.textContent = on ? "Widoczny w wyszukiwaniu" : "Ukryty — tylko z linku";
+        if (hint) {
+          hint.textContent = on
+            ? "Widoczny w wyszukiwaniu"
+            : isProviderProfileActive(p)
+              ? "Ukryty — tylko z linku"
+              : "Niedostępna — uzupełnij braki profilu";
+        }
       }
       return;
     }
@@ -18855,12 +19615,21 @@
     }
 
     const profileField = event.target.closest(
-      '[data-role="settings-name"], [data-role="settings-address"], [data-role="settings-about"], [data-role="settings-rule-future"], [data-role="settings-rule-lead"], [data-role="settings-rule-propose-hold"], [data-role="settings-rule-cancel"], [data-role="settings-rule-policy"]'
+      '[data-role="settings-name"], [data-role="settings-category"], [data-role="settings-city"], [data-role="settings-address"], [data-role="settings-about"], [data-role="settings-rule-future"], [data-role="settings-rule-lead"], [data-role="settings-rule-propose-hold"], [data-role="settings-rule-cancel"], [data-role="settings-rule-policy"]'
     );
     if (profileField) {
       captureProviderProfileFields();
       saveState();
-      if (profileField.matches("select")) renderAll();
+      if (profileField.matches("select") || profileField.matches('[data-role="settings-category"]')) {
+        withSettingsScroll(function () {
+          renderAll();
+        });
+      } else if (
+        profileField.matches('[data-role="settings-name"]') ||
+        profileField.matches('[data-role="settings-city"]')
+      ) {
+        syncProviderCompletenessUi();
+      }
       return;
     }
 
@@ -18886,6 +19655,11 @@
       captureProviderProfileFields();
       captureProviderContactFields();
       saveState();
+      if (contactField.matches('[data-role="settings-phone"]')) {
+        syncProviderCompletenessUi();
+      } else {
+        enforceProviderCatalogVisibility(myProvider());
+      }
       return;
     }
 

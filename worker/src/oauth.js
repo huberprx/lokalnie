@@ -306,7 +306,10 @@ export async function handleGoogleCallback(request, env) {
   } catch (e) {
     console.error(JSON.stringify({ level: "error", oauth: String(e?.stack || e), details: e?.details || null }));
     return json(
-      { error: "oauth_failed", message: String(e?.message || e) },
+      {
+        error: "oauth_failed",
+        ...(env.ENVIRONMENT === "production" ? {} : { message: String(e?.message || e) }),
+      },
       500
     );
   }

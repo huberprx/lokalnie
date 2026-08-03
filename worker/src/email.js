@@ -1,4 +1,9 @@
 import { id, nowIso } from "./http.js";
+import { renderEmail } from "./templates.js";
+
+const RETRY_MINUTES = [1, 5, 30, 60];
+const MAX_ATTEMPTS = 5;
+const MAX_ERROR_LENGTH = 500;
 
 /** Kolejka maili — faktyczna wysyłka po podpięciu Resend. */
 export async function enqueueEmail(env, { toEmail, template, payload }) {
@@ -11,6 +16,22 @@ export async function enqueueEmail(env, { toEmail, template, payload }) {
     .bind(emailId, String(toEmail).trim(), template, JSON.stringify(payload || {}), nowIso())
     .run();
   return emailId;
+}
+
+export async function safeEnqueueEmail(env, message) {
+  try {
+    return await enqueueEmail(env, message);
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "email_enqueue_failed",
+        template: message?.template || null,
+        error: String(err?.message || err),
+      })
+    );
+    return null;
+  }
 }
 
 export async function listOutbox(env, limit = 50) {
@@ -32,6 +53,103 @@ export async function listOutbox(env, limit = 50) {
     error: r.error,
     createdAt: r.created_at,
   }));
+}
+
+export async function sendViaResend(env, item) {
+  const apiKey = String(env.RESEND_API_KEY || "").trim();
+  if (!apiKey) {
+    if (env.ENVIRONMENT !== "production") {
+      return { id: `dev_${item.id}`, simulated: true };
+    }
+    throw new Error("resend_not_configured");
+  }
+
+  const rendered = renderEmail(item.template, safeParse(item.payload_json));
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: env.EMAIL_FROM,
+      to: [item.to_email],
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+    }),
+  });
+  if (!response.ok) {
+    const providerError = await response.text();
+    console.error(
+      JSON.stringify({
+        level: "error",
+        emailId: item.id,
+        provider: "resend",
+        status: response.status,
+        error: providerError.slice(0, MAX_ERROR_LENGTH),
+      })
+    );
+    throw new Error(`resend_http_${response.status}`);
+  }
+  return response.json();
+}
+
+export async function processDueEmails(env, limit = 25) {
+  const rows = await env.DB.prepare(
+    `SELECT * FROM email_outbox
+     WHERE status='pending' AND scheduled_at <= ?
+     ORDER BY scheduled_at ASC LIMIT ?`
+  )
+    .bind(nowIso(), Math.min(Math.max(Number(limit) || 25, 1), 100))
+    .all();
+
+  const summary = { processed: 0, sent: 0, retried: 0, failed: 0 };
+  for (const item of rows.results || []) {
+    const attempts = Number(item.attempts || 0) + 1;
+    const leaseUntil = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const claim = await env.DB.prepare(
+      `UPDATE email_outbox SET attempts=?, scheduled_at=?
+       WHERE id=? AND status='pending' AND attempts=? AND scheduled_at <= ?`
+    )
+      .bind(attempts, leaseUntil, item.id, Number(item.attempts || 0), nowIso())
+      .run();
+    if (!claim.meta?.changes) continue;
+    summary.processed += 1;
+    try {
+      await sendViaResend(env, item);
+      await env.DB.prepare(
+        `UPDATE email_outbox
+         SET status='sent', sent_at=?, error=NULL
+         WHERE id=? AND status='pending'`
+      )
+        .bind(nowIso(), item.id)
+        .run();
+      summary.sent += 1;
+    } catch (err) {
+      const error = String(err?.message || "email_delivery_failed").slice(0, MAX_ERROR_LENGTH);
+      if (attempts >= MAX_ATTEMPTS) {
+        await env.DB.prepare(
+          `UPDATE email_outbox SET status='failed', error=? WHERE id=?`
+        )
+          .bind(error, item.id)
+          .run();
+        summary.failed += 1;
+      } else {
+        const delayMinutes = RETRY_MINUTES[Math.min(attempts - 1, RETRY_MINUTES.length - 1)];
+        const scheduledAt = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString();
+        await env.DB.prepare(
+          `UPDATE email_outbox
+           SET error=?, scheduled_at=?
+           WHERE id=? AND status='pending'`
+        )
+          .bind(error, scheduledAt, item.id)
+          .run();
+        summary.retried += 1;
+      }
+    }
+  }
+  return summary;
 }
 
 function safeParse(s) {

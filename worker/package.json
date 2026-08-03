@@ -7,9 +7,13 @@
     "deploy": "wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply lokalnie-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply lokalnie-db --remote",
+    "db:seed:local": "wrangler d1 execute lokalnie-db --local --file seed/demo.sql",
+    "test": "vitest run",
     "types": "wrangler types"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.20.1",
+    "vitest": "^4.1.10",
     "wrangler": "^4.115.0"
   }
 }

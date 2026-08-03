@@ -1,3 +1,8 @@
 # Skopiuj do .dev.vars (nie commituj .dev.vars)
 GOOGLE_CLIENT_ID=twoj-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=GOCSPX-...
+RESEND_API_KEY=re_przykladowy_klucz_bez_wartosci_produkcyjnej
+APP_ORIGIN=http://localhost:8080
+ENVIRONMENT=development
+EMAIL_FROM=Lokalnie <powiadomienia@lokalnie.app>
+ADMIN_EMAILS=developer@example.com

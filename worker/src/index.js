@@ -1,16 +1,27 @@
-import { CORS, json, noContent, id, nowIso, readJson } from "./http.js";
-import { requireDemoUser, mapUser, mapProvider } from "./auth.js";
+import { json, id, nowIso, readJson, preflight, withCors, HttpError } from "./http.js";
+import { requireDemoUser, requireAdmin, mapUser, mapProvider } from "./auth.js";
 import { startGoogleAuth, handleGoogleCallback, logoutSession } from "./oauth.js";
-import { enqueueEmail, listOutbox } from "./email.js";
+import { safeEnqueueEmail, listOutbox, processDueEmails } from "./email.js";
 import { mapClient, mapBooking, mapRequest, mapMedia } from "./mappers.js";
+import { validateSlot, normalizeText, normalizeStringArray, isValidDateISO } from "./validate.js";
+import { canTransitionBooking } from "./bookings.js";
+import { withIdempotency } from "./idempotency.js";
 
 const ALLOWED_IMAGE = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const MAX_UPLOAD = 5 * 1024 * 1024;
 
 export default {
   async fetch(request, env) {
+    if (request.method === "OPTIONS") return preflight(request, env);
+    return withCors(await routeRequest(request, env), request, env);
+  },
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(processDueEmails(env));
+  },
+};
+
+async function routeRequest(request, env) {
     const url = new URL(request.url);
-    if (request.method === "OPTIONS") return noContent();
 
     try {
       const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -22,7 +33,10 @@ export default {
           ok: true,
           environment: env.ENVIRONMENT || "unknown",
           appOrigin: env.APP_ORIGIN || null,
-          auth: "Bearer <session> | demo: X-Demo-User: demo | Authorization: Bearer demo",
+          auth:
+            env.ENVIRONMENT === "production"
+              ? "Bearer <session>"
+              : "Bearer <session> | demo: X-Demo-User: demo | Authorization: Bearer demo",
           docs: {
             health: "GET /health",
             authGoogle: "GET /auth/google",
@@ -34,14 +48,19 @@ export default {
             bookings: "GET|POST /bookings",
             requests: "GET|POST /requests",
             media: "POST /media , GET /media/:id",
-            emails: "GET /emails/outbox",
+            ...(env.ENVIRONMENT === "production"
+              ? {}
+              : {
+                  debugTables: "GET /debug/tables",
+                  emails: "GET /emails/outbox, POST /emails/process",
+                }),
           },
           bindings: { db: !!env.DB, media: !!env.MEDIA },
         });
       }
 
       if (path === "/health") return health(env);
-      if (path === "/debug/tables") return debugTables(env);
+      if (path === "/debug/tables") return debugTables(request, env);
 
       if (path === "/auth/google" && request.method === "GET") return startGoogleAuth(request, env);
       if (path === "/auth/google/callback" && request.method === "GET") {
@@ -103,10 +122,16 @@ export default {
       return json({ error: "not_found" }, 404);
     } catch (err) {
       console.error(JSON.stringify({ level: "error", err: String(err?.stack || err) }));
-      return json({ error: "internal_error", message: String(err?.message || err) }, 500);
+      if (err instanceof HttpError) return json({ error: err.code }, err.status);
+      return json(
+        {
+          error: "internal_error",
+          ...(env.ENVIRONMENT === "production" ? {} : { message: String(err?.message || err) }),
+        },
+        500
+      );
     }
-  },
-};
+}
 
 async function health(env) {
   let dbOk = false;
@@ -121,12 +146,14 @@ async function health(env) {
     ok: dbOk,
     db: dbOk ? "up" : "down",
     media: env.MEDIA ? "bound" : "not_configured",
-    error: dbError,
+    error: env.ENVIRONMENT === "production" ? (dbError ? "database_unavailable" : null) : dbError,
     time: nowIso(),
   });
 }
 
-async function debugTables(env) {
+async function debugTables(request, env) {
+  const auth = await requireAdmin(request, env);
+  if (auth.error) return auth.error;
   const rows = await env.DB.prepare(
     "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name"
   ).all();
@@ -150,9 +177,15 @@ async function patchMe(request, env) {
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
 
-  const name = body.name != null ? String(body.name).trim() : auth.user.name;
-  const phone = body.phone != null ? String(body.phone).trim() : auth.user.phone;
-  const email = body.email != null ? String(body.email).trim() : auth.user.email;
+  const nameResult = normalizeText(body.name ?? auth.user.name, 120, { required: true });
+  const phoneResult = normalizeText(body.phone ?? auth.user.phone, 40);
+  const emailResult = normalizeText(body.email ?? auth.user.email, 254);
+  if (nameResult.error || phoneResult.error || emailResult.error) {
+    return json({ error: "invalid_profile_fields" }, 400);
+  }
+  const name = nameResult.value;
+  const phone = phoneResult.value;
+  const email = emailResult.value;
   const nb = body.notifications?.booking != null ? (body.notifications.booking ? 1 : 0) : auth.user.notification_booking;
   const nr = body.notifications?.reminder != null ? (body.notifications.reminder ? 1 : 0) : auth.user.notification_reminder;
   const nm = body.notifications?.marketing != null ? (body.notifications.marketing ? 1 : 0) : auth.user.notification_marketing;
@@ -182,14 +215,25 @@ async function patchProviderMe(request, env) {
   if (!body) return json({ error: "invalid_json" }, 400);
 
   const p = auth.provider;
+  const textFields = {
+    name: normalizeText(body.name ?? p.name, 120, { required: true }),
+    city: normalizeText(body.city ?? p.city, 120),
+    address: normalizeText(body.address ?? p.address, 240),
+    about: normalizeText(body.about ?? p.about, 2000),
+    email: normalizeText(body.email ?? p.email, 254),
+    phone: normalizeText(body.phone ?? p.phone, 40),
+  };
+  if (Object.values(textFields).some((field) => field.error)) {
+    return json({ error: "invalid_provider_fields" }, 400);
+  }
   const fields = {
-    name: body.name != null ? String(body.name).trim() : p.name,
-    city: body.city != null ? String(body.city).trim() : p.city,
-    address: body.address != null ? String(body.address).trim() : p.address,
-    about: body.about != null ? String(body.about).trim() : p.about,
-    email: body.email != null ? String(body.email).trim() : p.email,
+    name: textFields.name.value,
+    city: textFields.city.value,
+    address: textFields.address.value,
+    about: textFields.about.value,
+    email: textFields.email.value,
     email_visible: body.emailVisible != null ? (body.emailVisible ? 1 : 0) : p.email_visible,
-    phone: body.phone != null ? String(body.phone).trim() : p.phone,
+    phone: textFields.phone.value,
     booking_mode: body.bookingMode === "approval" || body.bookingMode === "auto" ? body.bookingMode : p.booking_mode,
     visible_in_search: body.visibleInSearch != null ? (body.visibleInSearch ? 1 : 0) : p.visible_in_search,
     multi_select: body.multiSelect != null ? (body.multiSelect ? 1 : 0) : p.multi_select,
@@ -240,7 +284,17 @@ async function createClient(request, env) {
   const auth = await requireProvider(request, env);
   if (auth.error) return auth.error;
   const body = await readJson(request);
-  if (!body || !String(body.name || "").trim()) return json({ error: "name_required" }, 400);
+  if (!body) return json({ error: "invalid_json" }, 400);
+  const fields = {
+    name: normalizeText(body.name, 120, { required: true }),
+    phone: normalizeText(body.phone, 40),
+    email: normalizeText(body.email, 254),
+    address: normalizeText(body.address, 240),
+    notes: normalizeText(body.notes, 2000),
+  };
+  if (Object.values(fields).some((field) => field.error)) {
+    return json({ error: "invalid_client_fields" }, 400);
+  }
 
   const clientId = id("pc");
   const ts = nowIso();
@@ -251,12 +305,12 @@ async function createClient(request, env) {
     .bind(
       clientId,
       auth.provider.id,
-      body.clientUserId || null,
-      String(body.name).trim(),
-      body.phone ? String(body.phone).trim() : null,
-      body.email ? String(body.email).trim() : null,
-      body.address ? String(body.address).trim() : null,
-      body.notes ? String(body.notes).trim() : null,
+      null,
+      fields.name.value,
+      fields.phone.value,
+      fields.email.value,
+      fields.address.value,
+      fields.notes.value,
       ts,
       ts
     )
@@ -286,16 +340,29 @@ async function patchClient(request, env, clientId) {
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
 
-  const name = body.name != null ? String(body.name).trim() : row.name;
-  const phone = body.phone != null ? String(body.phone).trim() : row.phone;
-  const email = body.email != null ? String(body.email).trim() : row.email;
-  const address = body.address != null ? String(body.address).trim() : row.address;
-  const notes = body.notes != null ? String(body.notes).trim() : row.notes;
+  const fields = {
+    name: normalizeText(body.name ?? row.name, 120, { required: true }),
+    phone: normalizeText(body.phone ?? row.phone, 40),
+    email: normalizeText(body.email ?? row.email, 254),
+    address: normalizeText(body.address ?? row.address, 240),
+    notes: normalizeText(body.notes ?? row.notes, 2000),
+  };
+  if (Object.values(fields).some((field) => field.error)) {
+    return json({ error: "invalid_client_fields" }, 400);
+  }
 
   await env.DB.prepare(
     `UPDATE provider_clients SET name=?, phone=?, email=?, address=?, notes=?, updated_at=? WHERE id=?`
   )
-    .bind(name, phone || null, email || null, address || null, notes || null, nowIso(), clientId)
+    .bind(
+      fields.name.value,
+      fields.phone.value,
+      fields.email.value,
+      fields.address.value,
+      fields.notes.value,
+      nowIso(),
+      clientId
+    )
     .run();
 
   const updated = await env.DB.prepare("SELECT * FROM provider_clients WHERE id=?").bind(clientId).first();
@@ -337,63 +404,118 @@ async function listBookings(request, env, url) {
 async function createBooking(request, env) {
   const auth = await requireDemoUser(request, env);
   if (auth.error) return auth.error;
+  return withIdempotency(
+    request,
+    env,
+    { userId: auth.user.id, endpoint: "POST:/bookings" },
+    () => createBookingMutation(request, env, auth)
+  );
+}
+
+async function createBookingMutation(request, env, auth) {
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
 
   const providerId = body.providerId || auth.provider?.id;
   if (!providerId) return json({ error: "provider_id_required" }, 400);
+  const provider = await env.DB.prepare("SELECT id FROM provider_profiles WHERE id=?")
+    .bind(providerId)
+    .first();
+  if (!provider) return json({ error: "provider_not_found" }, 404);
+  const ownProviderBooking = auth.provider?.id === providerId;
 
-  const clientName = String(body.clientName || auth.user.name || "").trim();
-  if (!clientName) return json({ error: "client_name_required" }, 400);
-
+  const clientNameResult = normalizeText(body.clientName || auth.user.name, 120, { required: true });
+  if (clientNameResult.error) return json({ error: "invalid_client_name" }, 400);
+  const clientName = clientNameResult.value;
   const status = ["confirmed", "pending", "proposed", "rejected", "cancelled"].includes(body.status)
     ? body.status
     : "confirmed";
+  const slotError = validateSlot({ dateISO: body.dateISO, from: body.from, to: body.to });
+  if (slotError) return json({ error: slotError }, 400);
+
+  const serviceIdsResult = normalizeStringArray(body.serviceIds, 50, 100);
+  const serviceNamesResult = normalizeStringArray(body.serviceNames, 50, 120);
+  if (serviceIdsResult.error || serviceNamesResult.error) {
+    return json({ error: "invalid_services" }, 400);
+  }
+  const locationResult = normalizeText(body.locationLabel, 240);
+  if (locationResult.error) return json({ error: "location_too_long" }, 400);
+  const phoneResult = normalizeText(body.clientPhone || auth.user.phone, 40);
+  const emailResult = normalizeText(body.clientEmail || auth.user.email, 254);
+  if (phoneResult.error || emailResult.error) return json({ error: "client_details_too_long" }, 400);
+
+  let providerClientId = null;
+  let clientUserId = auth.user.id;
+  if (body.providerClientId != null) {
+    if (!ownProviderBooking) return json({ error: "provider_client_forbidden" }, 403);
+    const providerClient = await env.DB.prepare(
+      "SELECT id FROM provider_clients WHERE id=? AND provider_id=?"
+    )
+      .bind(String(body.providerClientId), providerId)
+      .first();
+    if (!providerClient) return json({ error: "provider_client_not_found" }, 404);
+    providerClientId = providerClient.id;
+    clientUserId = null;
+  }
 
   const bookingId = id("bk");
   const ts = nowIso();
-  const serviceIds = Array.isArray(body.serviceIds) ? body.serviceIds : [];
-  const serviceNames = Array.isArray(body.serviceNames) ? body.serviceNames : [];
 
-  await env.DB.prepare(
+  const activeStatus = ["confirmed", "pending", "proposed"].includes(status) ? 1 : 0;
+  const insert = await env.DB.prepare(
     `INSERT INTO bookings (
       id, provider_id, client_user_id, provider_client_id, client_name, client_phone, client_email,
       service_ids_json, service_names_json, date_iso, time_from, time_to, location_label, status, request_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    WHERE ? = 0 OR NOT EXISTS (
+      SELECT 1 FROM bookings AS occupied
+      WHERE occupied.provider_id=?
+        AND occupied.date_iso=?
+        AND occupied.status IN ('confirmed', 'pending', 'proposed')
+        AND occupied.time_from < ?
+        AND occupied.time_to > ?
+    )`
   )
     .bind(
       bookingId,
       providerId,
-      body.clientUserId || auth.user.id,
-      body.providerClientId || null,
+      clientUserId,
+      providerClientId,
       clientName,
-      body.clientPhone || auth.user.phone || null,
-      body.clientEmail || auth.user.email || null,
-      JSON.stringify(serviceIds),
-      JSON.stringify(serviceNames),
-      body.dateISO || null,
-      body.from || null,
-      body.to || null,
-      body.locationLabel || null,
+      phoneResult.value,
+      emailResult.value,
+      JSON.stringify(serviceIdsResult.value),
+      JSON.stringify(serviceNamesResult.value),
+      body.dateISO,
+      body.from,
+      body.to,
+      locationResult.value,
       status,
       body.requestId || null,
       ts,
-      ts
+      ts,
+      activeStatus,
+      providerId,
+      body.dateISO,
+      body.to,
+      body.from
     )
     .run();
+  if (!insert.meta?.changes) return json({ error: "booking_overlap" }, 409);
 
   // Auto-upsert CRM gdy jest provider demo
   if (auth.provider && auth.provider.id === providerId) {
     await upsertClientFromBooking(env, auth.provider.id, {
       name: clientName,
-      phone: body.clientPhone || auth.user.phone,
-      email: body.clientEmail || auth.user.email,
+      phone: phoneResult.value,
+      email: emailResult.value,
     });
   }
 
-  if (body.clientEmail || auth.user.email) {
-    await enqueueEmail(env, {
-      toEmail: body.clientEmail || auth.user.email,
+  if (emailResult.value) {
+    await safeEnqueueEmail(env, {
+      toEmail: emailResult.value,
       template: status === "confirmed" ? "booking_confirmed" : "booking_created",
       payload: { bookingId, clientName, dateISO: body.dateISO, from: body.from, to: body.to, status },
     });
@@ -435,31 +557,105 @@ async function getBooking(request, env, bookingId) {
 async function patchBooking(request, env, bookingId) {
   const auth = await requireDemoUser(request, env);
   if (auth.error) return auth.error;
+  return withIdempotency(
+    request,
+    env,
+    { userId: auth.user.id, endpoint: `PATCH:/bookings/${bookingId}` },
+    () => patchBookingMutation(request, env, auth, bookingId)
+  );
+}
+
+async function patchBookingMutation(request, env, auth, bookingId) {
   const row = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
   if (!row) return json({ error: "not_found" }, 404);
-  if (auth.provider?.id !== row.provider_id && row.client_user_id !== auth.user.id) {
+  const isProvider = auth.provider?.id === row.provider_id;
+  const isClient = row.client_user_id === auth.user.id;
+  if (!isProvider && !isClient) {
     return json({ error: "forbidden" }, 403);
   }
 
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
 
-  const status = body.status && ["confirmed", "pending", "proposed", "rejected", "cancelled"].includes(body.status)
-    ? body.status
-    : row.status;
-  const dateISO = body.dateISO != null ? body.dateISO : row.date_iso;
-  const from = body.from != null ? body.from : row.time_from;
-  const to = body.to != null ? body.to : row.time_to;
-  const locationLabel = body.locationLabel != null ? body.locationLabel : row.location_label;
+  let status = row.status;
+  let dateISO = row.date_iso;
+  let from = row.time_from;
+  let to = row.time_to;
+  let locationLabel = row.location_label;
 
-  await env.DB.prepare(
-    `UPDATE bookings SET status=?, date_iso=?, time_from=?, time_to=?, location_label=?, updated_at=? WHERE id=?`
+  if (!isProvider) {
+    const allowedClientFields = new Set(["status", "dateISO", "from", "to", "locationLabel"]);
+    if (Object.keys(body).some((key) => !allowedClientFields.has(key))) {
+      return json({ error: "client_update_forbidden" }, 403);
+    }
+    const changesSlot =
+      (body.dateISO != null && body.dateISO !== row.date_iso) ||
+      (body.from != null && body.from !== row.time_from) ||
+      (body.to != null && body.to !== row.time_to) ||
+      (body.locationLabel != null && body.locationLabel !== row.location_label);
+    if (changesSlot || !canTransitionBooking("client", row.status, body.status)) {
+      return json({ error: "client_update_forbidden" }, 403);
+    }
+    status = body.status;
+  } else {
+    if (
+      body.status != null &&
+      !["confirmed", "pending", "proposed", "rejected", "cancelled"].includes(body.status)
+    ) {
+      return json({ error: "invalid_status" }, 400);
+    }
+    status = body.status ?? row.status;
+    if (!canTransitionBooking("provider", row.status, status)) {
+      return json({ error: "invalid_status_transition" }, 409);
+    }
+    dateISO = body.dateISO ?? row.date_iso;
+    from = body.from ?? row.time_from;
+    to = body.to ?? row.time_to;
+    locationLabel = body.locationLabel ?? row.location_label;
+    const slotError = validateSlot({ dateISO, from, to });
+    if (slotError) return json({ error: slotError }, 400);
+    const locationResult = normalizeText(locationLabel, 240);
+    if (locationResult.error) return json({ error: "location_too_long" }, 400);
+    locationLabel = locationResult.value;
+  }
+
+  const activeStatus = ["confirmed", "pending", "proposed"].includes(status) ? 1 : 0;
+  const update = await env.DB.prepare(
+    `UPDATE bookings
+     SET status=?, date_iso=?, time_from=?, time_to=?, location_label=?, updated_at=?
+     WHERE id=?
+       AND (
+         ? = 0 OR NOT EXISTS (
+           SELECT 1 FROM bookings AS occupied
+           WHERE occupied.provider_id=?
+             AND occupied.date_iso=?
+             AND occupied.status IN ('confirmed', 'pending', 'proposed')
+             AND occupied.time_from < ?
+             AND occupied.time_to > ?
+             AND occupied.id <> ?
+         )
+       )`
   )
-    .bind(status, dateISO, from, to, locationLabel, nowIso(), bookingId)
+    .bind(
+      status,
+      dateISO,
+      from,
+      to,
+      locationLabel,
+      nowIso(),
+      bookingId,
+      activeStatus,
+      row.provider_id,
+      dateISO,
+      to,
+      from,
+      bookingId
+    )
     .run();
+  if (!update.meta?.changes) return json({ error: "booking_overlap" }, 409);
 
   if (status !== row.status && row.client_email) {
-    await enqueueEmail(env, {
+    await safeEnqueueEmail(env, {
       toEmail: row.client_email,
       template: `booking_${status}`,
       payload: { bookingId, status, dateISO, from, to },
@@ -504,6 +700,15 @@ async function getRequest(request, env, requestId) {
 async function createRequest(request, env) {
   const auth = await requireDemoUser(request, env);
   if (auth.error) return auth.error;
+  return withIdempotency(
+    request,
+    env,
+    { userId: auth.user.id, endpoint: "POST:/requests" },
+    () => createRequestMutation(request, env, auth)
+  );
+}
+
+async function createRequestMutation(request, env, auth) {
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
 
@@ -511,10 +716,39 @@ async function createRequest(request, env) {
   if (!providerId) return json({ error: "provider_id_required" }, 400);
   // Pusta lista = prośba bez wyboru dnia (usługodawca proponuje dowolne terminy).
   const days = Array.isArray(body.days) ? body.days : [];
+  if (
+    days.length > 31 ||
+    days.some(
+      (day) =>
+        !day ||
+        !isValidDateISO(day.dateISO) ||
+        (day.part != null && !["am", "pm", "any"].includes(day.part))
+    )
+  ) {
+    return json({ error: "invalid_days" }, 400);
+  }
+  const clientNameResult = normalizeText(body.clientName || auth.user.name, 120, { required: true });
+  const phoneResult = normalizeText(body.clientPhone || auth.user.phone, 40);
+  const emailResult = normalizeText(body.clientEmail || auth.user.email, 254);
+  const serviceIdsResult = normalizeStringArray(body.serviceIds, 50, 100);
+  const serviceNamesResult = normalizeStringArray(body.serviceNames, 50, 120);
+  if (
+    clientNameResult.error ||
+    phoneResult.error ||
+    emailResult.error ||
+    serviceIdsResult.error ||
+    serviceNamesResult.error
+  ) {
+    return json({ error: "invalid_request_fields" }, 400);
+  }
+  const provider = await env.DB.prepare("SELECT email, name FROM provider_profiles WHERE id=?")
+    .bind(providerId)
+    .first();
+  if (!provider) return json({ error: "provider_not_found" }, 404);
 
   const requestId = id("rq");
   const ts = nowIso();
-  const clientName = String(body.clientName || auth.user.name || "").trim();
+  const clientName = clientNameResult.value;
 
   await env.DB.prepare(
     `INSERT INTO booking_requests (
@@ -527,10 +761,10 @@ async function createRequest(request, env) {
       providerId,
       auth.user.id,
       clientName,
-      body.clientPhone || auth.user.phone || null,
-      body.clientEmail || auth.user.email || null,
-      JSON.stringify(Array.isArray(body.serviceIds) ? body.serviceIds : []),
-      JSON.stringify(Array.isArray(body.serviceNames) ? body.serviceNames : []),
+      phoneResult.value,
+      emailResult.value,
+      JSON.stringify(serviceIdsResult.value),
+      JSON.stringify(serviceNamesResult.value),
       JSON.stringify(days),
       ts,
       ts
@@ -538,9 +772,8 @@ async function createRequest(request, env) {
     .run();
 
   // Mail do usługodawcy (jeśli ma e-mail)
-  const provider = await env.DB.prepare("SELECT email, name FROM provider_profiles WHERE id=?").bind(providerId).first();
   if (provider?.email) {
-    await enqueueEmail(env, {
+    await safeEnqueueEmail(env, {
       toEmail: provider.email,
       template: "request_new",
       payload: { requestId, clientName, providerName: provider.name },
@@ -554,6 +787,15 @@ async function createRequest(request, env) {
 async function proposeRequest(request, env, requestId) {
   const auth = await requireProvider(request, env);
   if (auth.error) return auth.error;
+  return withIdempotency(
+    request,
+    env,
+    { userId: auth.user.id, endpoint: `POST:/requests/${requestId}/propose` },
+    () => proposeRequestMutation(request, env, auth, requestId)
+  );
+}
+
+async function proposeRequestMutation(request, env, auth, requestId) {
   const row = await env.DB.prepare("SELECT * FROM booking_requests WHERE id=? AND provider_id=?")
     .bind(requestId, auth.provider.id)
     .first();
@@ -562,14 +804,25 @@ async function proposeRequest(request, env, requestId) {
   const body = await readJson(request);
   const proposals = Array.isArray(body?.proposals) ? body.proposals : [];
   if (!proposals.length) return json({ error: "proposals_required" }, 400);
+  if (proposals.length > 20) return json({ error: "too_many_proposals" }, 400);
 
-  const normalized = proposals.map((p, i) => ({
-    id: p.id || `prop_${i + 1}_${crypto.randomUUID().slice(0, 8)}`,
-    dateISO: p.dateISO,
-    from: p.from,
-    to: p.to,
-    locationLabel: p.locationLabel || null,
-  }));
+  const normalized = [];
+  for (let i = 0; i < proposals.length; i++) {
+    const proposal = proposals[i];
+    const slotError = validateSlot(proposal || {});
+    if (slotError) return json({ error: slotError, proposalIndex: i }, 400);
+    const location = normalizeText(proposal.locationLabel, 240);
+    const proposalId = normalizeText(proposal.id, 100);
+    if (proposalId.error) return json({ error: "proposal_id_too_long", proposalIndex: i }, 400);
+    if (location.error) return json({ error: "location_too_long", proposalIndex: i }, 400);
+    normalized.push({
+      id: proposalId.value || `prop_${i + 1}_${crypto.randomUUID().slice(0, 8)}`,
+      dateISO: proposal.dateISO,
+      from: proposal.from,
+      to: proposal.to,
+      locationLabel: location.value,
+    });
+  }
 
   await env.DB.prepare(
     `UPDATE booking_requests SET proposals_json=?, status='proposed', updated_at=? WHERE id=?`
@@ -578,7 +831,7 @@ async function proposeRequest(request, env, requestId) {
     .run();
 
   if (row.client_email) {
-    await enqueueEmail(env, {
+    await safeEnqueueEmail(env, {
       toEmail: row.client_email,
       template: "request_proposed",
       payload: { requestId, proposals: normalized },
@@ -592,32 +845,59 @@ async function proposeRequest(request, env, requestId) {
 async function acceptRequest(request, env, requestId) {
   const auth = await requireDemoUser(request, env);
   if (auth.error) return auth.error;
+  return withIdempotency(
+    request,
+    env,
+    { userId: auth.user.id, endpoint: `POST:/requests/${requestId}/accept` },
+    () => acceptRequestMutation(request, env, auth, requestId)
+  );
+}
+
+async function acceptRequestMutation(request, env, auth, requestId) {
   const row = await env.DB.prepare("SELECT * FROM booking_requests WHERE id=?").bind(requestId).first();
   if (!row) return json({ error: "not_found" }, 404);
-  if (row.client_user_id && row.client_user_id !== auth.user.id && auth.provider?.id !== row.provider_id) {
+  if (!row.client_user_id || row.client_user_id !== auth.user.id) {
     return json({ error: "forbidden" }, 403);
   }
+  if (row.status !== "proposed") return json({ error: "request_not_proposed" }, 409);
 
   const body = await readJson(request);
-  const proposalId = body?.proposalId;
-  if (!proposalId) return json({ error: "proposal_id_required" }, 400);
+  const proposalIdResult = normalizeText(body?.proposalId, 100, { required: true });
+  if (proposalIdResult.error) return json({ error: "invalid_proposal_id" }, 400);
+  const proposalId = proposalIdResult.value;
 
   const proposals = JSON.parse(row.proposals_json || "[]");
   const chosen = proposals.find((p) => p.id === proposalId);
   if (!chosen) return json({ error: "proposal_not_found" }, 404);
+  const slotError = validateSlot(chosen);
+  if (slotError) return json({ error: slotError }, 400);
 
   const bookingId = id("bk");
   const ts = nowIso();
-  await env.DB.batch([
-    env.DB.prepare(
-      `UPDATE booking_requests SET accepted_proposal_id=?, status='confirmed', updated_at=? WHERE id=?`
-    ).bind(proposalId, ts, requestId),
-    env.DB.prepare(
-      `INSERT INTO bookings (
-        id, provider_id, client_user_id, client_name, client_phone, client_email,
-        service_ids_json, service_names_json, date_iso, time_from, time_to, location_label, status, request_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)`
-    ).bind(
+  const insert = await env.DB.prepare(
+    `INSERT INTO bookings (
+      id, provider_id, client_user_id, client_name, client_phone, client_email,
+      service_ids_json, service_names_json, date_iso, time_from, time_to, location_label,
+      status, request_id, created_at, updated_at
+    )
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?
+    WHERE EXISTS (
+      SELECT 1 FROM booking_requests
+      WHERE id=? AND client_user_id=? AND status='proposed'
+    )
+      AND NOT EXISTS (
+        SELECT 1 FROM bookings AS occupied
+        WHERE occupied.provider_id=?
+          AND occupied.date_iso=?
+          AND occupied.status IN ('confirmed', 'pending', 'proposed')
+          AND occupied.time_from < ?
+          AND occupied.time_to > ?
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM bookings WHERE request_id=?
+      )`
+  )
+    .bind(
       bookingId,
       row.provider_id,
       row.client_user_id,
@@ -632,12 +912,32 @@ async function acceptRequest(request, env, requestId) {
       chosen.locationLabel || null,
       requestId,
       ts,
-      ts
-    ),
-  ]);
+      ts,
+      requestId,
+      auth.user.id,
+      row.provider_id,
+      chosen.dateISO,
+      chosen.to,
+      chosen.from,
+      requestId
+    )
+    .run();
+  if (!insert.meta?.changes) return json({ error: "booking_overlap" }, 409);
+
+  const requestUpdate = await env.DB.prepare(
+    `UPDATE booking_requests
+     SET accepted_proposal_id=?, status='confirmed', updated_at=?
+     WHERE id=? AND client_user_id=? AND status='proposed'`
+  )
+    .bind(proposalId, ts, requestId, auth.user.id)
+    .run();
+  if (!requestUpdate.meta?.changes) {
+    await env.DB.prepare("DELETE FROM bookings WHERE id=?").bind(bookingId).run();
+    return json({ error: "request_conflict" }, 409);
+  }
 
   if (row.client_email) {
-    await enqueueEmail(env, {
+    await safeEnqueueEmail(env, {
       toEmail: row.client_email,
       template: "booking_confirmed",
       payload: { bookingId, requestId, dateISO: chosen.dateISO, from: chosen.from, to: chosen.to },
@@ -652,8 +952,20 @@ async function acceptRequest(request, env, requestId) {
 async function declineRequest(request, env, requestId) {
   const auth = await requireDemoUser(request, env);
   if (auth.error) return auth.error;
+  return withIdempotency(
+    request,
+    env,
+    { userId: auth.user.id, endpoint: `POST:/requests/${requestId}/decline` },
+    () => declineRequestMutation(env, auth, requestId)
+  );
+}
+
+async function declineRequestMutation(env, auth, requestId) {
   const row = await env.DB.prepare("SELECT * FROM booking_requests WHERE id=?").bind(requestId).first();
   if (!row) return json({ error: "not_found" }, 404);
+  if (row.client_user_id !== auth.user.id && auth.provider?.id !== row.provider_id) {
+    return json({ error: "forbidden" }, 403);
+  }
 
   await env.DB.prepare(`UPDATE booking_requests SET status='rejected', updated_at=? WHERE id=?`)
     .bind(nowIso(), requestId)
@@ -719,32 +1031,22 @@ async function getMedia(env, mediaId) {
   const obj = await env.MEDIA.get(row.storage_key);
   if (!obj) return json({ error: "object_missing" }, 404);
 
-  const headers = new Headers(CORS);
+  const headers = new Headers();
   headers.set("Content-Type", row.content_type || obj.httpMetadata?.contentType || "application/octet-stream");
   headers.set("Cache-Control", "public, max-age=86400");
   return new Response(obj.body, { status: 200, headers });
 }
 
 async function emailsOutbox(request, env) {
-  const auth = await requireDemoUser(request, env);
+  const auth = await requireAdmin(request, env);
   if (auth.error) return auth.error;
   const items = await listOutbox(env, 100);
-  return json({
-    items,
-    note: "Wysyłka przez Resend — kolejny krok (potrzebne konto + domena). Teraz tylko kolejka.",
-  });
+  return json({ items });
 }
 
 async function processEmails(request, env) {
-  const auth = await requireDemoUser(request, env);
+  const auth = await requireAdmin(request, env);
   if (auth.error) return auth.error;
-  const pending = await env.DB.prepare(
-    `SELECT COUNT(*) AS c FROM email_outbox WHERE status='pending'`
-  ).first();
-  return json({
-    ok: true,
-    pending: pending?.c || 0,
-    processed: 0,
-    message: "Brak RESEND_API_KEY — maile zostają w outbox. Załóż Resend i daj znać.",
-  });
+  const summary = await processDueEmails(env);
+  return json({ ok: true, ...summary });
 }

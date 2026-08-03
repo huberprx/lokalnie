@@ -1046,6 +1046,39 @@ body:has(#page-app:not([hidden])) {
   text-align: center;
 }
 
+.auth-login__tester {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 2.85rem;
+  margin: 0.55rem 0 0;
+  padding: 0.65rem 1rem;
+  border: 1px dashed color-mix(in srgb, var(--text-muted) 55%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 70%, var(--surface));
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.auth-login__tester:hover {
+  background: var(--surface-2);
+  border-color: var(--text-muted);
+}
+
+.auth-login__tester-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text-muted);
+  text-align: center;
+}
+
 .auth-login__legal {
   margin: 0.75rem 0 0;
   font-size: 0.8rem;
@@ -2172,12 +2205,95 @@ button.app-menu__profile {
   gap: 0.85rem;
 }
 
+.onboarding__card--client {
+  gap: 0.75rem;
+}
+
+.onboarding__avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.15rem 0 0.35rem;
+}
+
+.onboarding__avatar {
+  flex-shrink: 0;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, #d7e4f7, #b8c9e0);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent);
+  color: var(--text);
+  font-weight: 750;
+  font-size: 1.05rem;
+}
+
+.onboarding__avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.onboarding__avatar-initials {
+  line-height: 1;
+}
+
+.onboarding__avatar-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.onboarding__avatar-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.onboarding__avatar-name {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onboarding__field-hint {
+  margin: -0.35rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.onboarding__optional {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
 .onboarding__field {
   display: grid;
   gap: 0.35rem;
   font-size: 0.88rem;
   font-weight: 600;
   color: var(--text);
+}
+
+.onboarding__field input[readonly] {
+  opacity: 0.85;
+  cursor: default;
+}
+
+.onboarding__field input.onboarding__field-invalid {
+  border-color: #c44;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #c44 16%, transparent);
 }
 
 .onboarding__field input {
@@ -16984,6 +17100,68 @@ body.prov-cal-resizing * {
   margin: 0;
 }
 
+.settings__row--profile-management {
+  gap: 0;
+  padding: 0 0.8rem;
+}
+
+.profile-management__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 0;
+}
+
+.profile-management__item + .profile-management__item {
+  border-top: 1px solid var(--border);
+}
+
+.profile-management__text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.profile-management__btn {
+  flex: 0 0 auto;
+  min-width: 7.4rem;
+}
+
+.profile-management__btn--danger {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  color: var(--danger);
+}
+
+.profile-management__btn--danger:hover {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.profile-gap--deactivated {
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--border));
+  background: color-mix(in srgb, var(--danger-soft) 75%, var(--surface));
+}
+
+.profile-gap--deactivated .profile-gap__title {
+  color: var(--danger);
+}
+
+@media (max-width: 520px) {
+  .profile-management__item {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+
+  .profile-management__btn {
+    width: 100%;
+  }
+}
+
 /* ============================================================
    Zapytanie o termin — dni + pora dnia (klient),
    wiele propozycji godzin (usługodawca), wybór jednej (klient)
@@ -17531,4 +17709,75 @@ body.prov-cal-resizing * {
 .stat-card--link:hover {
   border-color: var(--accent-provider);
   background: var(--accent-provider-soft);
+}
+
+/* Braki profilu usługodawcy — aktywny profil w katalogu */
+.profile-gap {
+  margin: 0 0 0.85rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--warning-soft) 80%, var(--surface));
+  color: var(--text);
+}
+
+.profile-gap--public {
+  margin: 0.85rem 0 0;
+}
+
+.profile-gap__title {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+  font-weight: 650;
+  color: color-mix(in srgb, var(--warning) 55%, var(--text));
+}
+
+.profile-gap__lead {
+  margin: 0 0 0.45rem;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.profile-gap__list {
+  margin: 0;
+  padding: 0 0 0 1.1rem;
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
+.profile-gap__list li {
+  margin: 0;
+}
+
+.profile-gap__link {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent-provider);
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+  cursor: pointer;
+  text-align: left;
+}
+
+.profile-gap__link:hover {
+  color: color-mix(in srgb, var(--accent-provider) 75%, var(--text));
+}
+
+.app-screen--avail .profile-gap,
+.app-screen--services .profile-gap,
+.app-screen--services-desktop .profile-gap {
+  margin: 0.65rem 0.85rem 0.75rem;
+}
+
+.app-screen--avail-desktop .avail-body > .profile-gap {
+  margin-left: 0;
+  margin-right: 0;
 }

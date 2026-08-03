@@ -40,7 +40,8 @@ albo:
 Authorization: Bearer demo
 ```
 
-Seed: użytkownik `Hubert Z` + firma `Grzesiu Barber`.
+Demo jest dostępne tylko poza produkcją. Dane demonstracyjne są w `seed/demo.sql`
+i muszą być załadowane jawnie wyłącznie do lokalnej bazy.
 
 ## Endpointy
 
@@ -76,8 +77,13 @@ cd worker
 npm install
 npx wrangler login
 npm run db:migrate:local
+npm run db:seed:local
 npm run dev
 ```
+
+`db:seed:local` tworzy użytkownika `Hubert Z` i firmę `Grzesiu Barber`.
+Nigdy nie uruchamiaj `seed/demo.sql` z `--remote`. Migracje produkcyjne nie zawierają
+danych demo, a migracja `0004_cleanup_demo_seed.sql` usuwa historyczny seed ze zdalnych baz.
 
 Deploy:
 
@@ -85,6 +91,12 @@ Deploy:
 npm run db:migrate:remote
 npm run deploy
 ```
+
+Wdrożenie zdalne wykonuje wyłącznie migracje — bez seeda demo.
+
+E-maile transakcyjne są kolejką best-effort: udana mutacja biznesowa nie jest
+cofana, gdy chwilowo nie uda się dopisać wiadomości do outbox. Błąd jest logowany,
+a klient nadal dostaje wynik wykonanej mutacji.
 
 ## Co wymaga Ciebie później
 

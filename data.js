@@ -45,20 +45,185 @@
     return out;
   }
 
+  // Najczęściej wyszukiwane usługi lokalne są na początku listy.
+  // Układ na podstawie katalogów i raportów Oferteo, Fixly oraz OLX (2026).
   const CATEGORIES = [
-    { id: "zdrowie", label: "Zdrowie" },
-    { id: "edukacja", label: "Edukacja" },
+    {
+      id: "remonty-budowa",
+      label: "Remonty i budowa",
+      subcategories: [
+        { id: "remont-wnetrz", label: "Remonty i wykończenia wnętrz" },
+        { id: "malowanie", label: "Malowanie" },
+        { id: "plytki-podlogi", label: "Płytki i podłogi" },
+        { id: "budowa", label: "Budowa" },
+      ],
+    },
+    {
+      id: "instalacje",
+      label: "Instalacje",
+      subcategories: [
+        { id: "elektryk", label: "Elektryk" },
+        { id: "hydraulik", label: "Hydraulik" },
+        { id: "klimatyzacja", label: "Klimatyzacja" },
+        { id: "ogrzewanie", label: "Ogrzewanie i pompy ciepła" },
+      ],
+    },
+    {
+      id: "naprawy",
+      label: "Naprawy i serwis",
+      subcategories: [
+        { id: "zlota-raczka", label: "Złota rączka" },
+        { id: "agd-rtv", label: "Naprawa AGD i RTV" },
+        { id: "elektronika", label: "Elektronika i telefony" },
+        { id: "meble", label: "Montaż i naprawa mebli" },
+      ],
+    },
+    {
+      id: "sprzatanie",
+      label: "Sprzątanie",
+      subcategories: [
+        { id: "dom-biuro", label: "Domy i biura" },
+        { id: "okna", label: "Mycie okien" },
+        { id: "tapicerka", label: "Pranie tapicerki i dywanów" },
+        { id: "po-remoncie", label: "Sprzątanie po remoncie" },
+      ],
+    },
+    {
+      id: "dom-ogrod",
+      label: "Dom i ogród",
+      subcategories: [
+        { id: "ogrodnictwo", label: "Ogrodnictwo" },
+        { id: "kostka-brukowa", label: "Kostka brukowa" },
+        { id: "wycinka", label: "Wycinka i pielęgnacja drzew" },
+        { id: "meble-zabudowa", label: "Meble i zabudowa" },
+      ],
+    },
+    {
+      id: "transport",
+      label: "Transport i przeprowadzki",
+      subcategories: [
+        { id: "przeprowadzki", label: "Przeprowadzki" },
+        { id: "przewoz-rzeczy", label: "Przewóz rzeczy" },
+        { id: "kurier", label: "Kurier lokalny" },
+      ],
+    },
+    {
+      id: "motoryzacja",
+      label: "Motoryzacja",
+      subcategories: [
+        { id: "mechanik", label: "Mechanik samochodowy" },
+        { id: "wulkanizacja", label: "Wulkanizacja" },
+        { id: "detailing", label: "Myjnia i detailing" },
+        { id: "pomoc-drogowa", label: "Pomoc drogowa" },
+      ],
+    },
     {
       id: "uroda",
       label: "Uroda",
       subcategories: [
         { id: "fryzjer", label: "Fryzjer" },
         { id: "barber", label: "Barber" },
+        { id: "kosmetyczka", label: "Kosmetyczka" },
+        { id: "paznokcie", label: "Paznokcie" },
+        { id: "makijaz", label: "Makijaż" },
       ],
     },
-    { id: "naprawy", label: "Naprawy" },
-    { id: "sport-fitness", label: "Sport i fitness" },
-    { id: "inne", label: "Inne" },
+    {
+      id: "zdrowie",
+      label: "Zdrowie",
+      subcategories: [
+        { id: "fizjoterapia", label: "Fizjoterapia" },
+        { id: "masaz", label: "Masaż" },
+        { id: "dietetyk", label: "Dietetyk" },
+        { id: "psycholog", label: "Psycholog" },
+      ],
+    },
+    {
+      id: "sport-fitness",
+      label: "Sport i fitness",
+      subcategories: [
+        { id: "trener-personalny", label: "Trener personalny" },
+        { id: "joga", label: "Joga i pilates" },
+        { id: "taniec", label: "Taniec" },
+      ],
+    },
+    {
+      id: "edukacja",
+      label: "Edukacja i korepetycje",
+      subcategories: [
+        { id: "korepetycje", label: "Korepetycje" },
+        { id: "jezyki", label: "Języki obce" },
+        { id: "muzyka", label: "Nauka muzyki" },
+        { id: "kursy", label: "Kursy i warsztaty" },
+      ],
+    },
+    {
+      id: "opieka",
+      label: "Opieka",
+      subcategories: [
+        { id: "dzieci", label: "Opieka nad dziećmi" },
+        { id: "seniorzy", label: "Opieka nad seniorami" },
+        { id: "pielegniarska", label: "Opieka pielęgniarska" },
+      ],
+    },
+    {
+      id: "zwierzeta",
+      label: "Zwierzęta",
+      subcategories: [
+        { id: "weterynarz", label: "Weterynarz" },
+        { id: "groomer", label: "Groomer" },
+        { id: "petsitter", label: "Opieka nad zwierzętami" },
+        { id: "trener-zwierzat", label: "Trening zwierząt" },
+      ],
+    },
+    {
+      id: "fotografia-eventy",
+      label: "Fotografia i imprezy",
+      subcategories: [
+        { id: "fotografia", label: "Fotografia" },
+        { id: "filmowanie", label: "Filmowanie" },
+        { id: "dj-muzyka", label: "DJ i oprawa muzyczna" },
+        { id: "organizacja-imprez", label: "Organizacja imprez" },
+      ],
+    },
+    {
+      id: "gastronomia",
+      label: "Catering i gastronomia",
+      subcategories: [
+        { id: "catering", label: "Catering" },
+        { id: "torty", label: "Torty i wypieki" },
+        { id: "kucharz", label: "Kucharz na zamówienie" },
+      ],
+    },
+    {
+      id: "it",
+      label: "Informatyka",
+      subcategories: [
+        { id: "serwis-komputerowy", label: "Serwis komputerowy" },
+        { id: "strony-internetowe", label: "Strony internetowe" },
+        { id: "sieci", label: "Sieci i konfiguracja sprzętu" },
+      ],
+    },
+    {
+      id: "marketing-kreatywne",
+      label: "Marketing i usługi kreatywne",
+      subcategories: [
+        { id: "grafika", label: "Grafika" },
+        { id: "reklama", label: "Reklama i social media" },
+        { id: "druk", label: "Druk" },
+        { id: "tlumaczenia", label: "Tłumaczenia" },
+      ],
+    },
+    {
+      id: "finanse-prawo",
+      label: "Finanse i prawo",
+      subcategories: [
+        { id: "ksiegowosc", label: "Księgowość" },
+        { id: "doradztwo-prawne", label: "Doradztwo prawne" },
+        { id: "ubezpieczenia", label: "Ubezpieczenia" },
+      ],
+    },
+    { id: "inne", label: "Inne usługi" },
   ];
 
   // Polskie święta ustawowo wolne 2026 (ISO). Wielkanoc 2026 = 5 kwietnia.

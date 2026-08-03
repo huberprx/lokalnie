@@ -1,6 +1,7 @@
 const { test, expect } = require("@playwright/test");
 const {
   resetAndLogin,
+  gotoApp,
   switchRole,
   goClientMyCalendar,
   goProviderCalendar,
@@ -255,5 +256,207 @@ test.describe("Lokalnie — kluczowe przepływy", function () {
 
     expect(result.blocked).toBe(true);
     expect(result.selfAllowed).toBe(true);
+  });
+
+  test("produkcja startuje bez danych demo, także ze starym localStorage", async function ({ page }) {
+    await page.addInitScript(function () {
+      try {
+        if (navigator.serviceWorker && navigator.serviceWorker.register) {
+          navigator.serviceWorker.register = function () {
+            return Promise.reject(new Error("e2e: service worker disabled"));
+          };
+        }
+      } catch (err) {
+        /* ignore */
+      }
+      localStorage.setItem(
+        "lokalnie.state",
+        JSON.stringify({
+          bookings: [{ id: "legacy-demo-without-flag", status: "confirmed" }],
+          requests: [{ id: "legacy-request-without-flag", status: "pending" }],
+          loggedIn: false,
+        })
+      );
+      let api;
+      Object.defineProperty(window, "LokalnieApi", {
+        configurable: true,
+        enumerable: true,
+        get: function () {
+          return api;
+        },
+        set: function (value) {
+          api = value;
+          if (!api) return;
+          api.enabled = false;
+          api.isProductionHostname = function () {
+            return true;
+          };
+          api.syncFromServer = function () {
+            return Promise.resolve({ ok: false, skipped: true });
+          };
+        },
+      });
+    });
+    await page.goto("/index.html?e2e=prod-empty", { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(function () {
+      return !!(window.App && window.AppState);
+    });
+
+    const state = await page.evaluate(function () {
+      window.App.renderAll();
+      return {
+        bookings: window.AppState.bookings.length,
+        requests: window.AppState.requests.length,
+        testerButtons: document.querySelectorAll('[data-action="test-login"]').length,
+      };
+    });
+    expect(state).toEqual({ bookings: 0, requests: 0, testerButtons: 0 });
+  });
+
+  test("edycja booking rollbackuje pola po błędzie PATCH", async function ({ page }) {
+    await resetAndLogin(page, "provider");
+    const result = await page.evaluate(async function () {
+      localStorage.removeItem("lokalnie.testerMode");
+      window.LokalnieApi.setAuthToken("e2e-token");
+      window.LokalnieApi.enabled = true;
+      window.LokalnieApi.upsertClient = function () {
+        return Promise.resolve(null);
+      };
+      let patchCalls = 0;
+      window.LokalnieApi.patchBookingFromApp = function () {
+        patchCalls += 1;
+        const err = new Error("booking_overlap");
+        err.status = 409;
+        err.data = { error: "booking_overlap" };
+        return Promise.reject(err);
+      };
+
+      const booking = (window.AppState.bookings || []).find(function (b) {
+        return b && b.id === "bk-demo-gb-1700";
+      });
+      if (!booking) throw new Error("Brak booking do testu rollbacku");
+      booking._fromApi = true;
+      const before = JSON.parse(JSON.stringify(booking));
+      window.App.openProvCalEdit(booking.id);
+      window.AppState.provCalAddDraft.clientName = "Zmiana, która ma zostać cofnięta";
+      await window.App.confirmProvCalAdd();
+      return {
+        patchCalls: patchCalls,
+        before: before,
+        after: JSON.parse(JSON.stringify(booking)),
+        panelOpen: window.AppState.provCalAddOpen,
+        toast: document.getElementById("app-toast").textContent,
+      };
+    });
+
+    expect(result.patchCalls).toBe(1);
+    expect(result.after).toEqual(result.before);
+    expect(result.panelOpen).toBe(true);
+    expect(result.toast).toBe("Termin został właśnie zajęty");
+  });
+
+  test("cancel i reject czekają na mock decline API", async function ({ page }) {
+    await resetAndLogin(page, "client");
+    const result = await page.evaluate(async function () {
+      localStorage.removeItem("lokalnie.testerMode");
+      window.LokalnieApi.setAuthToken("e2e-token");
+      window.LokalnieApi.enabled = true;
+      const calls = [];
+      window.LokalnieApi.declineRequestFromApp = function (id, action) {
+        calls.push({ id: id, action: action });
+        return Promise.resolve({ id: id, status: "rejected" });
+      };
+
+      function request(id, status) {
+        return {
+          id: id,
+          providerId: "grzesiu-barber",
+          providerName: "Grzesiu Barber",
+          clientName: "Klient E2E",
+          serviceIds: ["svc-gb-cut"],
+          serviceNames: ["Strzyżenie"],
+          proposals: status === "proposed" ? [{ id: "p1" }] : [],
+          status: status,
+          _fromApi: true,
+        };
+      }
+      const cancelReq = request("rq-e2e-cancel", "pending");
+      const rejectReq = request("rq-e2e-reject", "pending");
+      const proposalsReq = request("rq-e2e-proposals", "proposed");
+      window.AppState.requests.push(cancelReq, rejectReq, proposalsReq);
+
+      await window.App.cancelClientRequest(cancelReq.id);
+      await window.App.rejectRequest(rejectReq.id);
+      await window.App.declineRequestProposals(proposalsReq.id);
+      return {
+        calls: calls,
+        statuses: [cancelReq.status, rejectReq.status, proposalsReq.status],
+        toast: document.getElementById("app-toast").textContent,
+      };
+    });
+
+    expect(result.calls).toEqual([
+      { id: "rq-e2e-cancel", action: "cancel-request" },
+      { id: "rq-e2e-reject", action: "reject-request" },
+      { id: "rq-e2e-proposals", action: "decline-proposals" },
+    ]);
+    expect(result.statuses).toEqual(["cancelled", "rejected", "rejected"]);
+    expect(result.toast).toContain("Możesz wysłać nową prośbę");
+  });
+
+  test("propose, decline i PATCH ponawiają stabilne Idempotency-Key", async function ({ page }) {
+    const seen = [];
+    await page.route("https://api.lokalnie.app/**", async function (route) {
+      const request = route.request();
+      seen.push({
+        path: new URL(request.url()).pathname,
+        key: request.headers()["idempotency-key"],
+      });
+      const path = new URL(request.url()).pathname;
+      const body = path.endsWith("/propose")
+        ? {
+            request: {
+              id: "rq-idem",
+              status: "proposed",
+              proposals: [
+                {
+                  id: "p1",
+                  dateISO: "2026-08-04",
+                  from: "10:00",
+                  to: "10:30",
+                  locationLabel: null,
+                },
+              ],
+            },
+          }
+        : path.endsWith("/decline")
+          ? { request: { id: "rq-idem", status: "rejected" } }
+          : { booking: { id: "bk-idem", status: "confirmed" } };
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+    });
+    await gotoApp(page);
+    const keys = await page.evaluate(async function () {
+      window.LokalnieApi.enabled = true;
+      window.LokalnieApi.setAuthToken("e2e-token");
+      const req = {
+        id: "rq-idem",
+        proposals: [{ id: "p1", dateISO: "2026-08-04", from: "10:00", to: "10:30" }],
+      };
+      const booking = { id: "bk-idem" };
+      await window.LokalnieApi.proposeRequestFromApp(req);
+      await window.LokalnieApi.proposeRequestFromApp(req);
+      await window.LokalnieApi.declineRequestFromApp(req.id, "decline-proposals");
+      await window.LokalnieApi.declineRequestFromApp(req.id, "decline-proposals");
+      const patch = { status: "confirmed", dateISO: "2026-08-04", from: "10:00", to: "10:30" };
+      await window.LokalnieApi.patchBookingFromApp(booking, patch, "edit-booking");
+      await window.LokalnieApi.patchBookingFromApp(booking, patch, "edit-booking");
+      return true;
+    });
+    expect(keys).toBe(true);
+    expect(seen).toHaveLength(6);
+    expect(seen.every(function (entry) { return !!entry.key; })).toBe(true);
+    expect(seen[0].key).toBe(seen[1].key);
+    expect(seen[2].key).toBe(seen[3].key);
+    expect(seen[4].key).toBe(seen[5].key);
   });
 });

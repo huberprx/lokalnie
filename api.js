@@ -6,6 +6,15 @@
   const BASE = "https://api.lokalnie.app";
   const TOKEN_KEY = "lokalnie.authToken";
   const DEMO_HEADER = { "X-Demo-User": "demo" };
+  const IDEMPOTENCY_PREFIX = "lokalnie.idempotency.";
+  let unauthorizedHookRunning = false;
+
+  function isProductionHostname(hostname) {
+    const host = String(hostname == null ? window.location.hostname : hostname)
+      .toLowerCase()
+      .replace(/\.$/, "");
+    return host === "lokalnie.app" || host.endsWith(".lokalnie.app");
+  }
 
   function getAuthToken() {
     try {
@@ -31,7 +40,54 @@
   function authHeaders() {
     const token = getAuthToken();
     if (token) return { Authorization: "Bearer " + token };
+    if (isProductionHostname()) return {};
     return Object.assign({}, DEMO_HEADER);
+  }
+
+  function newIdempotencyKey(action) {
+    const random =
+      window.crypto && typeof window.crypto.randomUUID === "function"
+        ? window.crypto.randomUUID()
+        : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+    return "lokalnie-" + action + "-" + random;
+  }
+
+  function idempotencyKey(action, identity, target) {
+    const prop = "_idempotency_" + action;
+    if (target && target[prop]) return target[prop];
+    const storageKey = IDEMPOTENCY_PREFIX + action + "." + String(identity || "unknown");
+    let value = "";
+    try {
+      value = localStorage.getItem(storageKey) || "";
+    } catch (err) {
+      /* ignore */
+    }
+    if (!value) {
+      value = newIdempotencyKey(action);
+      try {
+        localStorage.setItem(storageKey, value);
+      } catch (err) {
+        /* ignore */
+      }
+    }
+    if (target) target[prop] = value;
+    return value;
+  }
+
+  function notifyUnauthorized() {
+    if (unauthorizedHookRunning) return;
+    unauthorizedHookRunning = true;
+    try {
+      if (window.App && typeof window.App.onApiUnauthorized === "function") {
+        window.App.onApiUnauthorized();
+      }
+    } catch (err) {
+      console.warn("[LokalnieApi] unauthorized hook failed", err);
+    } finally {
+      window.setTimeout(function () {
+        unauthorizedHookRunning = false;
+      }, 0);
+    }
   }
 
   function googleLoginUrl(returnTo) {
@@ -79,6 +135,10 @@
       data = text ? JSON.parse(text) : null;
     } catch (err) {
       data = { raw: text };
+    }
+    if (res.status === 401) {
+      clearAuthToken();
+      notifyUnauthorized();
     }
     if (!res.ok) {
       const err = new Error((data && data.message) || (data && data.error) || "api_error");
@@ -177,17 +237,19 @@
 
       if (me.user) {
         if (!window.AppState.clientProfile || typeof window.AppState.clientProfile !== "object") {
-          window.AppState.clientProfile = {};
+          window.AppState.clientProfile = {
+            name: "",
+            phone: "",
+            email: "",
+            notifications: { visitReminders: true, statusChanges: true, marketing: false },
+          };
         }
         const cp = window.AppState.clientProfile;
         if (me.user.name) cp.name = me.user.name;
         if (me.user.phone) cp.phone = me.user.phone;
         if (me.user.email) cp.email = me.user.email;
-        if (me.user.avatarKey && me.user.id) {
-          // Avatar z R2 — jeśli mamy media id w stanie, zostaw; inaczej zostaw URL jeśli już ustawiony.
-        }
-        if (me.user.roles && me.user.roles.provider && window.AppState.activeRole === "client") {
-          /* klient z rolą provider — przełączenie ręczne w menu */
+        if (me.user.avatarKey) {
+          window.AppState.clientAvatarUrl = mediaUrl(me.user.avatarKey);
         }
       }
 
@@ -212,22 +274,27 @@
       const otherBookings = (window.AppState.bookings || []).filter(function (b) {
         if (!b) return false;
         if (b._fromApi) return false;
-        // Zachowaj lokalne przykłady demo (np. odwołane/odrzucone), których nie ma na serwerze.
-        if (b._demo) return true;
+        // Demo zostaje lokalnie/testowo, ale nigdy w prawdziwej sesji produkcyjnej.
+        if (b._demo) return !isProductionHostname();
         const pid = b.providerId;
         return pid !== appProviderId && pid !== apiProviderId;
       });
-      window.AppState.bookings = otherBookings.concat(serverBookings);
+      window.AppState.bookings = isProductionHostname()
+        ? serverBookings
+        : otherBookings.concat(serverBookings);
 
       const requestsRes = await request("/requests");
       const serverRequests = (requestsRes.requests || []).map(mapRequestToApp).filter(Boolean);
       const otherRequests = (window.AppState.requests || []).filter(function (r) {
         if (!r) return false;
         if (r._fromApi) return false;
+        if (r._demo) return !isProductionHostname();
         const pid = r.providerId;
         return pid !== appProviderId && pid !== apiProviderId;
       });
-      window.AppState.requests = otherRequests.concat(serverRequests);
+      window.AppState.requests = isProductionHostname()
+        ? serverRequests
+        : otherRequests.concat(serverRequests);
 
       window.AppState._apiSyncedAt = new Date().toISOString();
       window.AppState._apiOnline = true;
@@ -317,6 +384,7 @@
     try {
       const res = await request("/bookings", {
         method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey("create-booking", booking.id, booking) },
         json: {
           providerId: toApiProviderId(booking.providerId),
           clientName: booking.clientName,
@@ -340,7 +408,7 @@
       return res.booking;
     } catch (err) {
       console.warn("[LokalnieApi] createBooking failed", err);
-      return null;
+      throw err;
     }
   }
 
@@ -349,6 +417,7 @@
     try {
       const res = await request("/requests", {
         method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey("create-request", req.id, req) },
         json: {
           providerId: toApiProviderId(req.providerId),
           clientName: req.clientName,
@@ -371,7 +440,7 @@
       return res.request;
     } catch (err) {
       console.warn("[LokalnieApi] createRequest failed", err);
-      return null;
+      throw err;
     }
   }
 
@@ -389,6 +458,12 @@
       });
       const res = await request("/requests/" + encodeURIComponent(req.id) + "/propose", {
         method: "POST",
+        headers: {
+          "Idempotency-Key": idempotencyKey(
+            "propose-request",
+            String(req.id) + "." + JSON.stringify(proposals)
+          ),
+        },
         json: { proposals: proposals },
       });
       if (res.request) {
@@ -399,7 +474,7 @@
       return res.request;
     } catch (err) {
       console.warn("[LokalnieApi] proposeRequest failed", err);
-      return null;
+      throw err;
     }
   }
 
@@ -407,13 +482,58 @@
     try {
       const res = await request("/requests/" + encodeURIComponent(requestId) + "/accept", {
         method: "POST",
+        headers: {
+          "Idempotency-Key": idempotencyKey(
+            "accept-request",
+            String(requestId) + "." + String(proposalId)
+          ),
+        },
         json: { proposalId: proposalId },
       });
       return res;
     } catch (err) {
       console.warn("[LokalnieApi] acceptRequest failed", err);
-      return null;
+      throw err;
     }
+  }
+
+  async function declineRequestFromApp(requestId, action) {
+    if (!requestId) return null;
+    const res = await request("/requests/" + encodeURIComponent(requestId) + "/decline", {
+      method: "POST",
+      headers: {
+        "Idempotency-Key": idempotencyKey(
+          action || "decline-request",
+          String(requestId) + "." + String(action || "decline")
+        ),
+      },
+    });
+    return res && res.request;
+  }
+
+  async function updateBookingStatusFromApp(bookingId, status) {
+    if (!bookingId || !status) return null;
+    return patchBookingFromApp(
+      { id: bookingId },
+      { status: status },
+      "booking-" + status
+    );
+  }
+
+  async function patchBookingFromApp(booking, patch, action) {
+    if (!booking || !booking.id || !patch) return null;
+    const stablePatch = JSON.stringify(patch);
+    const res = await request("/bookings/" + encodeURIComponent(booking.id), {
+      method: "PATCH",
+      headers: {
+        "Idempotency-Key": idempotencyKey(
+          action || "patch-booking",
+          String(booking.id) + "." + String(action || "patch") + "." + stablePatch
+        ),
+      },
+      json: patch,
+    });
+    return res && res.booking;
   }
 
   async function uploadAvatar(file) {
@@ -445,6 +565,7 @@
     BASE: BASE,
     enabled: true,
     TOKEN_KEY: TOKEN_KEY,
+    isProductionHostname: isProductionHostname,
     getAuthToken: getAuthToken,
     setAuthToken: setAuthToken,
     clearAuthToken: clearAuthToken,
@@ -460,6 +581,9 @@
     createRequestFromApp: createRequestFromApp,
     proposeRequestFromApp: proposeRequestFromApp,
     acceptRequestFromApp: acceptRequestFromApp,
+    declineRequestFromApp: declineRequestFromApp,
+    updateBookingStatusFromApp: updateBookingStatusFromApp,
+    patchBookingFromApp: patchBookingFromApp,
     uploadAvatar: uploadAvatar,
     logout: logout,
   };
