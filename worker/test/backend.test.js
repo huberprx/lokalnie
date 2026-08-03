@@ -4,6 +4,7 @@ import { canTransitionBooking, hasOverlap } from "../src/bookings.js";
 import { sendViaResend } from "../src/email.js";
 import { json, withCors } from "../src/http.js";
 import { withIdempotency } from "../src/idempotency.js";
+import { renderEmail } from "../src/templates.js";
 import { isValidDateISO, validateSlot } from "../src/validate.js";
 
 describe("production authentication", () => {
@@ -141,6 +142,24 @@ describe("idempotency", () => {
 });
 
 describe("email and CORS", () => {
+  it("renders branded booking email with Polish status labels", () => {
+    const rendered = renderEmail("booking_confirmed", {
+      clientName: "Ada <Test>",
+      dateISO: "2026-08-03",
+      from: "10:00",
+      to: "10:20",
+      status: "confirmed",
+      bookingId: "bk_123",
+    });
+    expect(rendered.subject).toBe("Rezerwacja potwierdzona");
+    expect(rendered.text).toContain("Lokalnie");
+    expect(rendered.text).toContain("Status: Potwierdzona");
+    expect(rendered.html).toContain("Lokalnie");
+    expect(rendered.html).toContain("Otwórz Lokalnie");
+    expect(rendered.html).toContain("Ada &lt;Test&gt;");
+    expect(rendered.html).not.toContain("Ada <Test>");
+  });
+
   it("simulates email delivery without a key outside production", async () => {
     await expect(
       sendViaResend(
