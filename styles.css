@@ -767,6 +767,30 @@ body:has(#page-app:not([hidden])) {
 
 .app-header__user--guest {
   max-width: none;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.app-header__tester {
+  appearance: none;
+  margin: 0;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.app-header__tester:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--text) 22%, var(--border));
+  background: var(--hover-strong, var(--surface-2));
 }
 
 .app-header__login {

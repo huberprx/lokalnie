@@ -43,9 +43,27 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.187";
+  const APP_VERSION = "1.0.188";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
+  const TESTER_KEY = "lokalnie.testerMode";
+
+  function isTesterMode() {
+    try {
+      return localStorage.getItem(TESTER_KEY) === "1";
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function setTesterMode(on) {
+    try {
+      if (on) localStorage.setItem(TESTER_KEY, "1");
+      else localStorage.removeItem(TESTER_KEY);
+    } catch (err) {
+      /* ignore */
+    }
+  }
 
   const PWA = {
     registration: null,
@@ -16789,6 +16807,7 @@
     } catch (err) {
       // ignore
     }
+    setTesterMode(false);
     if (window.LokalnieApi && window.LokalnieApi.clearAuthToken) {
       window.LokalnieApi.clearAuthToken();
     }
@@ -17045,8 +17064,9 @@
         userEl.classList.remove("app-header__user--guest");
       } else {
         userEl.innerHTML =
+          `<button type="button" class="app-header__tester" data-action="test-login" data-target="client">Podgląd testera</button>` +
           `<button type="button" class="app-header__login" data-action="go-screen" data-screen="account">Moje konto</button>`;
-        userEl.setAttribute("aria-label", "Moje konto");
+        userEl.setAttribute("aria-label", "Konto gościa");
         userEl.dataset.role = "guest";
         userEl.classList.add("app-header__user--guest");
       }
@@ -17078,13 +17098,18 @@
     if (window.LokalnieApi && window.LokalnieApi.clearAuthToken) {
       window.LokalnieApi.clearAuthToken();
     }
+    setTesterMode(true);
     window.AppState.loggedIn = true;
     window.AppState.activeRole = role;
+    window.AppState.onboarding = null;
     window.AppState.screen[role] = DEFAULT_SCREEN[role];
+    // Demo ma obie role (klient + usługodawca).
+    window.AppState.providerRoleActive = true;
     saveState();
     updateAppHeader(role);
     renderAll();
     showPage("app");
+    showToast("Podgląd testera — bez Google.");
   }
 
   function googleLogin() {
@@ -17109,6 +17134,7 @@
     );
 
     // Świeży login z Google — nie ciągnij starego demo, ale przywróć draft rezerwacji.
+    setTesterMode(false);
     try {
       localStorage.removeItem(STATE_KEY);
     } catch (err) {
@@ -17249,6 +17275,7 @@
     } catch (err) {
       /* ignore */
     }
+    setTesterMode(false);
     window.AppState = defaultState();
     saveState();
     goMarketplace();
@@ -20453,7 +20480,7 @@
         window.LokalnieApi && window.LokalnieApi.getAuthToken
           ? window.LokalnieApi.getAuthToken()
           : "";
-      if (window.AppState.loggedIn && !token) {
+      if (window.AppState.loggedIn && !token && !isTesterMode()) {
         window.AppState.loggedIn = false;
         window.AppState.activeRole = "client";
         window.AppState.onboarding = null;
