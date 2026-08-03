@@ -149,6 +149,12 @@
     return u.toString();
   }
 
+  function googleCalendarConnectUrl(returnTo) {
+    const u = new URL(BASE + "/calendar/google/connect");
+    u.searchParams.set("return_to", returnTo || window.location.origin + window.location.pathname);
+    return u.toString();
+  }
+
   /** Mapowanie ID usługodawcy: mock frontu ↔ D1. */
   const APP_TO_API_PROVIDER = {
     "grzesiu-barber": "provider-demo-gb",
@@ -383,6 +389,11 @@
         ? serverRequests
         : otherRequests.concat(serverRequests);
 
+      const calendarRes = await request("/calendar/connections");
+      window.AppState.calendarConnections = Array.isArray(calendarRes.connections)
+        ? calendarRes.connections
+        : [];
+
       window.AppState._apiSyncedAt = new Date().toISOString();
       window.AppState._apiOnline = true;
       return {
@@ -492,7 +503,7 @@
         booking._fromApi = true;
         booking.providerId = toAppProviderId(res.booking.providerId) || booking.providerId;
       }
-      return res.booking;
+      return { booking: res.booking, calendar: res.calendar || null };
     } catch (err) {
       console.warn("[LokalnieApi] createBooking failed", err);
       throw err;
@@ -717,6 +728,17 @@
     clearAuthToken();
   }
 
+  async function listCalendarConnections() {
+    const res = await request("/calendar/connections");
+    return Array.isArray(res.connections) ? res.connections : [];
+  }
+
+  async function disconnectCalendar(connectionId) {
+    if (!connectionId) return false;
+    await request("/calendar/connections/" + encodeURIComponent(connectionId), { method: "DELETE" });
+    return true;
+  }
+
   window.LokalnieApi = {
     BASE: BASE,
     enabled: true,
@@ -726,6 +748,7 @@
     setAuthToken: setAuthToken,
     clearAuthToken: clearAuthToken,
     googleLoginUrl: googleLoginUrl,
+    googleCalendarConnectUrl: googleCalendarConnectUrl,
     toAppProviderId: toAppProviderId,
     toApiProviderId: toApiProviderId,
     mediaUrl: mediaUrl,
@@ -744,5 +767,7 @@
     releaseIdempotencyKey: releaseIdempotencyKey,
     uploadAvatar: uploadAvatar,
     logout: logout,
+    listCalendarConnections: listCalendarConnections,
+    disconnectCalendar: disconnectCalendar,
   };
 })();

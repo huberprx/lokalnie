@@ -1,5 +1,6 @@
 import { json } from "./http.js";
 import { hashToken, sessionTokenFromCookie } from "./oauth.js";
+import { decryptPhone } from "./pii.js";
 
 const DEMO_USER_ID = "user-demo-hubert";
 
@@ -133,13 +134,13 @@ export async function requireAdmin(request, env) {
   return auth;
 }
 
-export function mapUser(row) {
+export async function mapUser(row, env) {
   if (!row) return null;
   return {
     id: row.id,
     email: row.email,
     name: row.name,
-    phone: row.phone,
+    phone: await decryptPhone(row.phone, env),
     avatarKey: row.avatar_key,
     createdAt: row.created_at || null,
     roles: {
@@ -154,7 +155,7 @@ export function mapUser(row) {
   };
 }
 
-export function mapProvider(row) {
+export async function mapProvider(row, env) {
   if (!row) return null;
   return {
     id: row.id,
@@ -167,7 +168,7 @@ export function mapProvider(row) {
     about: row.about,
     email: row.email,
     emailVisible: !!row.email_visible,
-    phone: row.phone,
+    phone: await decryptPhone(row.phone, env),
     bookingMode: row.booking_mode,
     visibleInSearch: !!row.visible_in_search,
     multiSelect: !!row.multi_select,

@@ -167,6 +167,7 @@
         });
       }),
       notifications: [],
+      calendarConnections: [],
       simView: { client: "mobile", provider: "mobile" },
       loggedIn: false,
       activeRole: null,
@@ -4452,6 +4453,37 @@
     }, 800);
   }
 
+  function googleCalendarConnection() {
+    const connections = Array.isArray(window.AppState.calendarConnections)
+      ? window.AppState.calendarConnections
+      : [];
+    return connections.find(function (connection) {
+      return connection && connection.provider === "google";
+    }) || null;
+  }
+
+  function connectGoogleCalendar() {
+    if (!window.LokalnieApi || !window.LokalnieApi.googleCalendarConnectUrl) {
+      showToast("Integracja Google Calendar jest chwilowo niedostępna.");
+      return;
+    }
+    window.location.href = window.LokalnieApi.googleCalendarConnectUrl(window.location.origin + "/");
+  }
+
+  async function disconnectGoogleCalendar() {
+    const connection = googleCalendarConnection();
+    if (!connection || !window.LokalnieApi?.disconnectCalendar) return;
+    try {
+      await window.LokalnieApi.disconnectCalendar(connection.id);
+      window.AppState.calendarConnections = [];
+      saveState();
+      renderAll();
+      showToast("Google Calendar został odłączony.");
+    } catch (err) {
+      showToast("Nie udało się odłączyć Google Calendar.");
+    }
+  }
+
   function renderGuestAccount() {
     return `
       <div class="app-screen app-screen--client app-screen--guest-account">
@@ -4534,6 +4566,19 @@
     const cp = ensureClientProfile();
     const notes = cp.notifications;
     const providers = listOwnedProviders();
+    const calendarConnection = googleCalendarConnection();
+    const calendarSettings = calendarConnection
+      ? `<div class="settings__row settings__row--actions" data-field="google-calendar">
+           <span class="settings__key">Google Calendar</span>
+           <p class="settings__help">Potwierdzone wizyty są automatycznie zapisywane jako prywatne wydarzenia.</p>
+           <p class="settings__help settings__help--tight">Połączono${calendarConnection.lastError ? " — ostatnia synchronizacja wymaga ponowienia" : ""}.</p>
+           <button type="button" class="btn btn--ghost account-actions__btn" data-action="disconnect-google-calendar">Odłącz Google Calendar</button>
+         </div>`
+      : `<div class="settings__row settings__row--actions" data-field="google-calendar">
+           <span class="settings__key">Google Calendar</span>
+           <p class="settings__help">Automatycznie zapisuj potwierdzone wizyty w swoim prywatnym Google Calendar.</p>
+           <button type="button" class="btn btn--primary account-actions__btn" data-action="connect-google-calendar">Połącz Google Calendar</button>
+         </div>`;
     const providerRows = providers
       .map(function (p) {
         const status = p.deactivated
@@ -4647,6 +4692,7 @@
                 </label>
               </div>
             </div>
+            ${calendarSettings}
             <div class="settings__row settings__row--actions" data-field="account-providers">
               <span class="settings__key">Profile usługodawcy</span>
               <p class="settings__help">Najpierw jesteś klientem. Firmę dodajesz opcjonalnie — maksymalnie ${MAX_PROVIDER_PROFILES}.</p>
@@ -17333,9 +17379,11 @@
       status: "confirmed",
       side: "client",
     };
+    let calendarSync = null;
     if (shouldPersistApiMutation()) {
       try {
-        await window.LokalnieApi.createBookingFromApp(booking);
+        const result = await window.LokalnieApi.createBookingFromApp(booking);
+        calendarSync = result && result.calendar;
       } catch (err) {
         showToast(apiMutationErrorMessage(err, "Nie udało się potwierdzić rezerwacji."));
         renderAll();
@@ -17348,7 +17396,13 @@
     window.AppState.screen.client = "myCalendar";
     saveState();
     renderAll();
-    showToast("Rezerwacja potwierdzona ✓");
+    showToast(
+      calendarSync && calendarSync.connected === false
+        ? "Rezerwacja potwierdzona ✓ Połącz Google Calendar w ustawieniach."
+        : calendarSync && calendarSync.synced === false
+          ? "Rezerwacja potwierdzona ✓ Nie udało się zapisać jej w Google Calendar."
+        : "Rezerwacja potwierdzona ✓"
+    );
   }
 
   function toggleRequestDay(dateISO) {
@@ -17797,9 +17851,11 @@
     req.proposals = [Object.assign({}, prop)];
     clearProposeHoldExpiry(req);
 
+    let calendarSync = null;
     if (shouldPersistApiMutation()) {
       try {
         const res = await window.LokalnieApi.acceptRequestFromApp(req.id, prop.id);
+        calendarSync = res && res.calendar;
         if (res && res.booking && bk) {
           bk.id = res.booking.id;
           bk._fromApi = true;
@@ -17832,7 +17888,13 @@
     window.AppState.screen.client = "myCalendar";
     saveState();
     renderAll();
-    showToast("Termin zarezerwowany ✓");
+    showToast(
+      calendarSync && calendarSync.connected === false
+        ? "Termin zarezerwowany ✓ Połącz Google Calendar w ustawieniach."
+        : calendarSync && calendarSync.synced === false
+          ? "Termin zarezerwowany ✓ Nie udało się zapisać go w Google Calendar."
+        : "Termin zarezerwowany ✓"
+    );
   }
 
   async function declineRequestProposals(requestId) {
@@ -18608,6 +18670,26 @@
       const hash = (window.location.hash || "").replace(/^#/, "");
       if (!hash) return false;
       const params = new URLSearchParams(hash);
+      const calendarConnected = params.get("calendar_connected");
+      const calendarError = params.get("calendar_error");
+      if (calendarConnected || calendarError) {
+        history.replaceState(null, "", window.location.pathname + window.location.search);
+        if (calendarConnected) {
+          if (window.LokalnieApi && window.LokalnieApi.listCalendarConnections) {
+            void window.LokalnieApi.listCalendarConnections()
+              .then(function (connections) {
+                window.AppState.calendarConnections = connections;
+                saveState();
+                renderAll();
+              })
+              .catch(function () {});
+          }
+          showToast("Google Calendar został połączony.");
+        } else {
+          showToast("Nie udało się połączyć Google Calendar. Spróbuj ponownie.");
+        }
+        return false;
+      }
       const authError = params.get("auth_error");
       if (authError) {
         history.replaceState(null, "", window.location.pathname + window.location.search);
@@ -19142,6 +19224,14 @@
       case "edit-client-profile":
         event.preventDefault();
         editClientProfile();
+        break;
+      case "connect-google-calendar":
+        event.preventDefault();
+        connectGoogleCalendar();
+        break;
+      case "disconnect-google-calendar":
+        event.preventDefault();
+        void disconnectGoogleCalendar();
         break;
       case "edit-provider-profile":
         event.preventDefault();

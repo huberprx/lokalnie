@@ -1,13 +1,14 @@
 import { parseJsonField } from "./http.js";
+import { decryptPhone } from "./pii.js";
 
-export function mapClient(row) {
+export async function mapClient(row, env) {
   if (!row) return null;
   return {
     id: row.id,
     providerId: row.provider_id,
     clientUserId: row.client_user_id,
     name: row.name,
-    phone: row.phone,
+    phone: await decryptPhone(row.phone, env),
     email: row.email,
     address: row.address,
     notes: row.notes,
@@ -16,7 +17,7 @@ export function mapClient(row) {
   };
 }
 
-export function mapBooking(row) {
+export async function mapBooking(row, env) {
   if (!row) return null;
   return {
     id: row.id,
@@ -24,7 +25,7 @@ export function mapBooking(row) {
     clientUserId: row.client_user_id,
     providerClientId: row.provider_client_id,
     clientName: row.client_name,
-    clientPhone: row.client_phone,
+    clientPhone: await decryptPhone(row.client_phone, env),
     clientEmail: row.client_email,
     serviceIds: parseJsonField(row.service_ids_json, []),
     serviceNames: parseJsonField(row.service_names_json, []),
@@ -39,14 +40,14 @@ export function mapBooking(row) {
   };
 }
 
-export function mapRequest(row) {
+export async function mapRequest(row, env) {
   if (!row) return null;
   return {
     id: row.id,
     providerId: row.provider_id,
     clientUserId: row.client_user_id,
     clientName: row.client_name,
-    clientPhone: row.client_phone,
+    clientPhone: await decryptPhone(row.client_phone, env),
     clientEmail: row.client_email,
     serviceIds: parseJsonField(row.service_ids_json, []),
     serviceNames: parseJsonField(row.service_names_json, []),

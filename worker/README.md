@@ -15,10 +15,13 @@ Backend Lokalnie na Cloudflare Workers (Free) + D1 (EU) + R2.
    ```bash
    npx wrangler secret put GOOGLE_CLIENT_ID
    npx wrangler secret put GOOGLE_CLIENT_SECRET
+   npx wrangler secret put PII_ENCRYPTION_KEY
    ```
 2. Redirect URI w Google Cloud:
    - `https://api.lokalnie.app/auth/google/callback`
+   - `https://api.lokalnie.app/auth/google/calendar/callback`
    - `http://localhost:8787/auth/google/callback` (lokalnie)
+   - `http://localhost:8787/auth/google/calendar/callback` (lokalnie)
 3. Start: `GET /auth/google?return_to=https://lokalnie.app/`
 4. Po sukcesie redirect na front z `#access_token=...`
 5. Kolejne requesty: `Authorization: Bearer <token>`
@@ -49,6 +52,10 @@ i muszą być załadowane jawnie wyłącznie do lokalnej bazy.
 |---|---|---|
 | GET | `/me` | Profil (demo) |
 | PATCH | `/me` | Edycja profilu |
+| GET | `/calendar/google/connect` | Rozpoczęcie OAuth Google Calendar |
+| GET | `/auth/google/calendar/callback` | Powrót OAuth Google Calendar |
+| GET | `/calendar/connections` | Podłączone kalendarze |
+| DELETE | `/calendar/connections/:id` | Odłączenie kalendarza |
 | GET/PATCH | `/provider/me` | Profil usługodawcy |
 | GET/POST | `/provider/me/clients` | CRM klientów |
 | GET/PATCH/DELETE | `/provider/me/clients/:id` | Klient |
@@ -111,8 +118,24 @@ idempotencji są usuwane przez cron po 7 dniach, a porzucone po 24 godzinach.
 Mutacja biznesowa i odpowiadający jej wpis do `email_outbox` są wykonywane w jednym
 transakcyjnym `DB.batch`. Błąd outbox wycofuje mutację zamiast pozostawiać częściowy stan.
 
+## Szyfrowanie numerów telefonu (PII)
+
+Numery w `users.phone`, `provider_profiles.phone`, `provider_clients.phone`,
+`bookings.client_phone` i `booking_requests.client_phone` są zapisywane jako
+`enc:v1:…` (AES-GCM) gdy ustawiony jest sekret `PII_ENCRYPTION_KEY`.
+
+API zawsze zwraca odszyfrowany numer uprawnionemu użytkownikowi. Stare wpisy
+bez prefiksu (plaintext) nadal działają i zostaną zaszyfrowane przy kolejnym zapisie.
+
+```bash
+npx wrangler secret put PII_ENCRYPTION_KEY
+```
+
+Bez klucza Worker zapisuje plaintext (dev / awaryjnie). Ustaw klucz przed produkcją.
+
 ## Co wymaga Ciebie później
 
 1. **Resend** — konto + domena `lokalnie.app` (SPF/DKIM) → prawdziwa wysyłka maili  
 2. **Google OAuth** — przełączenie consent screen z testowego na produkcję (gdy gotowe)  
 3. **Facebook OAuth** — opcjonalnie później
+4. **`PII_ENCRYPTION_KEY`** — sekret do szyfrowania numerów telefonu w D1

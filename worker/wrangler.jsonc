@@ -14,7 +14,7 @@
     "APP_ORIGIN": "https://lokalnie.app",
     "ENVIRONMENT": "production",
     "EMAIL_FROM": "Lokalnie <powiadomienia@lokalnie.app>",
-    "ADMIN_EMAILS": "hubert@lokalnie.app"
+    "ADMIN_EMAILS": "szaroczarnytrzmiel@gmail.com"
   },
   "triggers": {
     "crons": ["*/5 * * * *"]

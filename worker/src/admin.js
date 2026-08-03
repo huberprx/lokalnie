@@ -1,6 +1,7 @@
 import { json, id, nowIso, readJson } from "./http.js";
 import { requireAdmin, isAdminUser } from "./auth.js";
 import { listOutbox, processDueEmails } from "./email.js";
+import { decryptPhone } from "./pii.js";
 
 const MAX_LIST = 50;
 const DEFAULT_LIST = 30;
@@ -40,13 +41,13 @@ async function writeAudit(env, actorUserId, action, targetType, targetId, meta) 
     .run();
 }
 
-function mapAdminUser(row) {
+async function mapAdminUser(row, env) {
   if (!row) return null;
   return {
     id: row.id,
     email: row.email,
     name: row.name,
-    phone: row.phone,
+    phone: await decryptPhone(row.phone, env),
     emailVerified: !!row.email_verified,
     blocked: !!row.blocked,
     blockedAt: row.blocked_at || null,
@@ -59,7 +60,7 @@ function mapAdminUser(row) {
   };
 }
 
-function mapAdminProvider(row) {
+async function mapAdminProvider(row, env) {
   if (!row) return null;
   return {
     id: row.id,
@@ -69,7 +70,7 @@ function mapAdminProvider(row) {
     category: row.category,
     city: row.city,
     email: row.email,
-    phone: row.phone,
+    phone: await decryptPhone(row.phone, env),
     bookingMode: row.booking_mode,
     visibleInSearch: !!row.visible_in_search,
     createdAt: row.created_at || null,
@@ -170,7 +171,11 @@ export async function adminListUsers(request, env, url) {
   const rows = await env.DB.prepare(sql)
     .bind(...binds)
     .all();
-  return json({ users: (rows.results || []).map(mapAdminUser), limit, offset });
+  return json({
+    users: await Promise.all((rows.results || []).map((row) => mapAdminUser(row, env))),
+    limit,
+    offset,
+  });
 }
 
 export async function adminBlockUser(request, env, userId) {
@@ -205,7 +210,7 @@ export async function adminBlockUser(request, env, userId) {
   });
 
   const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(targetId).first();
-  return json({ ok: true, user: mapAdminUser(user) });
+  return json({ ok: true, user: await mapAdminUser(user, env) });
 }
 
 export async function adminUnblockUser(request, env, userId) {
@@ -230,7 +235,7 @@ export async function adminUnblockUser(request, env, userId) {
   });
 
   const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(targetId).first();
-  return json({ ok: true, user: mapAdminUser(user) });
+  return json({ ok: true, user: await mapAdminUser(user, env) });
 }
 
 export async function adminListProviders(request, env, url) {
@@ -265,7 +270,11 @@ export async function adminListProviders(request, env, url) {
   const rows = await env.DB.prepare(sql)
     .bind(...binds)
     .all();
-  return json({ providers: (rows.results || []).map(mapAdminProvider), limit, offset });
+  return json({
+    providers: await Promise.all((rows.results || []).map((row) => mapAdminProvider(row, env))),
+    limit,
+    offset,
+  });
 }
 
 export async function adminPatchProvider(request, env, providerId) {
@@ -300,7 +309,7 @@ export async function adminPatchProvider(request, env, providerId) {
   )
     .bind(pid)
     .first();
-  return json({ ok: true, provider: mapAdminProvider(row) });
+  return json({ ok: true, provider: await mapAdminProvider(row, env) });
 }
 
 export async function adminListBookings(request, env, url) {

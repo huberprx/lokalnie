@@ -1,12 +1,20 @@
 import { json, id, nowIso, readJson, preflight, withCors, HttpError } from "./http.js";
 import { requireDemoUser, requireAdmin, mapUser, mapProvider, isAdminUser } from "./auth.js";
-import { startGoogleAuth, handleGoogleCallback, logoutSession } from "./oauth.js";
+import {
+  startGoogleAuth,
+  handleGoogleCallback,
+  handleGoogleCalendarCallback,
+  logoutSession,
+  startGoogleCalendarAuth,
+} from "./oauth.js";
+import { disconnectCalendar, listCalendarConnections, syncBookingToGoogle } from "./calendar.js";
 import { prepareEmailOutbox, listOutbox, processDueEmails } from "./email.js";
 import { mapClient, mapBooking, mapRequest, mapMedia } from "./mappers.js";
 import { validateSlot, normalizeText, normalizeStringArray, isValidDateISO } from "./validate.js";
 import { canTransitionBooking } from "./bookings.js";
 import { cleanupIdempotencyKeys, withIdempotency } from "./idempotency.js";
 import { enforceRateLimit, rateLimitScope } from "./rateLimit.js";
+import { decryptPhone, encryptPhone } from "./pii.js";
 import {
   adminStats,
   adminListUsers,
@@ -80,6 +88,8 @@ async function routeRequest(request, env) {
             health: "GET /health",
             authGoogle: "GET /auth/google",
             authCallback: "GET /auth/google/callback",
+            calendarGoogleConnect: "GET /calendar/google/connect",
+            calendarConnections: "GET /calendar/connections",
             authLogout: "POST /auth/logout",
             me: "GET|PATCH /me",
             provider: "GET|PATCH /provider/me",
@@ -109,6 +119,25 @@ async function routeRequest(request, env) {
       if (path === "/auth/google" && request.method === "GET") return startGoogleAuth(request, env);
       if (path === "/auth/google/callback" && request.method === "GET") {
         return handleGoogleCallback(request, env);
+      }
+      if (path === "/auth/google/calendar/callback" && request.method === "GET") {
+        return handleGoogleCalendarCallback(request, env);
+      }
+      if (path === "/calendar/google/connect" && request.method === "GET") {
+        const auth = await requireDemoUser(request, env);
+        if (auth.error) return auth.error;
+        return startGoogleCalendarAuth(request, env, auth.user.id);
+      }
+      if (path === "/calendar/connections" && request.method === "GET") {
+        const auth = await requireDemoUser(request, env);
+        if (auth.error) return auth.error;
+        return json({ connections: await listCalendarConnections(env, auth.user.id) });
+      }
+      if (parts[0] === "calendar" && parts[1] === "connections" && parts[2] && request.method === "DELETE") {
+        const auth = await requireDemoUser(request, env);
+        if (auth.error) return auth.error;
+        const deleted = await disconnectCalendar(env, auth.user.id, parts[2]);
+        return deleted ? json({ ok: true }) : json({ error: "not_found" }, 404);
       }
       if (path === "/auth/logout" && request.method === "POST") return logoutSession(request, env);
 
@@ -257,8 +286,8 @@ async function getMe(request, env) {
     authenticated: true,
     mode: auth.authMode || "demo",
     isAdmin: auth.authMode === "demo" ? env.ENVIRONMENT !== "production" : isAdminUser(auth.user, env),
-    user: mapUser(auth.user),
-    provider: mapProvider(auth.provider),
+    user: await mapUser(auth.user, env),
+    provider: await mapProvider(auth.provider, env),
   });
 }
 
@@ -268,14 +297,15 @@ async function patchMe(request, env) {
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
 
+  const existingPhone = await decryptPhone(auth.user.phone, env);
   const nameResult = normalizeText(body.name ?? auth.user.name, 120, { required: true });
-  const phoneResult = normalizeText(body.phone ?? auth.user.phone, 40);
+  const phoneResult = normalizeText(body.phone ?? existingPhone, 40);
   const emailResult = normalizeText(body.email ?? auth.user.email, 254);
   if (nameResult.error || phoneResult.error || emailResult.error) {
     return json({ error: "invalid_profile_fields" }, 400);
   }
   const name = nameResult.value;
-  const phone = phoneResult.value;
+  const phone = await encryptPhone(phoneResult.value, env);
   const email = emailResult.value;
   const nb = body.notifications?.booking != null ? (body.notifications.booking ? 1 : 0) : auth.user.notification_booking;
   const nr = body.notifications?.reminder != null ? (body.notifications.reminder ? 1 : 0) : auth.user.notification_reminder;
@@ -288,14 +318,14 @@ async function patchMe(request, env) {
     .run();
 
   const user = await env.DB.prepare("SELECT * FROM users WHERE id=?").bind(auth.user.id).first();
-  return json({ authenticated: true, mode: auth.authMode || "demo", user: mapUser(user) });
+  return json({ authenticated: true, mode: auth.authMode || "demo", user: await mapUser(user, env) });
 }
 
 async function getProviderMe(request, env) {
   const auth = await requireDemoUser(request, env);
   if (auth.error) return auth.error;
   if (!auth.provider) return json({ error: "provider_not_found" }, 404);
-  return json({ provider: mapProvider(auth.provider) });
+  return json({ provider: await mapProvider(auth.provider, env) });
 }
 
 async function patchProviderMe(request, env) {
@@ -306,13 +336,14 @@ async function patchProviderMe(request, env) {
   if (!body) return json({ error: "invalid_json" }, 400);
 
   const p = auth.provider;
+  const existingPhone = await decryptPhone(p.phone, env);
   const textFields = {
     name: normalizeText(body.name ?? p.name, 120, { required: true }),
     city: normalizeText(body.city ?? p.city, 120),
     address: normalizeText(body.address ?? p.address, 240),
     about: normalizeText(body.about ?? p.about, 2000),
     email: normalizeText(body.email ?? p.email, 254),
-    phone: normalizeText(body.phone ?? p.phone, 40),
+    phone: normalizeText(body.phone ?? existingPhone, 40),
   };
   if (Object.values(textFields).some((field) => field.error)) {
     return json({ error: "invalid_provider_fields" }, 400);
@@ -324,7 +355,7 @@ async function patchProviderMe(request, env) {
     about: textFields.about.value,
     email: textFields.email.value,
     email_visible: body.emailVisible != null ? (body.emailVisible ? 1 : 0) : p.email_visible,
-    phone: textFields.phone.value,
+    phone: await encryptPhone(textFields.phone.value, env),
     booking_mode: body.bookingMode === "approval" || body.bookingMode === "auto" ? body.bookingMode : p.booking_mode,
     visible_in_search: body.visibleInSearch != null ? (body.visibleInSearch ? 1 : 0) : p.visible_in_search,
     multi_select: body.multiSelect != null ? (body.multiSelect ? 1 : 0) : p.multi_select,
@@ -350,7 +381,7 @@ async function patchProviderMe(request, env) {
     .run();
 
   const provider = await env.DB.prepare("SELECT * FROM provider_profiles WHERE id=?").bind(p.id).first();
-  return json({ provider: mapProvider(provider) });
+  return json({ provider: await mapProvider(provider, env) });
 }
 
 async function requireProvider(request, env) {
@@ -368,7 +399,9 @@ async function listClients(request, env) {
   )
     .bind(auth.provider.id)
     .all();
-  return json({ clients: (rows.results || []).map(mapClient) });
+  return json({
+    clients: await Promise.all((rows.results || []).map((row) => mapClient(row, env))),
+  });
 }
 
 async function createClient(request, env) {
@@ -389,6 +422,7 @@ async function createClient(request, env) {
 
   const clientId = id("pc");
   const ts = nowIso();
+  const sealedPhone = await encryptPhone(fields.phone.value, env);
   await env.DB.prepare(
     `INSERT INTO provider_clients (id, provider_id, client_user_id, name, phone, email, address, notes, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -398,7 +432,7 @@ async function createClient(request, env) {
       auth.provider.id,
       null,
       fields.name.value,
-      fields.phone.value,
+      sealedPhone,
       fields.email.value,
       fields.address.value,
       fields.notes.value,
@@ -408,7 +442,7 @@ async function createClient(request, env) {
     .run();
 
   const row = await env.DB.prepare("SELECT * FROM provider_clients WHERE id=?").bind(clientId).first();
-  return json({ client: mapClient(row) }, 201);
+  return json({ client: await mapClient(row, env) }, 201);
 }
 
 async function getClient(request, env, clientId) {
@@ -418,7 +452,7 @@ async function getClient(request, env, clientId) {
     .bind(clientId, auth.provider.id)
     .first();
   if (!row) return json({ error: "not_found" }, 404);
-  return json({ client: mapClient(row) });
+  return json({ client: await mapClient(row, env) });
 }
 
 async function patchClient(request, env, clientId) {
@@ -431,9 +465,10 @@ async function patchClient(request, env, clientId) {
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
 
+  const existingPhone = await decryptPhone(row.phone, env);
   const fields = {
     name: normalizeText(body.name ?? row.name, 120, { required: true }),
-    phone: normalizeText(body.phone ?? row.phone, 40),
+    phone: normalizeText(body.phone ?? existingPhone, 40),
     email: normalizeText(body.email ?? row.email, 254),
     address: normalizeText(body.address ?? row.address, 240),
     notes: normalizeText(body.notes ?? row.notes, 2000),
@@ -442,12 +477,13 @@ async function patchClient(request, env, clientId) {
     return json({ error: "invalid_client_fields" }, 400);
   }
 
+  const sealedPhone = await encryptPhone(fields.phone.value, env);
   await env.DB.prepare(
     `UPDATE provider_clients SET name=?, phone=?, email=?, address=?, notes=?, updated_at=? WHERE id=?`
   )
     .bind(
       fields.name.value,
-      fields.phone.value,
+      sealedPhone,
       fields.email.value,
       fields.address.value,
       fields.notes.value,
@@ -457,7 +493,7 @@ async function patchClient(request, env, clientId) {
     .run();
 
   const updated = await env.DB.prepare("SELECT * FROM provider_clients WHERE id=?").bind(clientId).first();
-  return json({ client: mapClient(updated) });
+  return json({ client: await mapClient(updated, env) });
 }
 
 async function deleteClient(request, env, clientId) {
@@ -489,7 +525,9 @@ async function listBookings(request, env, url) {
   sql += " ORDER BY date_iso DESC, time_from DESC";
 
   const rows = await env.DB.prepare(sql).bind(...binds).all();
-  return json({ bookings: (rows.results || []).map(mapBooking) });
+  return json({
+    bookings: await Promise.all((rows.results || []).map((row) => mapBooking(row, env))),
+  });
 }
 
 async function createBooking(request, env) {
@@ -531,9 +569,11 @@ async function createBookingMutation(request, env, auth) {
   }
   const locationResult = normalizeText(body.locationLabel, 240);
   if (locationResult.error) return json({ error: "location_too_long" }, 400);
-  const phoneResult = normalizeText(body.clientPhone || auth.user.phone, 40);
+  const profilePhone = await decryptPhone(auth.user.phone, env);
+  const phoneResult = normalizeText(body.clientPhone || profilePhone, 40);
   const emailResult = normalizeText(body.clientEmail || auth.user.email, 254);
   if (phoneResult.error || emailResult.error) return json({ error: "client_details_too_long" }, 400);
+  const sealedPhone = await encryptPhone(phoneResult.value, env);
 
   let providerClientId = null;
   let clientUserId = auth.user.id;
@@ -574,7 +614,7 @@ async function createBookingMutation(request, env, auth) {
       clientUserId,
       providerClientId,
       clientName,
-      phoneResult.value,
+      sealedPhone,
       emailResult.value,
       JSON.stringify(serviceIdsResult.value),
       JSON.stringify(serviceNamesResult.value),
@@ -610,7 +650,7 @@ async function createBookingMutation(request, env, auth) {
         crmClientId,
         providerId,
         clientName,
-        phoneResult.value,
+        sealedPhone,
         emailResult.value,
         ts,
         ts,
@@ -642,7 +682,8 @@ async function createBookingMutation(request, env, auth) {
   if (!insert.meta?.changes) return json({ error: "booking_overlap" }, 409);
 
   const row = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
-  return json({ booking: mapBooking(row) }, 201);
+  const calendar = status === "confirmed" ? await syncBookingToGoogle(env, bookingId) : null;
+  return json({ booking: await mapBooking(row, env), calendar }, 201);
 }
 
 async function getBooking(request, env, bookingId) {
@@ -653,7 +694,7 @@ async function getBooking(request, env, bookingId) {
   if (auth.provider?.id !== row.provider_id && row.client_user_id !== auth.user.id) {
     return json({ error: "forbidden" }, 403);
   }
-  return json({ booking: mapBooking(row) });
+  return json({ booking: await mapBooking(row, env) });
 }
 
 async function patchBooking(request, env, bookingId) {
@@ -771,7 +812,8 @@ async function patchBookingMutation(request, env, auth, bookingId) {
   if (!update.meta?.changes) return json({ error: "booking_overlap" }, 409);
 
   const updated = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
-  return json({ booking: mapBooking(updated) });
+  const calendar = await syncBookingToGoogle(env, bookingId);
+  return json({ booking: await mapBooking(updated, env), calendar });
 }
 
 async function listRequests(request, env) {
@@ -791,7 +833,9 @@ async function listRequests(request, env) {
       .bind(auth.user.id)
       .all();
   }
-  return json({ requests: (rows.results || []).map(mapRequest) });
+  return json({
+    requests: await Promise.all((rows.results || []).map((row) => mapRequest(row, env))),
+  });
 }
 
 async function getRequest(request, env, requestId) {
@@ -802,7 +846,7 @@ async function getRequest(request, env, requestId) {
   if (auth.provider?.id !== row.provider_id && row.client_user_id !== auth.user.id) {
     return json({ error: "forbidden" }, 403);
   }
-  return json({ request: mapRequest(row) });
+  return json({ request: await mapRequest(row, env) });
 }
 
 async function createRequest(request, env) {
@@ -835,8 +879,9 @@ async function createRequestMutation(request, env, auth) {
   ) {
     return json({ error: "invalid_days" }, 400);
   }
+  const profilePhone = await decryptPhone(auth.user.phone, env);
   const clientNameResult = normalizeText(body.clientName || auth.user.name, 120, { required: true });
-  const phoneResult = normalizeText(body.clientPhone || auth.user.phone, 40);
+  const phoneResult = normalizeText(body.clientPhone || profilePhone, 40);
   const emailResult = normalizeText(body.clientEmail || auth.user.email, 254);
   const serviceIdsResult = normalizeStringArray(body.serviceIds, 50, 100);
   const serviceNamesResult = normalizeStringArray(body.serviceNames, 50, 120);
@@ -849,6 +894,7 @@ async function createRequestMutation(request, env, auth) {
   ) {
     return json({ error: "invalid_request_fields" }, 400);
   }
+  const sealedPhone = await encryptPhone(phoneResult.value, env);
   const provider = await env.DB.prepare("SELECT email, name FROM provider_profiles WHERE id=?")
     .bind(providerId)
     .first();
@@ -869,7 +915,7 @@ async function createRequestMutation(request, env, auth) {
       providerId,
       auth.user.id,
       clientName,
-      phoneResult.value,
+      sealedPhone,
       emailResult.value,
       JSON.stringify(serviceIdsResult.value),
       JSON.stringify(serviceNamesResult.value),
@@ -892,7 +938,7 @@ async function createRequestMutation(request, env, auth) {
   await env.DB.batch(statements);
 
   const row = await env.DB.prepare("SELECT * FROM booking_requests WHERE id=?").bind(requestId).first();
-  return json({ request: mapRequest(row) }, 201);
+  return json({ request: await mapRequest(row, env) }, 201);
 }
 
 async function proposeRequest(request, env, requestId) {
@@ -957,7 +1003,7 @@ async function proposeRequestMutation(request, env, auth, requestId) {
   if (!update.meta?.changes) return json({ error: "request_conflict" }, 409);
 
   const updated = await env.DB.prepare("SELECT * FROM booking_requests WHERE id=?").bind(requestId).first();
-  return json({ request: mapRequest(updated) });
+  return json({ request: await mapRequest(updated, env) });
 }
 
 async function acceptRequest(request, env, requestId) {
@@ -1096,7 +1142,12 @@ async function acceptRequestMutation(request, env, auth, requestId) {
 
   const booking = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
   const updated = await env.DB.prepare("SELECT * FROM booking_requests WHERE id=?").bind(requestId).first();
-  return json({ request: mapRequest(updated), booking: mapBooking(booking) });
+  const calendar = await syncBookingToGoogle(env, bookingId);
+  return json({
+    request: await mapRequest(updated, env),
+    booking: await mapBooking(booking, env),
+    calendar,
+  });
 }
 
 async function declineRequest(request, env, requestId) {
@@ -1125,7 +1176,7 @@ async function declineRequestMutation(env, auth, requestId) {
   if (!update.meta?.changes) return json({ error: "request_conflict" }, 409);
 
   const updated = await env.DB.prepare("SELECT * FROM booking_requests WHERE id=?").bind(requestId).first();
-  return json({ request: mapRequest(updated) });
+  return json({ request: await mapRequest(updated, env) });
 }
 
 async function requestMore(request, env, requestId) {
@@ -1161,7 +1212,7 @@ async function requestMoreMutation(env, auth, requestId) {
   const updated = await env.DB.prepare("SELECT * FROM booking_requests WHERE id=?")
     .bind(requestId)
     .first();
-  return json({ request: mapRequest(updated) });
+  return json({ request: await mapRequest(updated, env) });
 }
 
 async function uploadMedia(request, env) {

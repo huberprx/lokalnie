@@ -8,7 +8,10 @@ export default defineConfig({
     cloudflareTest({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
-        bindings: { TEST_MIGRATIONS: migrations },
+        bindings: {
+          TEST_MIGRATIONS: migrations,
+          PII_ENCRYPTION_KEY: "test-pii-encryption-key",
+        },
       },
     }),
   ],

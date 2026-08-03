@@ -39,14 +39,22 @@ npm run deploy
 
 Szczegóły: [`worker/README.md`](worker/README.md).
 
-## Kalendarz Google
+## Google Calendar klienta
 
-Pod każdym ekranem aplikacji jest pole do podpięcia kalendarza:
+W ustawieniach konta klient może kliknąć **Połącz Google Calendar** i udzielić
+Lokalnie osobnej zgody OAuth na tworzenie wydarzeń. Po potwierdzeniu rezerwacji
+Lokalnie automatycznie zapisuje prywatne wydarzenie w kalendarzu `primary`
+klienta, a zmianę terminu lub anulowanie synchronizuje z tym wydarzeniem.
 
-1. W [Google Calendar](https://calendar.google.com) otwórz **Ustawienia kalendarza** → **Integracja kalendarza**.
-2. Skopiuj **Identyfikator kalendarza** (np. `twoj@email.com`).
-3. Wklej go w odpowiednie pole (użytkownik po lewej, usługodawca po prawej) i kliknij **Połącz**.
+Do uruchomienia integracji ustaw dodatkowo sekrety:
 
-Kalendarz musi być ustawiony jako **publiczny** albo **dostępny dla wszystkich z linkiem**, żeby embed działał na stronie.
+```bash
+cd worker
+npx wrangler secret put GOOGLE_CALENDAR_TOKEN_KEY
+npx wrangler secret put PII_ENCRYPTION_KEY
+```
 
-Wybrane ID są zapisywane w przeglądarce (localStorage).
+`PII_ENCRYPTION_KEY` szyfruje numery telefonu w D1 (AES-GCM, `enc:v1:…`).
+
+W Google Cloud dodaj redirect URI:
+`https://api.lokalnie.app/auth/google/calendar/callback`.

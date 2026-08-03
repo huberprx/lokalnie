@@ -414,3 +414,24 @@ describe("request-more flow", () => {
     expect(wrongStatus.status).toBe(409);
   });
 });
+
+describe("phone PII at rest", () => {
+  it("stores encrypted phones in D1 and returns plaintext over API", async () => {
+    const create = await api("/provider/me/clients", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      body: { name: "Anna", phone: "+48 501 234 567" },
+    });
+    expect(create.status).toBe(201);
+    const payload = await create.json();
+    expect(payload.client.phone).toBe("+48 501 234 567");
+
+    const row = await env.DB.prepare(
+      "SELECT phone FROM provider_clients WHERE id=?"
+    )
+      .bind(payload.client.id)
+      .first();
+    expect(row.phone.startsWith("enc:v1:")).toBe(true);
+    expect(row.phone).not.toContain("501");
+  });
+});

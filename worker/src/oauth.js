@@ -1,4 +1,5 @@
 import { json, id, nowIso } from "./http.js";
+import { GOOGLE_CALENDAR_SCOPE, encryptToken } from "./calendar.js";
 
 const SESSION_DAYS = 30;
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -74,13 +75,14 @@ async function verifyPayload(payloadB64, sigB64, secret) {
 }
 
 /** Podpisany state — bez cookie (cookie na 302 często ginie w przeglądarce). */
-async function createOAuthState(returnTo, env) {
+async function createOAuthState(returnTo, env, extra = {}) {
   const secret = cleanSecret(env.GOOGLE_CLIENT_SECRET);
   if (!secret) throw new Error("oauth_not_configured");
   const payload = {
     r: returnTo,
     e: Date.now() + STATE_TTL_MS,
     n: randomToken(8),
+    ...extra,
   };
   const payloadB64 = textToBase64Url(JSON.stringify(payload));
   const sig = await signPayload(payloadB64, secret);
@@ -179,6 +181,27 @@ export async function startGoogleAuth(request, env) {
   auth.searchParams.set("prompt", "select_account");
   auth.searchParams.set("state", state);
 
+  return new Response(null, { status: 302, headers: { Location: auth.toString() } });
+}
+
+export async function startGoogleCalendarAuth(request, env, userId) {
+  const clientId = cleanSecret(env.GOOGLE_CLIENT_ID);
+  const clientSecret = cleanSecret(env.GOOGLE_CLIENT_SECRET);
+  if (!clientId || !clientSecret || !cleanSecret(env.GOOGLE_CALENDAR_TOKEN_KEY)) {
+    return json({ error: "calendar_oauth_not_configured" }, 503);
+  }
+  const url = new URL(request.url);
+  const returnTo = sanitizeReturnTo(url.searchParams.get("return_to"), env);
+  const state = await createOAuthState(returnTo, env, { p: "calendar", u: String(userId || "") });
+  const redirectUri = `${apiBase(request)}/auth/google/calendar/callback`;
+  const auth = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  auth.searchParams.set("client_id", clientId);
+  auth.searchParams.set("redirect_uri", redirectUri);
+  auth.searchParams.set("response_type", "code");
+  auth.searchParams.set("scope", GOOGLE_CALENDAR_SCOPE);
+  auth.searchParams.set("access_type", "offline");
+  auth.searchParams.set("prompt", "consent");
+  auth.searchParams.set("state", state);
   return new Response(null, { status: 302, headers: { Location: auth.toString() } });
 }
 
@@ -341,6 +364,88 @@ export async function handleGoogleCallback(request, env) {
       },
       500
     );
+  }
+}
+
+export async function handleGoogleCalendarCallback(request, env) {
+  const clientId = cleanSecret(env.GOOGLE_CLIENT_ID);
+  const clientSecret = cleanSecret(env.GOOGLE_CLIENT_SECRET);
+  const tokenKey = cleanSecret(env.GOOGLE_CALENDAR_TOKEN_KEY);
+  const url = new URL(request.url);
+  const returnTo = sanitizeReturnTo("", env);
+  const error = url.searchParams.get("error");
+  const state = await parseOAuthState(url.searchParams.get("state"), env);
+  const destination = state?.r ? sanitizeReturnTo(state.r, env) : returnTo;
+  const redirectWith = (key, value = "1") => {
+    const dest = new URL(destination);
+    dest.hash = `${key}=${encodeURIComponent(value)}`;
+    return new Response(null, { status: 302, headers: { Location: dest.toString() } });
+  };
+
+  if (error) return redirectWith("calendar_error", "google_denied");
+  if (!clientId || !clientSecret || !tokenKey || !state || state.p !== "calendar" || !state.u) {
+    return redirectWith("calendar_error", "invalid_oauth_state");
+  }
+
+  const code = url.searchParams.get("code");
+  if (!code) return redirectWith("calendar_error", "missing_code");
+  const redirectUri = `${apiBase(request)}/auth/google/calendar/callback`;
+  const body = new URLSearchParams({
+    code,
+    client_id: clientId,
+    client_secret: clientSecret,
+    redirect_uri: redirectUri,
+    grant_type: "authorization_code",
+  });
+
+  try {
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    const tokens = await tokenResponse.json();
+    if (!tokenResponse.ok || !tokens.access_token) {
+      throw new Error(tokens.error_description || tokens.error || "calendar_token_exchange_failed");
+    }
+
+    const previous = await env.DB.prepare(
+      "SELECT * FROM calendar_connections WHERE user_id=? AND provider='google'"
+    ).bind(state.u).first();
+    const refreshToken = tokens.refresh_token
+      ? await encryptToken(tokens.refresh_token, tokenKey)
+      : previous?.encrypted_refresh_token;
+    if (!refreshToken) throw new Error("calendar_refresh_token_missing");
+    const accessToken = await encryptToken(tokens.access_token, tokenKey);
+    const connectionId = previous?.id || id("cal");
+    const expiresAt = new Date(Date.now() + Number(tokens.expires_in || 3600) * 1000).toISOString();
+    await env.DB.prepare(
+      `INSERT INTO calendar_connections
+       (id, user_id, provider, calendar_id, encrypted_access_token, encrypted_refresh_token,
+        token_expires_at, scopes, status, last_error, connected_at, updated_at)
+       VALUES (?, ?, 'google', 'primary', ?, ?, ?, ?, 'connected', NULL, ?, ?)
+       ON CONFLICT(user_id, provider) DO UPDATE SET
+         encrypted_access_token=excluded.encrypted_access_token,
+         encrypted_refresh_token=excluded.encrypted_refresh_token,
+         token_expires_at=excluded.token_expires_at,
+         scopes=excluded.scopes,
+         status='connected',
+         last_error=NULL,
+         updated_at=excluded.updated_at`
+    ).bind(
+      connectionId,
+      state.u,
+      accessToken,
+      refreshToken,
+      expiresAt,
+      GOOGLE_CALENDAR_SCOPE,
+      nowIso(),
+      nowIso()
+    ).run();
+    return redirectWith("calendar_connected", "1");
+  } catch (err) {
+    console.error(JSON.stringify({ level: "error", calendar_oauth: String(err?.stack || err) }));
+    return redirectWith("calendar_error", "calendar_connection_failed");
   }
 }
 

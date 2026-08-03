@@ -38,7 +38,7 @@ beforeEach(async () => {
     env.DB.prepare(
       `INSERT INTO users (id, email, name, role_client, role_provider, email_verified)
        VALUES (?, ?, ?, 1, 0, 1)`
-    ).bind("user-admin", "hubert@lokalnie.app", "Admin"),
+    ).bind("user-admin", "szaroczarnytrzmiel@gmail.com", "Admin"),
     env.DB.prepare(
       `INSERT INTO users (id, email, name, role_client, role_provider, email_verified)
        VALUES (?, ?, ?, 1, 1, 1)`
@@ -157,7 +157,7 @@ describe("admin panel security", () => {
       new Request("https://api.lokalnie.app/admin/users/x/block", {
         headers: { Authorization: `Bearer ${OTHER_ADMIN_TOKEN}` },
       }),
-      { ...env, ADMIN_EMAILS: "hubert@lokalnie.app,other-admin@example.com" }
+      { ...env, ADMIN_EMAILS: "szaroczarnytrzmiel@gmail.com,other-admin@example.com" }
     );
     expect(protectedAdmin.error).toBeUndefined();
 
@@ -170,7 +170,7 @@ describe("admin panel security", () => {
         },
         body: JSON.stringify({ reason: "should fail" }),
       }),
-      { ...env, ADMIN_EMAILS: "hubert@lokalnie.app,other-admin@example.com" }
+      { ...env, ADMIN_EMAILS: "szaroczarnytrzmiel@gmail.com,other-admin@example.com" }
     );
     expect(blockOtherAdmin.status).toBe(403);
     expect((await blockOtherAdmin.json()).error).toBe("cannot_block_admin");
