@@ -755,9 +755,40 @@ body:has(#page-app:not([hidden])) {
 }
 
 .app-header__user {
-  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.05rem;
+  min-width: 0;
+  max-width: 11rem;
+  line-height: 1.15;
+  text-align: right;
+}
+
+.app-header__user-role {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--text-muted);
-  font-weight: 500;
+}
+
+.app-header__user-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+#page-app[data-active-role="provider"] .app-header__user-role {
+  color: var(--accent-provider);
+}
+
+#page-app[data-active-role="client"] .app-header__user-role {
+  color: var(--accent-client);
 }
 
 .app-header__menu-btn {

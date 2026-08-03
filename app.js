@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.182";
+  const APP_VERSION = "1.0.183";
 
   const PWA = {
     registration: null,
@@ -16811,7 +16811,7 @@
     btn.setAttribute("aria-expanded", open ? "true" : "false");
   }
 
-  function appHeaderUserLabel(activeRole) {
+  function appHeaderUserName(activeRole) {
     if (activeRole === "provider") {
       const provider = myProvider();
       if (provider && provider.name) return provider.name;
@@ -16822,11 +16822,20 @@
   }
 
   function updateAppHeader(activeRole) {
+    const role = activeRole || "client";
     const userEl = document.getElementById("app-header-user");
-    if (userEl) userEl.textContent = appHeaderUserLabel(activeRole);
+    if (userEl) {
+      const roleLabel = role === "provider" ? "Profil usługodawcy" : "Profil klienta";
+      const name = appHeaderUserName(role) || "Użytkownik";
+      userEl.innerHTML =
+        `<span class="app-header__user-role">${escapeHtml(roleLabel)}</span>` +
+        `<span class="app-header__user-name">${escapeHtml(name)}</span>`;
+      userEl.setAttribute("aria-label", roleLabel + ": " + name);
+      userEl.dataset.role = role;
+    }
 
     const pageApp = document.getElementById("page-app");
-    if (pageApp) pageApp.dataset.activeRole = activeRole || "client";
+    if (pageApp) pageApp.dataset.activeRole = role;
 
     const canSwitchProvider = hasProviderRole();
     const roleSwitch = document.getElementById("app-role-switch");
@@ -16834,14 +16843,14 @@
 
     if (canSwitchProvider && roleSwitch) {
       roleSwitch.querySelectorAll(".app-role-btn").forEach(function (btn) {
-        btn.setAttribute("aria-pressed", btn.dataset.role === activeRole ? "true" : "false");
+        btn.setAttribute("aria-pressed", btn.dataset.role === role ? "true" : "false");
       });
     }
 
-    renderAppHeaderNav(activeRole);
+    renderAppHeaderNav(role);
     syncAppHeaderMenuBtn(!!window.AppState.appMenuOpen);
 
-    const onMyCalendar = activeRole === "client" && window.AppState.screen.client === "myCalendar";
+    const onMyCalendar = role === "client" && window.AppState.screen.client === "myCalendar";
     document.querySelectorAll('#page-home [data-action="open-my-calendar"]').forEach(function (btn) {
       btn.classList.toggle("site-nav__link--active", onMyCalendar);
       btn.setAttribute("aria-current", onMyCalendar ? "page" : "false");
