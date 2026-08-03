@@ -2,6 +2,7 @@ import { json, id, nowIso } from "./http.js";
 
 const SESSION_DAYS = 30;
 const STATE_TTL_MS = 10 * 60 * 1000;
+export const SESSION_COOKIE = "lokalnie_session";
 
 function allowedReturnOrigins(env) {
   const list = new Set([
@@ -111,6 +112,23 @@ export async function hashToken(token) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+export function sessionTokenFromCookie(request) {
+  const cookie = request.headers.get("Cookie") || "";
+  const entry = cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${SESSION_COOKIE}=`));
+  if (!entry) return "";
+  try {
+    return decodeURIComponent(entry.slice(SESSION_COOKIE.length + 1));
+  } catch {
+    return "";
+  }
+}
+
+function sessionCookie(token, env, maxAge = SESSION_DAYS * 24 * 60 * 60) {
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${
+    env.ENVIRONMENT === "production" ? "; Secure" : ""
+  }`;
+}
+
 function randomToken(bytes = 32) {
   const arr = new Uint8Array(bytes);
   crypto.getRandomValues(arr);
@@ -200,6 +218,7 @@ async function fetchGoogleUser(accessToken) {
 async function upsertGoogleUser(env, profile) {
   const googleSub = String(profile.sub || "");
   const email = profile.email ? String(profile.email).toLowerCase() : null;
+  const emailVerified = profile.email_verified === true || profile.email_verified === "true" ? 1 : 0;
   const name = String(profile.name || profile.given_name || email || "Użytkownik");
 
   if (!googleSub) throw new Error("missing_google_sub");
@@ -221,6 +240,8 @@ async function upsertGoogleUser(env, profile) {
         .run();
       user.name = name;
     }
+    await env.DB.prepare("UPDATE users SET email_verified=? WHERE id=?").bind(emailVerified, user.id).run();
+    user.email_verified = emailVerified;
     return user;
   }
 
@@ -233,10 +254,10 @@ async function upsertGoogleUser(env, profile) {
     const userId = id("user");
     await env.DB.prepare(
       `INSERT INTO users (id, email, name, role_client, role_provider,
-        notification_booking, notification_reminder, notification_marketing)
-       VALUES (?, ?, ?, 1, 0, 1, 1, 0)`
+        notification_booking, notification_reminder, notification_marketing, email_verified)
+       VALUES (?, ?, ?, 1, 0, 1, 1, 0, ?)`
     )
-      .bind(userId, email, name)
+      .bind(userId, email, name, emailVerified)
       .run();
     user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
   }
@@ -297,12 +318,20 @@ export async function handleGoogleCallback(request, env) {
     const tokens = await exchangeCode(code, redirectUri, env);
     const profile = await fetchGoogleUser(tokens.access_token);
     const user = await upsertGoogleUser(env, profile);
+    const dest = new URL(returnTo.startsWith("http") ? returnTo : `https://lokalnie.app${returnTo}`);
+    if (user.blocked) {
+      dest.hash = "auth_error=account_blocked";
+      return new Response(null, {
+        status: 302,
+        headers: { Location: dest.toString(), "Set-Cookie": sessionCookie("", env, 0) },
+      });
+    }
     const session = await createSession(env, user.id);
 
-    const dest = new URL(returnTo.startsWith("http") ? returnTo : `https://lokalnie.app${returnTo}`);
-    dest.hash = `access_token=${encodeURIComponent(session.token)}`;
-
-    return new Response(null, { status: 302, headers: { Location: dest.toString() } });
+    return new Response(null, {
+      status: 302,
+      headers: { Location: dest.toString(), "Set-Cookie": sessionCookie(session.token, env) },
+    });
   } catch (e) {
     console.error(JSON.stringify({ level: "error", oauth: String(e?.stack || e), details: e?.details || null }));
     return json(
@@ -318,9 +347,13 @@ export async function handleGoogleCallback(request, env) {
 export async function logoutSession(request, env) {
   const auth = request.headers.get("Authorization") || "";
   const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  if (bearer && bearer.toLowerCase() !== "demo") {
-    const tokenHash = await hashToken(bearer);
+  const cookieToken = sessionTokenFromCookie(request);
+  const tokens = [];
+  if (bearer && bearer.toLowerCase() !== "demo") tokens.push(bearer);
+  if (cookieToken && cookieToken !== bearer) tokens.push(cookieToken);
+  for (const token of tokens) {
+    const tokenHash = await hashToken(token);
     await env.DB.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(tokenHash).run();
   }
-  return json({ ok: true });
+  return json({ ok: true }, 200, { "Set-Cookie": sessionCookie("", env, 0) });
 }

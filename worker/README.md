@@ -61,7 +61,15 @@ i muszą być załadowane jawnie wyłącznie do lokalnej bazy.
 | POST | `/requests/:id/request-more` | Prośba klienta o nowe propozycje |
 | POST | `/media` | Upload (multipart: `file`, `kind`) |
 | GET | `/media/:id` | Odczyt pliku |
-| GET | `/emails/outbox` | Kolejka maili (bez wysyłki) |
+| GET | `/emails/outbox` | Kolejka maili (bez wysyłki, admin) |
+| GET | `/admin/stats` | Liczby platformy (admin) |
+| GET | `/admin/users` | Lista użytkowników (admin) |
+| POST | `/admin/users/:id/block` | Blokada konta + unieważnienie sesji |
+| POST | `/admin/users/:id/unblock` | Odblokowanie konta |
+| GET | `/admin/providers` | Lista firm (admin) |
+| PATCH | `/admin/providers/:id` | Widoczność w katalogu (`visibleInSearch`) |
+| GET | `/admin/bookings` | Podgląd rezerwacji (admin) |
+| GET | `/admin/audit` | Log działań admina |
 
 ## Zasoby
 

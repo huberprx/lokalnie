@@ -5,6 +5,8 @@
 
   const BASE = "https://api.lokalnie.app";
   const TOKEN_KEY = "lokalnie.authToken";
+  const REQUEST_TIMEOUT_MS = 10000;
+  const MAX_GET_RETRIES = 1;
   const DEMO_HEADER = { "X-Demo-User": "demo" };
   const IDEMPOTENCY_SESSION_KEY = "lokalnie.pendingIdempotency";
   const LEGACY_IDEMPOTENCY_PREFIX = "lokalnie.idempotency.";
@@ -56,6 +58,7 @@
   }
 
   function getAuthToken() {
+    if (isProductionHostname()) return "";
     try {
       return localStorage.getItem(TOKEN_KEY) || "";
     } catch (err) {
@@ -64,6 +67,7 @@
   }
 
   function setAuthToken(token) {
+    if (isProductionHostname()) return;
     try {
       if (token) localStorage.setItem(TOKEN_KEY, token);
       else localStorage.removeItem(TOKEN_KEY);
@@ -169,15 +173,45 @@
 
   async function request(path, opts) {
     opts = opts || {};
-    const headers = Object.assign({}, authHeaders(), opts.headers || {});
-    if (opts.json) {
-      headers["Content-Type"] = "application/json";
+    const method = String(opts.method || "GET").toUpperCase();
+    const canRetry = method === "GET" || method === "OPTIONS";
+    let attempt = 0;
+    let res;
+    while (true) {
+      const headers = Object.assign({}, authHeaders(), opts.headers || {});
+      if (opts.json) headers["Content-Type"] = "application/json";
+      const controller = new AbortController();
+      const timeout = window.setTimeout(function () {
+        controller.abort();
+      }, opts.timeoutMs || REQUEST_TIMEOUT_MS);
+      if (opts.signal) {
+        if (opts.signal.aborted) controller.abort();
+        else opts.signal.addEventListener("abort", function () { controller.abort(); }, { once: true });
+      }
+      try {
+        res = await fetch(BASE + path, {
+          method: method,
+          headers: headers,
+          body: opts.json ? JSON.stringify(opts.json) : opts.body || undefined,
+          credentials: "include",
+          signal: controller.signal,
+        });
+      } catch (err) {
+        if (canRetry && attempt < MAX_GET_RETRIES && !(err && err.name === "AbortError")) {
+          attempt += 1;
+          continue;
+        }
+        if (err && err.name === "AbortError") {
+          const timeoutError = new Error("request_timeout");
+          timeoutError.code = "request_timeout";
+          throw timeoutError;
+        }
+        throw err;
+      } finally {
+        window.clearTimeout(timeout);
+      }
+      break;
     }
-    const res = await fetch(BASE + path, {
-      method: opts.method || "GET",
-      headers: headers,
-      body: opts.json ? JSON.stringify(opts.json) : opts.body || undefined,
-    });
     let data = null;
     const text = await res.text();
     try {
@@ -185,7 +219,11 @@
     } catch (err) {
       data = { raw: text };
     }
-    if (res.status === 401) {
+    if (
+      !opts.suppressUnauthorized &&
+      (res.status === 401 ||
+        (res.status === 403 && data && data.error === "account_blocked"))
+    ) {
       clearAuthToken();
       notifyUnauthorized();
     }
@@ -270,7 +308,7 @@
   async function syncFromServer() {
     if (!window.AppState) return { ok: false, reason: "no_state" };
     // Gość bez sesji — nie ciągnij demo-usera z API do lokalnego stanu.
-    if (!getAuthToken()) return { ok: false, reason: "guest" };
+    if (!isProductionHostname() && !getAuthToken()) return { ok: false, reason: "guest" };
     try {
       const me = await request("/me");
       if (window.App && typeof window.App.applyApiAuth === "function") {
@@ -364,7 +402,7 @@
 
   /** Zapis profilu klienta na serwerze (e-mail zostaje z konta Google). */
   async function updateMe(profile) {
-    if (!profile || !getAuthToken()) return null;
+    if (!profile || (!isProductionHostname() && !getAuthToken())) return null;
     const notes = profile.notifications || {};
     try {
       const res = await request("/me", {
@@ -592,8 +630,70 @@
     return res && res.booking;
   }
 
+  async function resizeImageForUpload(file, maxDimension) {
+    const max = maxDimension || 1024;
+    const source = await (typeof createImageBitmap === "function"
+      ? createImageBitmap(file)
+      : new Promise(function (resolve, reject) {
+          const image = new Image();
+          const objectUrl = URL.createObjectURL(file);
+          image.onload = function () {
+            URL.revokeObjectURL(objectUrl);
+            resolve(image);
+          };
+          image.onerror = function () {
+            URL.revokeObjectURL(objectUrl);
+            reject(new Error("image_decode_failed"));
+          };
+          image.src = objectUrl;
+        }));
+    const width = source.width || source.naturalWidth;
+    const height = source.height || source.naturalHeight;
+    if (!width || !height) {
+      if (typeof source.close === "function") source.close();
+      throw new Error("image_decode_failed");
+    }
+    const scale = Math.min(1, max / Math.max(width, height));
+    const targetWidth = Math.max(1, Math.round(width * scale));
+    const targetHeight = Math.max(1, Math.round(height * scale));
+    if (scale === 1) {
+      if (typeof source.close === "function") source.close();
+      return file;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const context = canvas.getContext("2d", { alpha: true });
+    if (!context) {
+      if (typeof source.close === "function") source.close();
+      throw new Error("image_resize_failed");
+    }
+    context.drawImage(source, 0, 0, targetWidth, targetHeight);
+    if (typeof source.close === "function") source.close();
+
+    const blob = await new Promise(function (resolve) {
+      canvas.toBlob(resolve, "image/webp", 0.85);
+    });
+    if (!blob) {
+      const jpeg = await new Promise(function (resolve) {
+        canvas.toBlob(resolve, "image/jpeg", 0.85);
+      });
+      if (!jpeg) throw new Error("image_resize_failed");
+      return new File([jpeg], "avatar.jpg", { type: "image/jpeg", lastModified: Date.now() });
+    }
+    return new File([blob], "avatar.webp", { type: "image/webp", lastModified: Date.now() });
+  }
+
   async function uploadAvatar(file) {
+    if (!file || !/^image\/(?:jpeg|png|webp|gif)$/i.test(String(file.type || ""))) {
+      throw new Error("unsupported_image_type");
+    }
     try {
+      file = await resizeImageForUpload(file, 1024);
+      if (file.size > 5 * 1024 * 1024) {
+        throw new Error("image_too_large");
+      }
       const fd = new FormData();
       fd.append("file", file);
       fd.append("kind", "avatar");

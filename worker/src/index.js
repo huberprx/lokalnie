@@ -1,11 +1,25 @@
 import { json, id, nowIso, readJson, preflight, withCors, HttpError } from "./http.js";
-import { requireDemoUser, requireAdmin, mapUser, mapProvider } from "./auth.js";
+import { requireDemoUser, requireAdmin, mapUser, mapProvider, isAdminUser } from "./auth.js";
 import { startGoogleAuth, handleGoogleCallback, logoutSession } from "./oauth.js";
 import { prepareEmailOutbox, listOutbox, processDueEmails } from "./email.js";
 import { mapClient, mapBooking, mapRequest, mapMedia } from "./mappers.js";
 import { validateSlot, normalizeText, normalizeStringArray, isValidDateISO } from "./validate.js";
 import { canTransitionBooking } from "./bookings.js";
 import { cleanupIdempotencyKeys, withIdempotency } from "./idempotency.js";
+import { enforceRateLimit, rateLimitScope } from "./rateLimit.js";
+import {
+  adminStats,
+  adminListUsers,
+  adminBlockUser,
+  adminUnblockUser,
+  adminListProviders,
+  adminPatchProvider,
+  adminListBookings,
+  adminListAudit,
+  adminEmailsOutbox,
+  adminProcessEmails,
+  isAdminPath,
+} from "./admin.js";
 
 const ALLOWED_IMAGE = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const MAX_UPLOAD = 5 * 1024 * 1024;
@@ -43,16 +57,24 @@ async function routeRequest(request, env) {
     try {
       const path = url.pathname.replace(/\/+$/, "") || "/";
       const parts = path.split("/").filter(Boolean);
+      const rate = rateLimitConfig(path, request.method);
+      if (rate) {
+        const limited = await enforceRateLimit(
+          request,
+          env,
+          rateLimitScope(request, rate.route),
+          rate.limit
+        );
+        if (limited) return limited;
+      }
 
       if (path === "/") {
-        return json({
+        const response = {
           service: "lokalnie-api",
           ok: true,
-          environment: env.ENVIRONMENT || "unknown",
-          appOrigin: env.APP_ORIGIN || null,
           auth:
             env.ENVIRONMENT === "production"
-              ? "Bearer <session>"
+              ? "HttpOnly session cookie"
               : "Bearer <session> | demo: X-Demo-User: demo | Authorization: Bearer demo",
           docs: {
             health: "GET /health",
@@ -72,8 +94,13 @@ async function routeRequest(request, env) {
                   emails: "GET /emails/outbox, POST /emails/process",
                 }),
           },
-          bindings: { db: !!env.DB, media: !!env.MEDIA },
-        });
+        };
+        if (env.ENVIRONMENT !== "production") {
+          response.environment = env.ENVIRONMENT || "unknown";
+          response.appOrigin = env.APP_ORIGIN || null;
+          response.bindings = { db: !!env.DB, media: !!env.MEDIA };
+        }
+        return json(response);
       }
 
       if (path === "/health") return health(env);
@@ -134,10 +161,37 @@ async function routeRequest(request, env) {
       }
 
       if (path === "/media" && request.method === "POST") return uploadMedia(request, env);
-      if (parts[0] === "media" && parts[1] && request.method === "GET") return getMedia(env, parts[1]);
+      if (parts[0] === "media" && parts[1] && request.method === "GET") {
+        return getMedia(request, env, parts[1]);
+      }
 
       if (path === "/emails/outbox" && request.method === "GET") return emailsOutbox(request, env);
       if (path === "/emails/process" && request.method === "POST") return processEmails(request, env);
+
+      if (path === "/admin/stats" && request.method === "GET") return adminStats(request, env);
+      if (path === "/admin/users" && request.method === "GET") return adminListUsers(request, env, url);
+      if (parts[0] === "admin" && parts[1] === "users" && parts[2] && parts[3] === "block" && request.method === "POST") {
+        return adminBlockUser(request, env, parts[2]);
+      }
+      if (parts[0] === "admin" && parts[1] === "users" && parts[2] && parts[3] === "unblock" && request.method === "POST") {
+        return adminUnblockUser(request, env, parts[2]);
+      }
+      if (path === "/admin/providers" && request.method === "GET") {
+        return adminListProviders(request, env, url);
+      }
+      if (parts[0] === "admin" && parts[1] === "providers" && parts[2] && !parts[3] && request.method === "PATCH") {
+        return adminPatchProvider(request, env, parts[2]);
+      }
+      if (path === "/admin/bookings" && request.method === "GET") {
+        return adminListBookings(request, env, url);
+      }
+      if (path === "/admin/audit" && request.method === "GET") return adminListAudit(request, env, url);
+      if (path === "/admin/emails/outbox" && request.method === "GET") {
+        return adminEmailsOutbox(request, env);
+      }
+      if (path === "/admin/emails/process" && request.method === "POST") {
+        return adminProcessEmails(request, env);
+      }
 
       return json({ error: "not_found" }, 404);
     } catch (err) {
@@ -151,6 +205,22 @@ async function routeRequest(request, env) {
         500
       );
     }
+}
+
+function rateLimitConfig(path, method) {
+  if (path === "/auth/google" || path === "/auth/google/callback") {
+    return { route: "auth", limit: 10 };
+  }
+  if (path === "/media" && method === "POST") return { route: "media-upload", limit: 5 };
+  if (path === "/auth/logout") return { route: "auth-logout", limit: 10 };
+  if (isAdminPath(path) && (method === "POST" || method === "PATCH")) {
+    return { route: "admin-mutate", limit: 20 };
+  }
+  if (isAdminPath(path) && method === "GET") {
+    return { route: "admin-read", limit: 60 };
+  }
+  if (method === "POST" || method === "PATCH") return { route: path, limit: 30 };
+  return null;
 }
 
 async function health(env) {
@@ -186,6 +256,7 @@ async function getMe(request, env) {
   return json({
     authenticated: true,
     mode: auth.authMode || "demo",
+    isAdmin: auth.authMode === "demo" ? env.ENVIRONMENT !== "production" : isAdminUser(auth.user, env),
     user: mapUser(auth.user),
     provider: mapProvider(auth.provider),
   });
@@ -1112,6 +1183,11 @@ async function uploadMedia(request, env) {
   const ext = contentType.split("/")[1] || "bin";
   const storageKey = `${auth.user.id}/${kind}/${mediaId}.${ext}`;
   const bytes = await file.arrayBuffer();
+  const detectedType = detectImageType(new Uint8Array(bytes));
+  if (!detectedType || detectedType !== contentType) {
+    return json({ error: "invalid_image_bytes" }, 415);
+  }
+  const isPublic = kind === "avatar" || kind === "provider" ? 1 : 0;
 
   await env.MEDIA.put(storageKey, bytes, {
     httpMetadata: { contentType },
@@ -1120,10 +1196,10 @@ async function uploadMedia(request, env) {
 
   const ts = nowIso();
   await env.DB.prepare(
-    `INSERT INTO media (id, owner_user_id, kind, storage_key, content_type, byte_size, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO media (id, owner_user_id, kind, storage_key, content_type, byte_size, is_public, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(mediaId, auth.user.id, kind, storageKey, contentType, bytes.byteLength, ts)
+    .bind(mediaId, auth.user.id, kind, storageKey, contentType, bytes.byteLength, isPublic, ts)
     .run();
 
   if (kind === "avatar") {
@@ -1141,9 +1217,16 @@ async function uploadMedia(request, env) {
   return json({ media: mapMedia(row) }, 201);
 }
 
-async function getMedia(env, mediaId) {
+async function getMedia(request, env, mediaId) {
   const row = await env.DB.prepare("SELECT * FROM media WHERE id=?").bind(mediaId).first();
   if (!row) return json({ error: "not_found" }, 404);
+  if (!row.is_public) {
+    const auth = await requireDemoUser(request, env);
+    if (auth.error) return auth.error;
+    if (auth.user.id !== row.owner_user_id && auth.provider?.user_id !== row.owner_user_id) {
+      return json({ error: "forbidden" }, 403);
+    }
+  }
   if (!env.MEDIA) return json({ error: "r2_not_configured" }, 503);
 
   const obj = await env.MEDIA.get(row.storage_key);
@@ -1151,8 +1234,45 @@ async function getMedia(env, mediaId) {
 
   const headers = new Headers();
   headers.set("Content-Type", row.content_type || obj.httpMetadata?.contentType || "application/octet-stream");
-  headers.set("Cache-Control", "public, max-age=86400");
+  headers.set(
+    "Cache-Control",
+    row.is_public ? "public, max-age=31536000, immutable" : "no-store"
+  );
   return new Response(obj.body, { status: 200, headers });
+}
+
+export function detectImageType(bytes) {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) {
+    return "image/png";
+  }
+  if (
+    bytes.length >= 6 &&
+    (String.fromCharCode(...bytes.slice(0, 6)) === "GIF87a" ||
+      String.fromCharCode(...bytes.slice(0, 6)) === "GIF89a")
+  ) {
+    return "image/gif";
+  }
+  if (
+    bytes.length >= 12 &&
+    String.fromCharCode(...bytes.slice(0, 4)) === "RIFF" &&
+    String.fromCharCode(...bytes.slice(8, 12)) === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  return null;
 }
 
 async function emailsOutbox(request, env) {

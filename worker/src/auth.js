@@ -1,7 +1,31 @@
 import { json } from "./http.js";
-import { hashToken } from "./oauth.js";
+import { hashToken, sessionTokenFromCookie } from "./oauth.js";
 
 const DEMO_USER_ID = "user-demo-hubert";
+
+export function adminEmailSet(env) {
+  return new Set(
+    String(env?.ADMIN_EMAILS || "")
+      .split(",")
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+export function isAdminUser(user, env) {
+  if (!user?.email || !user.email_verified) return false;
+  return adminEmailSet(env).has(String(user.email).trim().toLowerCase());
+}
+
+function blockedError() {
+  return json(
+    {
+      error: "account_blocked",
+      message: "Konto zostało zablokowane. Skontaktuj się z supportem Lokalnie.",
+    },
+    403
+  );
+}
 
 /**
  * Auth: sesja OAuth (Authorization: Bearer <token>) albo tryb demo
@@ -11,16 +35,18 @@ export async function requireDemoUser(request, env) {
   const demoHeader = (request.headers.get("X-Demo-User") || "").trim().toLowerCase();
   const auth = request.headers.get("Authorization") || "";
   const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  const cookieToken = sessionTokenFromCookie(request);
   const demoRequested = demoHeader === "demo" || bearer.toLowerCase() === "demo";
+  const sessionToken = bearer && bearer.toLowerCase() !== "demo" ? bearer : cookieToken;
 
-  if (bearer && bearer.toLowerCase() !== "demo") {
-    const tokenHash = await hashToken(bearer);
+  if (sessionToken) {
+    const tokenHash = await hashToken(sessionToken);
     const session = await env.DB.prepare(
       `SELECT s.*, u.id AS uid FROM sessions s
        JOIN users u ON u.id = s.user_id
-       WHERE s.token_hash = ?`
+       WHERE s.token_hash = ? AND (s.expires_at IS NULL OR s.expires_at > ?)`
     )
-      .bind(tokenHash)
+      .bind(tokenHash, new Date().toISOString())
       .first();
 
     if (!session) {
@@ -32,16 +58,13 @@ export async function requireDemoUser(request, env) {
       };
     }
 
-    if (session.expires_at && new Date(session.expires_at).getTime() < Date.now()) {
-      await env.DB.prepare("DELETE FROM sessions WHERE id = ?").bind(session.id).run();
-      return {
-        error: json({ error: "unauthorized", message: "Sesja wygasła. Zaloguj się ponownie." }, 401),
-      };
-    }
-
     const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(session.user_id).first();
     if (!user) {
       return { error: json({ error: "unauthorized", message: "Użytkownik nie istnieje." }, 401) };
+    }
+    if (user.blocked) {
+      await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id).run();
+      return { error: blockedError() };
     }
 
     const provider = await env.DB.prepare("SELECT * FROM provider_profiles WHERE user_id = ?")
@@ -77,6 +100,9 @@ export async function requireDemoUser(request, env) {
       ),
     };
   }
+  if (user.blocked) {
+    return { error: blockedError() };
+  }
 
   const provider = await env.DB.prepare("SELECT * FROM provider_profiles WHERE user_id = ?")
     .bind(user.id)
@@ -97,13 +123,7 @@ export async function requireAdmin(request, env) {
     return auth;
   }
 
-  const admins = new Set(
-    String(env.ADMIN_EMAILS || "")
-      .split(",")
-      .map((email) => email.trim().toLowerCase())
-      .filter(Boolean)
-  );
-  if (!auth.user.email || !admins.has(String(auth.user.email).trim().toLowerCase())) {
+  if (!isAdminUser(auth.user, env)) {
     return {
       error: concealed
         ? json({ error: "not_found" }, 404)

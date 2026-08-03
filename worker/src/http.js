@@ -34,16 +34,32 @@ export function isAllowedOrigin(origin, env) {
 export function withCors(response, request, env) {
   const headers = new Headers(response.headers);
   const origin = request.headers.get("Origin");
+  const allowedOrigin = isAllowedOrigin(origin, env);
   headers.set("Vary", appendVary(headers.get("Vary"), "Origin"));
   headers.set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS");
   headers.set(
     "Access-Control-Allow-Headers",
     "Content-Type, Authorization, X-Demo-User, Idempotency-Key"
   );
-  if (isAllowedOrigin(origin, env)) {
+  if (allowedOrigin) {
     headers.set("Access-Control-Allow-Origin", origin);
+    headers.set("Access-Control-Allow-Credentials", "true");
   } else {
     headers.delete("Access-Control-Allow-Origin");
+    headers.delete("Access-Control-Allow-Credentials");
+  }
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Referrer-Policy", "no-referrer");
+  headers.set("Permissions-Policy", "geolocation=(), camera=(), microphone=()");
+  headers.set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+  if (env?.ENVIRONMENT === "production") {
+    headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
+  if (
+    response.headers.get("Content-Type")?.toLowerCase().includes("application/json") ||
+    request.url.includes("/auth/")
+  ) {
+    headers.set("Cache-Control", "no-store");
   }
   return new Response(response.body, {
     status: response.status,

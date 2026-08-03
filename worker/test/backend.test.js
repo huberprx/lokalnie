@@ -1,13 +1,44 @@
 import { describe, expect, it, vi } from "vitest";
 import { requireAdmin, requireDemoUser } from "../src/auth.js";
+import { detectImageType } from "../src/index.js";
+import { sessionTokenFromCookie } from "../src/oauth.js";
 import { canTransitionBooking, hasOverlap } from "../src/bookings.js";
 import { sendViaResend } from "../src/email.js";
 import { json, withCors } from "../src/http.js";
 import { withIdempotency } from "../src/idempotency.js";
+import { enforceRateLimit } from "../src/rateLimit.js";
 import { renderEmail } from "../src/templates.js";
 import { isValidDateISO, validateSlot } from "../src/validate.js";
 
 describe("production authentication", () => {
+  it("parses the session cookie without exposing bearer credentials", () => {
+    expect(
+      sessionTokenFromCookie(new Request("https://api.lokalnie.app/me", {
+        headers: { Cookie: "foo=bar; lokalnie_session=abc%2F123" },
+      }))
+    ).toBe("abc/123");
+  });
+
+  it("accepts a session token from the HttpOnly cookie", async () => {
+    const first = vi.fn().mockResolvedValue({
+      id: "sess_1",
+      user_id: "user_1",
+      expires_at: "2099-01-01T00:00:00.000Z",
+    });
+    const prepare = vi.fn((sql) => ({ bind: vi.fn(() => ({ first })) }));
+    const result = await requireDemoUser(
+      new Request("https://api.lokalnie.app/me", {
+        headers: { Cookie: "lokalnie_session=session-token" },
+      }),
+      {
+        ENVIRONMENT: "production",
+        DB: { prepare },
+      }
+    );
+    expect(result.authMode).toBe("session");
+    expect(prepare).toHaveBeenCalled();
+  });
+
   it("rejects demo credentials without querying D1", async () => {
     const prepare = vi.fn();
     const result = await requireDemoUser(
@@ -28,6 +59,34 @@ describe("production authentication", () => {
       { ENVIRONMENT: "production", DB: { prepare: vi.fn() } }
     );
     expect(result.error.status).toBe(404);
+  });
+
+  it("requires a verified email for configured admins", async () => {
+    const session = {
+      id: "sess_1",
+      user_id: "user_1",
+      expires_at: "2099-01-01T00:00:00.000Z",
+    };
+    const user = { id: "user_1", email: "admin@example.com", email_verified: 0 };
+    const prepare = vi.fn((sql) => ({
+      bind: vi.fn(() => ({
+        first: vi.fn().mockResolvedValue(sql.includes("sessions") ? session : user),
+      })),
+    }));
+    const result = await requireAdmin(
+      new Request("https://api.lokalnie.app/debug/tables", {
+        headers: { Cookie: "lokalnie_session=session-token" },
+      }),
+      { ENVIRONMENT: "production", ADMIN_EMAILS: "admin@example.com", DB: { prepare } }
+    );
+    expect(result.error.status).toBe(404);
+  });
+});
+
+describe("media validation", () => {
+  it("rejects MIME spoofing by checking image signatures", () => {
+    expect(detectImageType(new TextEncoder().encode("not an image"))).toBeNull();
+    expect(detectImageType(Uint8Array.from([0xff, 0xd8, 0xff, 0x00]))).toBe("image/jpeg");
   });
 });
 
@@ -179,9 +238,13 @@ describe("email and CORS", () => {
     const allowed = withCors(json({ ok: true }), allowedRequest, {});
     const blocked = withCors(json({ ok: true }), blockedRequest, {});
     expect(allowed.headers.get("Access-Control-Allow-Origin")).toBe("http://localhost:8080");
+    expect(allowed.headers.get("Access-Control-Allow-Credentials")).toBe("true");
+    expect(allowed.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(allowed.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
     expect(allowed.headers.get("Vary")).toContain("Origin");
     expect(allowed.headers.get("Access-Control-Allow-Headers")).toContain("Idempotency-Key");
     expect(blocked.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    expect(blocked.headers.get("Access-Control-Allow-Credentials")).toBeNull();
   });
 
   it("always blocks localhost in production", () => {
@@ -198,5 +261,30 @@ describe("email and CORS", () => {
     });
     expect(production.headers.get("Access-Control-Allow-Origin")).toBeNull();
     expect(localProduction.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+});
+
+describe("rate limiting", () => {
+  it("returns 429 with Retry-After after the configured limit", async () => {
+    const DB = {
+      prepare(sql) {
+        return {
+          bind() {
+            return { sql };
+          },
+        };
+      },
+      async batch() {
+        return [{}, { results: [{ count: 6, expires_at: Date.now() + 20_000 }] }];
+      },
+    };
+    const response = await enforceRateLimit(
+      new Request("https://api.lokalnie.app/media", { method: "POST" }),
+      { DB },
+      "ip:media",
+      5
+    );
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("20");
   });
 });

@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.205";
+  const APP_VERSION = "1.0.206";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -75,6 +75,7 @@
   }
 
   function hasApiToken() {
+    if (isProductionHostname()) return true;
     return !!(
       window.LokalnieApi &&
       window.LokalnieApi.getAuthToken &&
@@ -249,6 +250,20 @@
       providerProfiles: [],
       /** Rola provider z konta — gdy jest ≥1 własny profil. */
       providerRoleActive: false,
+      /** Flaga z /me — nigdy nie ufaj lokalnemu storage bez rewalidacji API. */
+      isAdmin: false,
+      admin: {
+        tab: "stats",
+        q: "",
+        loading: false,
+        error: null,
+        stats: null,
+        users: null,
+        providers: null,
+        bookings: null,
+        emails: null,
+        audit: null,
+      },
     };
   }
 
@@ -3227,7 +3242,29 @@
 
   function saveState() {
     try {
-      localStorage.setItem(STATE_KEY, JSON.stringify(window.AppState));
+      const state = JSON.parse(JSON.stringify(window.AppState));
+      // Uprawnienia admina zawsze z /me — nie persystuj cache operatorskiego.
+      delete state.isAdmin;
+      delete state.admin;
+      if (isProductionHostname()) {
+        // Produkcja przechowuje wyłącznie cache UI; dane CRM pochodzą z API.
+        delete state.providerClients;
+        delete state.clientProfile;
+        delete state.bookings;
+        delete state.requests;
+        delete state.providerProfiles;
+        delete state.myProvider;
+        delete state.clientAvatarUrl;
+        delete state.availEditDraft;
+        delete state.availEditDrafts;
+        if (state.draft && typeof state.draft === "object") {
+          delete state.draft.clientPhone;
+          delete state.draft.clientEmail;
+          delete state.draft.clientAddress;
+          delete state.draft.notes;
+        }
+      }
+      localStorage.setItem(STATE_KEY, JSON.stringify(state));
     } catch (err) {
       // brak localStorage nie może wywalić prototypu
     }
@@ -3363,8 +3400,11 @@
             : "visits",
         dashSearchOpen: stored.dashSearchOpen === true,
         dashSearchQ: typeof stored.dashSearchQ === "string" ? stored.dashSearchQ : "",
-        providerClients:
-          stored.providerClients && typeof stored.providerClients === "object" ? stored.providerClients : base.providerClients,
+        providerClients: isProductionHostname()
+          ? base.providerClients
+          : stored.providerClients && typeof stored.providerClients === "object"
+            ? stored.providerClients
+            : base.providerClients,
         provCalSelection: normalizeProvCalSelection(
           stored.provCalSelection ||
             (typeof stored.provCalSelectedBookingId === "string"
@@ -3391,22 +3431,36 @@
             ? stored.availEditDrafts
             : base.availEditDrafts,
         appMenuOpen: !!stored.appMenuOpen,
-        clientAvatarUrl: typeof stored.clientAvatarUrl === "string" ? stored.clientAvatarUrl : base.clientAvatarUrl,
-        clientProfile:
-          stored.clientProfile && typeof stored.clientProfile === "object"
+        clientAvatarUrl: isProductionHostname()
+          ? base.clientAvatarUrl
+          : typeof stored.clientAvatarUrl === "string"
+            ? stored.clientAvatarUrl
+            : base.clientAvatarUrl,
+        clientProfile: isProductionHostname()
+          ? base.clientProfile
+          : stored.clientProfile && typeof stored.clientProfile === "object"
             ? stored.clientProfile
             : base.clientProfile,
         onboarding: stored.onboarding === "client" ? "client" : null,
-        myProvider: stored.myProvider && typeof stored.myProvider === "object" ? stored.myProvider : base.myProvider,
+        myProvider: isProductionHostname()
+          ? base.myProvider
+          : stored.myProvider && typeof stored.myProvider === "object"
+            ? stored.myProvider
+            : base.myProvider,
         activeProviderId:
           typeof stored.activeProviderId === "string" ? stored.activeProviderId : base.activeProviderId,
-        providerProfiles: Array.isArray(stored.providerProfiles)
+        providerProfiles: isProductionHostname()
+          ? base.providerProfiles.slice()
+          : Array.isArray(stored.providerProfiles)
           ? stored.providerProfiles.filter(function (p) {
               return p && typeof p === "object";
             }).slice(0, MAX_PROVIDER_PROFILES)
           : base.providerProfiles.slice(),
         providerRoleActive:
           typeof stored.providerRoleActive === "boolean" ? stored.providerRoleActive : base.providerRoleActive,
+        // Admin zawsze z /me — nie przywracaj z localStorage.
+        isAdmin: false,
+        admin: base.admin,
       };
       ensureClientProfile();
       ensureProviderProfiles();
@@ -3796,6 +3850,11 @@
           ${profilesBlock}
 
           <nav class="app-menu__links" aria-label="Informacje">
+            ${
+              loggedIn && window.AppState.isAdmin
+                ? `<button type="button" class="app-menu__link app-menu__link--admin" data-action="open-admin">Panel admina</button>`
+                : ""
+            }
             ${
               isPwaInstalled()
                 ? ""
@@ -4594,9 +4653,412 @@
               ${providerRows}
               ${addProviderBtn}
             </div>
+            ${
+              window.AppState.isAdmin
+                ? `<div class="settings__row settings__row--actions">
+              <button type="button" class="btn btn--ghost account-actions__btn" data-action="open-admin">Panel admina</button>
+            </div>`
+                : ""
+            }
             <div class="settings__row settings__row--actions">
               <button type="button" class="btn btn--ghost account-actions__btn account-actions__btn--logout" data-action="logout">Wyloguj</button>
             </div>
+          </div>
+        </div>
+        ${bottomNav("account")}
+      </div>`;
+  }
+
+  function ensureAdminState() {
+    if (!window.AppState.admin || typeof window.AppState.admin !== "object") {
+      window.AppState.admin = {
+        tab: "stats",
+        q: "",
+        loading: false,
+        error: null,
+        stats: null,
+        users: null,
+        providers: null,
+        bookings: null,
+        emails: null,
+        audit: null,
+      };
+    }
+    return window.AppState.admin;
+  }
+
+  function adminTabLabel(tab) {
+    return (
+      {
+        stats: "Przegląd",
+        users: "Użytkownicy",
+        providers: "Firmy",
+        bookings: "Rezerwacje",
+        emails: "Maile",
+        audit: "Audit",
+      }[tab] || tab
+    );
+  }
+
+  function loadAdminTab(force) {
+    if (!window.AppState.isAdmin || !window.LokalnieApi || !window.LokalnieApi.request) return;
+    const admin = ensureAdminState();
+    const tab = admin.tab || "stats";
+    if (!force && admin[tab] != null && tab !== "stats") {
+      /* keep cache — stats always refresh on open via force from openAdmin */
+    }
+    if (admin.loading) return;
+    admin.loading = true;
+    admin.error = null;
+    renderAll();
+
+    const q = encodeURIComponent(admin.q || "");
+    let path = "/admin/stats";
+    if (tab === "users") path = "/admin/users?limit=40" + (admin.q ? "&q=" + q : "");
+    else if (tab === "providers") path = "/admin/providers?limit=40" + (admin.q ? "&q=" + q : "");
+    else if (tab === "bookings") path = "/admin/bookings?limit=40";
+    else if (tab === "emails") path = "/admin/emails/outbox";
+    else if (tab === "audit") path = "/admin/audit?limit=40";
+
+    void window.LokalnieApi.request(path)
+      .then(function (data) {
+        const a = ensureAdminState();
+        if (tab === "stats") a.stats = data.stats || null;
+        else if (tab === "users") a.users = data.users || [];
+        else if (tab === "providers") a.providers = data.providers || [];
+        else if (tab === "bookings") a.bookings = data.bookings || [];
+        else if (tab === "emails") a.emails = data.items || [];
+        else if (tab === "audit") a.audit = data.items || [];
+        a.loading = false;
+        a.error = null;
+        renderAll();
+      })
+      .catch(function (err) {
+        const a = ensureAdminState();
+        a.loading = false;
+        if (err && (err.status === 403 || err.status === 404)) {
+          window.AppState.isAdmin = false;
+          a.error = "Brak uprawnień admina.";
+          showToast("Brak dostępu do panelu admina.");
+          goScreen("account");
+          return;
+        }
+        a.error = (err && err.message) || "Nie udało się pobrać danych.";
+        renderAll();
+      });
+  }
+
+  function openAdmin() {
+    if (!window.AppState.isAdmin) {
+      showToast("Brak uprawnień admina.");
+      return;
+    }
+    closeAppMenu();
+    window.AppState.activeRole = "client";
+    const admin = ensureAdminState();
+    admin.tab = admin.tab || "stats";
+    admin.stats = null;
+    window.AppState.screen.client = "admin";
+    updateAppHeader("client");
+    saveState();
+    renderAll();
+    loadAdminTab(true);
+  }
+
+  function setAdminTab(tab) {
+    if (!window.AppState.isAdmin) return;
+    const allowed = { stats: 1, users: 1, providers: 1, bookings: 1, emails: 1, audit: 1 };
+    if (!allowed[tab]) return;
+    const admin = ensureAdminState();
+    admin.tab = tab;
+    admin.error = null;
+    renderAll();
+    loadAdminTab(true);
+  }
+
+  function adminBlockUser(userId, block) {
+    if (!window.AppState.isAdmin || !userId) return;
+    const reason = block
+      ? window.prompt("Powód blokady (opcjonalnie, widoczny tylko dla admina):", "")
+      : null;
+    if (block && reason === null) return;
+    const path =
+      "/admin/users/" +
+      encodeURIComponent(userId) +
+      (block ? "/block" : "/unblock");
+    void window.LokalnieApi.request(path, {
+      method: "POST",
+      json: block ? { reason: String(reason || "").trim().slice(0, 280) } : {},
+    })
+      .then(function () {
+        showToast(block ? "Użytkownik zablokowany." : "Użytkownik odblokowany.");
+        loadAdminTab(true);
+      })
+      .catch(function (err) {
+        const code = err && err.data && err.data.error;
+        if (code === "cannot_block_self") showToast("Nie możesz zablokować siebie.");
+        else if (code === "cannot_block_admin") showToast("Nie można blokować konta admina.");
+        else showToast((err && err.message) || "Operacja nieudana.");
+      });
+  }
+
+  function adminToggleProviderVisibility(providerId, visible) {
+    if (!window.AppState.isAdmin || !providerId) return;
+    void window.LokalnieApi.request("/admin/providers/" + encodeURIComponent(providerId), {
+      method: "PATCH",
+      json: { visibleInSearch: !!visible },
+    })
+      .then(function () {
+        showToast(visible ? "Firma widoczna w katalogu." : "Firma ukryta w katalogu.");
+        loadAdminTab(true);
+      })
+      .catch(function (err) {
+        showToast((err && err.message) || "Nie udało się zmienić widoczności.");
+      });
+  }
+
+  function adminProcessEmails() {
+    if (!window.AppState.isAdmin) return;
+    void window.LokalnieApi.request("/admin/emails/process", { method: "POST", json: {} })
+      .then(function (data) {
+        showToast(
+          "Maile: wysłane " +
+            (data && data.sent != null ? data.sent : "?") +
+            ", błędy " +
+            (data && data.failed != null ? data.failed : "?")
+        );
+        loadAdminTab(true);
+      })
+      .catch(function (err) {
+        showToast((err && err.message) || "Przetwarzanie maili nieudane.");
+      });
+  }
+
+  function renderAdminStatsBody(stats) {
+    if (!stats) return `<p class="empty-note">Brak danych.</p>`;
+    const cards = [
+      ["Użytkownicy", stats.usersTotal, "łącznie"],
+      ["Nowi (7 dni)", stats.usersLast7d, "konta"],
+      ["Zablokowani", stats.usersBlocked, "konta"],
+      ["Firmy", stats.providersTotal, "widoczne: " + stats.providersVisible],
+      ["Rezerwacje", stats.bookingsTotal, "7 dni: " + stats.bookingsLast7d],
+      ["Aktywne (24h)", stats.bookingsActiveLast24h, "confirmed/pending"],
+      ["Otwarte prośby", stats.requestsOpen, "pending/proposed"],
+      ["Maile w kolejce", stats.emailsPending, "pending"],
+    ];
+    return `<div class="admin-stats">
+      ${cards
+        .map(function (c) {
+          return `<div class="admin-stat">
+            <span class="admin-stat__label">${escapeHtml(c[0])}</span>
+            <span class="admin-stat__value">${escapeHtml(String(c[1] ?? "—"))}</span>
+            <span class="admin-stat__hint">${escapeHtml(c[2])}</span>
+          </div>`;
+        })
+        .join("")}
+    </div>`;
+  }
+
+  function renderAdminUsersBody(users) {
+    if (!users || !users.length) return `<p class="empty-note">Brak użytkowników.</p>`;
+    return `<div class="admin-list">
+      ${users
+        .map(function (u) {
+          const roles = [
+            u.roles && u.roles.client ? "klient" : "",
+            u.roles && u.roles.provider ? "firma" : "",
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          return `<article class="admin-row${u.blocked ? " admin-row--blocked" : ""}">
+            <div class="admin-row__main">
+              <strong>${escapeHtml(u.name || "—")}</strong>
+              <span>${escapeHtml(u.email || "brak e-mail")}</span>
+              <span class="admin-row__meta">${escapeHtml(roles || "—")}${
+                u.blocked ? " · zablokowany" : ""
+              }${u.blockedReason ? " · " + escapeHtml(u.blockedReason) : ""}</span>
+            </div>
+            <div class="admin-row__actions">
+              ${
+                u.blocked
+                  ? `<button type="button" class="btn btn--ghost btn--sm" data-action="admin-unblock-user" data-user-id="${escapeHtml(u.id)}">Odblokuj</button>`
+                  : `<button type="button" class="btn btn--ghost btn--sm" data-action="admin-block-user" data-user-id="${escapeHtml(u.id)}">Zablokuj</button>`
+              }
+            </div>
+          </article>`;
+        })
+        .join("")}
+    </div>`;
+  }
+
+  function renderAdminProvidersBody(providers) {
+    if (!providers || !providers.length) return `<p class="empty-note">Brak firm.</p>`;
+    return `<div class="admin-list">
+      ${providers
+        .map(function (p) {
+          return `<article class="admin-row${!p.visibleInSearch ? " admin-row--hidden" : ""}">
+            <div class="admin-row__main">
+              <strong>${escapeHtml(p.name || "—")}</strong>
+              <span>${escapeHtml(p.slug || "")}${p.city ? " · " + escapeHtml(p.city) : ""}</span>
+              <span class="admin-row__meta">${escapeHtml(p.ownerEmail || "—")}${
+                p.ownerBlocked ? " · właściciel zablokowany" : ""
+              }${!p.visibleInSearch ? " · ukryta" : ""}</span>
+            </div>
+            <div class="admin-row__actions">
+              ${
+                p.visibleInSearch
+                  ? `<button type="button" class="btn btn--ghost btn--sm" data-action="admin-hide-provider" data-provider-id="${escapeHtml(p.id)}">Ukryj</button>`
+                  : `<button type="button" class="btn btn--ghost btn--sm" data-action="admin-show-provider" data-provider-id="${escapeHtml(p.id)}">Pokaż</button>`
+              }
+            </div>
+          </article>`;
+        })
+        .join("")}
+    </div>`;
+  }
+
+  function renderAdminBookingsBody(bookings) {
+    if (!bookings || !bookings.length) return `<p class="empty-note">Brak rezerwacji.</p>`;
+    return `<div class="admin-list">
+      ${bookings
+        .map(function (b) {
+          return `<article class="admin-row">
+            <div class="admin-row__main">
+              <strong>${escapeHtml(b.providerName || b.providerId || "—")}</strong>
+              <span>${escapeHtml(b.clientName || "—")} · ${escapeHtml(b.dateISO || "")} ${escapeHtml(
+                b.from || ""
+              )}–${escapeHtml(b.to || "")}</span>
+              <span class="admin-row__meta">${escapeHtml(b.status || "")}${
+                b.clientEmail ? " · " + escapeHtml(b.clientEmail) : ""
+              }</span>
+            </div>
+          </article>`;
+        })
+        .join("")}
+    </div>`;
+  }
+
+  function renderAdminEmailsBody(items) {
+    if (!items || !items.length) return `<p class="empty-note">Kolejka maili jest pusta.</p>`;
+    return `<div class="admin-list">
+      ${items
+        .map(function (m) {
+          return `<article class="admin-row">
+            <div class="admin-row__main">
+              <strong>${escapeHtml(m.to || m.recipient || "—")}</strong>
+              <span>${escapeHtml(m.template || m.subject || m.type || "email")}</span>
+              <span class="admin-row__meta">${escapeHtml(m.status || "")}${
+                m.scheduledAt || m.scheduled_at
+                  ? " · " + escapeHtml(m.scheduledAt || m.scheduled_at)
+                  : ""
+              }</span>
+            </div>
+          </article>`;
+        })
+        .join("")}
+    </div>`;
+  }
+
+  function renderAdminAuditBody(items) {
+    if (!items || !items.length) return `<p class="empty-note">Brak wpisów audytu.</p>`;
+    return `<div class="admin-list">
+      ${items
+        .map(function (a) {
+          return `<article class="admin-row">
+            <div class="admin-row__main">
+              <strong>${escapeHtml(a.action || "—")}</strong>
+              <span>${escapeHtml(a.targetType || "")}: ${escapeHtml(a.targetId || "")}</span>
+              <span class="admin-row__meta">${escapeHtml(a.actorEmail || a.actorUserId || "—")}${
+                a.createdAt ? " · " + escapeHtml(a.createdAt) : ""
+              }</span>
+            </div>
+          </article>`;
+        })
+        .join("")}
+    </div>`;
+  }
+
+  function renderAdmin() {
+    if (!window.AppState.isAdmin) {
+      return `
+        <div class="app-screen app-screen--client app-screen--account">
+          <div class="app-scroll">
+            <header class="screen-head screen-head--with-back">
+              <button type="button" class="screen-head__back" data-action="go-screen" data-screen="account" aria-label="Wróć">
+                <span class="screen-head__back-icon" aria-hidden="true"></span>
+              </button>
+              <div class="screen-head__text">
+                <h2 class="screen-head__title">Panel admina</h2>
+                <p class="screen-head__sub">Brak uprawnień.</p>
+              </div>
+            </header>
+          </div>
+          ${bottomNav("account")}
+        </div>`;
+    }
+
+    const admin = ensureAdminState();
+    const tabs = ["stats", "users", "providers", "bookings", "emails", "audit"];
+    const tab = admin.tab || "stats";
+    let body = "";
+    if (admin.loading && admin[tab] == null) {
+      body = `<p class="empty-note">Ładowanie…</p>`;
+    } else if (admin.error) {
+      body = `<p class="empty-note">${escapeHtml(admin.error)}</p>`;
+    } else if (tab === "stats") body = renderAdminStatsBody(admin.stats);
+    else if (tab === "users") body = renderAdminUsersBody(admin.users);
+    else if (tab === "providers") body = renderAdminProvidersBody(admin.providers);
+    else if (tab === "bookings") body = renderAdminBookingsBody(admin.bookings);
+    else if (tab === "emails") body = renderAdminEmailsBody(admin.emails);
+    else if (tab === "audit") body = renderAdminAuditBody(admin.audit);
+
+    const showSearch = tab === "users" || tab === "providers";
+
+    return `
+      <div class="app-screen app-screen--client app-screen--admin">
+        <div class="app-scroll">
+          <header class="screen-head screen-head--with-back">
+            <button type="button" class="screen-head__back" data-action="go-screen" data-screen="account" aria-label="Wróć">
+              <span class="screen-head__back-icon" aria-hidden="true"></span>
+            </button>
+            <div class="screen-head__text">
+              <h2 class="screen-head__title">Panel admina</h2>
+              <p class="screen-head__sub">Podgląd platformy i działania operatorskie.</p>
+            </div>
+          </header>
+          <div class="admin-panel">
+            <div class="admin-tabs" role="tablist" aria-label="Sekcje admina">
+              ${tabs
+                .map(function (t) {
+                  return `<button type="button" class="admin-tabs__item${
+                    t === tab ? " admin-tabs__item--active" : ""
+                  }" data-action="admin-tab" data-tab="${escapeHtml(t)}" role="tab" aria-selected="${
+                    t === tab ? "true" : "false"
+                  }">${escapeHtml(adminTabLabel(t))}</button>`;
+                })
+                .join("")}
+            </div>
+            ${
+              showSearch
+                ? `<div class="admin-search">
+                <input type="search" class="admin-search__input" data-role="admin-search-q" value="${escapeHtml(
+                  admin.q || ""
+                )}" placeholder="Szukaj e-mail / nazwa / id" maxlength="80" autocomplete="off" />
+                <button type="button" class="btn btn--primary btn--sm" data-action="admin-search">Szukaj</button>
+              </div>`
+                : ""
+            }
+            ${
+              tab === "emails"
+                ? `<div class="admin-toolbar">
+                <button type="button" class="btn btn--primary btn--sm" data-action="admin-process-emails">Przetwórz kolejkę</button>
+                <button type="button" class="btn btn--ghost btn--sm" data-action="admin-refresh">Odśwież</button>
+              </div>`
+                : `<div class="admin-toolbar">
+                <button type="button" class="btn btn--ghost btn--sm" data-action="admin-refresh">Odśwież</button>
+              </div>`
+            }
+            ${body}
           </div>
         </div>
         ${bottomNav("account")}
@@ -6139,6 +6601,8 @@
         return renderMyCalendar();
       case "account":
         return renderAccount();
+      case "admin":
+        return renderAdmin();
       case "auth":
         return renderAuthLogin();
       case "profile":
@@ -6356,7 +6820,8 @@
   /** Aktualizuje lokalną rolę po OAuth (/me) — przed renderem menu. */
   function applyApiAuth(me) {
     if (!me || !window.AppState) return;
-    if (isProductionHostname() && hasApiToken()) {
+    window.AppState.isAdmin = !!me.isAdmin;
+    if (isProductionHostname() || hasApiToken()) {
       // Po prawdziwym OAuth stan wizyt/prośb pochodzi wyłącznie z API.
       // Nie próbujemy rozpoznawać demo po opcjonalnych flagach rekordu.
       window.AppState.bookings = [];
@@ -16310,6 +16775,12 @@
     // Konto (gość) i panel logowania — bez wymuszania OAuth.
     const gated = screen === "favorites" || screen === "myCalendar";
     if (gated && !requireLogin({ type: "screen", screen: screen })) return;
+    if (screen === "admin") {
+      if (!isLoggedIn() || !window.AppState.isAdmin) {
+        showToast("Brak uprawnień admina.");
+        screen = "account";
+      }
+    }
     if (screen === "account" && isLoggedIn()) {
       // Zalogowany: ustawienia konta; menu boczne zostaje osobno.
     }
@@ -16325,6 +16796,7 @@
     // Ekrany klienta (konto, ulubione…) — przełącz rolę, jeśli jesteśmy jako usługodawca.
     if (
       (screen === "account" ||
+        screen === "admin" ||
         screen === "auth" ||
         screen === "favorites" ||
         screen === "search" ||
@@ -16337,6 +16809,7 @@
     updateAppHeader(window.AppState.activeRole || "client");
     saveState();
     renderAll();
+    if (screen === "admin") loadAdminTab(true);
   }
 
   function openAuth() {
@@ -18135,13 +18608,51 @@
       const hash = (window.location.hash || "").replace(/^#/, "");
       if (!hash) return false;
       const params = new URLSearchParams(hash);
+      const authError = params.get("auth_error");
+      if (authError) {
+        history.replaceState(null, "", window.location.pathname + window.location.search);
+        if (authError === "account_blocked") {
+          showToast("Konto zostało zablokowane. Skontaktuj się z supportem.");
+        } else {
+          showToast("Logowanie nieudane.");
+        }
+        return false;
+      }
       const token = params.get("access_token");
       if (!token) return false;
       history.replaceState(null, "", window.location.pathname + window.location.search);
+      if (isProductionHostname()) return false;
       return finishGoogleLogin(token);
     } catch (err) {
       return false;
     }
+  }
+
+  function restoreCookieSession() {
+    if (!isProductionHostname() || !window.LokalnieApi || !window.LokalnieApi.request) return;
+    void window.LokalnieApi.request("/me", { suppressUnauthorized: true })
+      .then(function (me) {
+        if (!me || !me.user) return;
+        setTesterMode(false);
+        window.AppState.loggedIn = true;
+        window.AppState.activeRole = "client";
+        applyGoogleUserToClientProfile(me.user);
+        applyApiAuth(me);
+        const showOnboarding = needsClientOnboarding(me.user);
+        window.AppState.onboarding = showOnboarding ? "client" : null;
+        updateAppHeader("client");
+        showPage("app");
+        renderAll();
+        return window.LokalnieApi.syncFromServer().then(function () {
+          if (showOnboarding) window.AppState.onboarding = "client";
+          saveState();
+          renderAll();
+        });
+      })
+      .catch(function (err) {
+        // Brak cookie oznacza gościa; nie pokazuj błędu ani nie zmieniaj UI.
+        if (err && err.status !== 401) console.warn("[Lokalnie] cookie session restore failed", err);
+      });
   }
 
   let apiUnauthorizedHandling = false;
@@ -18313,12 +18824,12 @@
   }
 
   function setClientAvatarFromFile(file) {
-    if (!file || !/^image\//.test(file.type)) {
-      showToast("Wybierz plik graficzny.");
+    if (!file || !/^image\/(?:jpeg|png|webp|gif)$/i.test(String(file.type || ""))) {
+      showToast("Wybierz zdjęcie JPG, PNG, WebP lub GIF.");
       return;
     }
-    if (file.size > 2.5 * 1024 * 1024) {
-      showToast("Zdjęcie jest za duże (max 2,5 MB).");
+    if (file.size > 5 * 1024 * 1024) {
+      showToast("Zdjęcie jest za duże (maks. 5 MB).");
       return;
     }
 
@@ -18345,6 +18856,10 @@
           saveState();
           renderAll();
           showToast("Zdjęcie profilu zapisane na serwerze.");
+          return;
+        }
+        if (isProductionHostname()) {
+          showToast("Nie udało się zapisać zdjęcia na serwerze.");
           return;
         }
         applyLocalPreview();
@@ -18571,6 +19086,47 @@
         break;
       case "open-my-calendar": event.preventDefault(); openMyCalendar(); break;
       case "logout": logout(); break;
+      case "open-admin":
+        event.preventDefault();
+        openAdmin();
+        break;
+      case "admin-tab":
+        event.preventDefault();
+        setAdminTab(d.tab);
+        break;
+      case "admin-refresh":
+        event.preventDefault();
+        loadAdminTab(true);
+        break;
+      case "admin-block-user":
+        event.preventDefault();
+        adminBlockUser(d.userId, true);
+        break;
+      case "admin-unblock-user":
+        event.preventDefault();
+        adminBlockUser(d.userId, false);
+        break;
+      case "admin-hide-provider":
+        event.preventDefault();
+        adminToggleProviderVisibility(d.providerId, false);
+        break;
+      case "admin-show-provider":
+        event.preventDefault();
+        adminToggleProviderVisibility(d.providerId, true);
+        break;
+      case "admin-process-emails":
+        event.preventDefault();
+        adminProcessEmails();
+        break;
+      case "admin-search":
+        event.preventDefault();
+        {
+          const input = document.querySelector('[data-role="admin-search-q"]');
+          const admin = ensureAdminState();
+          admin.q = input ? String(input.value || "").trim().slice(0, 80) : "";
+          loadAdminTab(true);
+        }
+        break;
       case "go-home":
         event.preventDefault();
         goMarketplace();
@@ -21528,7 +22084,7 @@
         window.LokalnieApi && window.LokalnieApi.getAuthToken
           ? window.LokalnieApi.getAuthToken()
           : "";
-      if (window.AppState.loggedIn && !token && !isTesterMode()) {
+      if (!isProductionHostname() && window.AppState.loggedIn && !token && !isTesterMode()) {
         window.AppState.loggedIn = false;
         window.AppState.activeRole = "client";
         window.AppState.onboarding = null;
@@ -21557,6 +22113,7 @@
         /* ignore */
       }
     }
+    if (!justAuthed) restoreCookieSession();
     // Okresowo zdejmuj wygasłe holdy propozycji (TTL).
     setInterval(function () {
       if (!window.AppState || !window.AppState.loggedIn) return;
@@ -21572,8 +22129,7 @@
       window.LokalnieApi &&
       window.LokalnieApi.enabled &&
       window.AppState.loggedIn &&
-      window.LokalnieApi.getAuthToken &&
-      window.LokalnieApi.getAuthToken()
+      (window.LokalnieApi.getAuthToken && window.LokalnieApi.getAuthToken())
     ) {
       void window.LokalnieApi.syncFromServer().then(function (result) {
         if (result && result.ok) {
