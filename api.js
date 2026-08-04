@@ -638,7 +638,7 @@
       "/bookings/" + encodeURIComponent(booking.id),
       { method: "PATCH", json: patch }
     );
-    return res && res.booking;
+    return { booking: res && res.booking, calendar: (res && res.calendar) || null };
   }
 
   async function resizeImageForUpload(file, maxDimension) {

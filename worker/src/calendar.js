@@ -96,6 +96,7 @@ function eventBody(booking, provider) {
     summary: `${services} · ${providerName}`,
     description: [
       `Usługodawca: ${providerName}`,
+      booking.client_name ? `Klient: ${booking.client_name}` : "",
       services ? `Usługa: ${services}` : "",
       `Rezerwacja Lokalnie: ${booking.id}`,
     ].filter(Boolean).join("\n"),
@@ -202,27 +203,13 @@ export async function disconnectCalendar(env, userId, connectionId) {
   return true;
 }
 
-export async function syncBookingToGoogle(env, bookingId) {
-  const row = await env.DB.prepare(
-    `SELECT b.*, p.name AS provider_name, p.address AS provider_address
-     FROM bookings b
-     LEFT JOIN provider_profiles p ON p.id=b.provider_id
-     WHERE b.id=?`
-  ).bind(bookingId).first();
-  if (!row || !row.client_user_id) return { connected: false, skipped: true };
-
-  const connection = await env.DB.prepare(
-    `SELECT * FROM calendar_connections
-     WHERE user_id=? AND provider='google' AND status <> 'revoked'`
-  ).bind(row.client_user_id).first();
-  if (!connection) return { connected: false, synced: false };
-
+async function syncConnectionBooking(connection, booking, provider, env) {
   const existing = await env.DB.prepare(
     "SELECT * FROM calendar_events WHERE booking_id=? AND connection_id=?"
-  ).bind(bookingId, connection.id).first();
+  ).bind(booking.id, connection.id).first();
 
   try {
-    if (["cancelled", "rejected"].includes(row.status)) {
+    if (["cancelled", "rejected"].includes(booking.status)) {
       if (existing) {
         const response = await googleRequest(
           connection,
@@ -235,14 +222,13 @@ export async function syncBookingToGoogle(env, bookingId) {
           `UPDATE calendar_events SET status='cancelled', last_error=NULL, updated_at=? WHERE id=?`
         ).bind(nowIso(), existing.id).run();
       }
-      return { connected: true, synced: true, cancelled: true };
+      return { connectionId: connection.id, connected: true, synced: true, cancelled: true };
     }
 
-    if (row.status !== "confirmed" || !row.date_iso || !row.time_from) {
-      return { connected: true, synced: false, skipped: true };
+    if (booking.status !== "confirmed" || !booking.date_iso || !booking.time_from) {
+      return { connectionId: connection.id, connected: true, synced: false, skipped: true };
     }
 
-    const provider = { name: row.provider_name, address: row.provider_address };
     let response;
     let eventId = existing?.external_event_id;
     if (eventId) {
@@ -250,7 +236,7 @@ export async function syncBookingToGoogle(env, bookingId) {
         connection,
         env,
         `/calendars/${encodeURIComponent(connection.calendar_id)}/events/${encodeURIComponent(eventId)}`,
-        { method: "PATCH", body: JSON.stringify(eventBody(row, provider)) }
+        { method: "PATCH", body: JSON.stringify(eventBody(booking, provider)) }
       );
       if (response.status === 404) eventId = null;
     }
@@ -259,7 +245,7 @@ export async function syncBookingToGoogle(env, bookingId) {
         connection,
         env,
         `/calendars/${encodeURIComponent(connection.calendar_id)}/events`,
-        { method: "POST", body: JSON.stringify(eventBody(row, provider)) }
+        { method: "POST", body: JSON.stringify(eventBody(booking, provider)) }
       );
     }
     const payload = await response.json();
@@ -270,8 +256,7 @@ export async function syncBookingToGoogle(env, bookingId) {
       `INSERT INTO calendar_events
        (id, connection_id, booking_id, external_event_id, external_etag, status, last_error, updated_at)
        VALUES (?, ?, ?, ?, ?, 'synced', NULL, ?)
-       ON CONFLICT(booking_id) DO UPDATE SET
-         connection_id=excluded.connection_id,
+       ON CONFLICT(connection_id, booking_id) DO UPDATE SET
          external_event_id=excluded.external_event_id,
          external_etag=excluded.external_etag,
          status='synced',
@@ -280,7 +265,7 @@ export async function syncBookingToGoogle(env, bookingId) {
     ).bind(
       eventRecordId,
       connection.id,
-      bookingId,
+      booking.id,
       payload.id,
       payload.etag || null,
       nowIso()
@@ -288,7 +273,7 @@ export async function syncBookingToGoogle(env, bookingId) {
     await env.DB.prepare(
       "UPDATE calendar_connections SET status='connected', last_error=NULL, updated_at=? WHERE id=?"
     ).bind(nowIso(), connection.id).run();
-    return { connected: true, synced: true, eventId: payload.id };
+    return { connectionId: connection.id, connected: true, synced: true, eventId: payload.id };
   } catch (error) {
     await markConnectionError(env, connection.id, error);
     if (existing) {
@@ -296,6 +281,36 @@ export async function syncBookingToGoogle(env, bookingId) {
         "UPDATE calendar_events SET status='error', last_error=?, updated_at=? WHERE id=?"
       ).bind(String(error?.message || error).slice(0, 500), nowIso(), existing.id).run();
     }
-    return { connected: true, synced: false, error: "calendar_sync_failed" };
+    return { connectionId: connection.id, connected: true, synced: false, error: "calendar_sync_failed" };
   }
+}
+
+export async function syncBookingToGoogle(env, bookingId) {
+  const booking = await env.DB.prepare(
+    `SELECT b.*, p.name AS provider_name, p.address AS provider_address, p.user_id AS provider_user_id
+     FROM bookings b
+     LEFT JOIN provider_profiles p ON p.id=b.provider_id
+     WHERE b.id=?`
+  ).bind(bookingId).first();
+  if (!booking) return { connected: false, skipped: true, results: [] };
+
+  const userIds = [...new Set([booking.client_user_id, booking.provider_user_id].filter(Boolean))];
+  if (!userIds.length) return { connected: false, skipped: true, results: [] };
+  const placeholders = userIds.map(() => "?").join(", ");
+  const connections = await env.DB.prepare(
+    `SELECT * FROM calendar_connections
+     WHERE user_id IN (${placeholders}) AND provider='google' AND status <> 'revoked'`
+  ).bind(...userIds).all();
+  const targets = connections.results || [];
+  if (!targets.length) return { connected: false, synced: false, results: [] };
+
+  const provider = { name: booking.provider_name, address: booking.provider_address };
+  const results = await Promise.all(
+    targets.map((connection) => syncConnectionBooking(connection, booking, provider, env))
+  );
+  return {
+    connected: true,
+    synced: results.every((result) => result.synced),
+    results,
+  };
 }

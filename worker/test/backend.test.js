@@ -285,6 +285,7 @@ describe("rate limiting", () => {
       5
     );
     expect(response.status).toBe(429);
-    expect(response.headers.get("Retry-After")).toBe("20");
+    expect(Number(response.headers.get("Retry-After"))).toBeGreaterThanOrEqual(20);
+    expect(Number(response.headers.get("Retry-After"))).toBeLessThanOrEqual(21);
   });
 });

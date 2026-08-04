@@ -1,9 +1,10 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { applyD1Migrations } from "cloudflare:test";
 import worker from "../src/index.js";
 import { hashToken } from "../src/oauth.js";
 import { cleanupIdempotencyKeys } from "../src/idempotency.js";
+import { encryptToken, syncBookingToGoogle } from "../src/calendar.js";
 
 const CLIENT_TOKEN = "client-token";
 const PROVIDER_TOKEN = "provider-token";
@@ -56,6 +57,10 @@ beforeEach(async () => {
       "INSERT INTO sessions (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)"
     ).bind("sess-other", "user-other", otherHash, expires),
   ]);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 function api(path, { method = "GET", token = CLIENT_TOKEN, body, key } = {}) {
@@ -480,5 +485,73 @@ describe("phone PII at rest", () => {
       .first();
     expect(row.phone.startsWith("enc:v1:")).toBe(true);
     expect(row.phone).not.toContain("501");
+  });
+});
+
+describe("Google Calendar synchronization", () => {
+  const calendarTokenKey = "test-calendar-token-key";
+
+  async function connectCalendar(id, userId) {
+    await env.DB.prepare(
+      `INSERT INTO calendar_connections (
+        id, user_id, provider, calendar_id, encrypted_access_token, encrypted_refresh_token,
+        token_expires_at, scopes, status
+      ) VALUES (?, ?, 'google', 'primary', ?, ?, ?, ?, 'connected')`
+    ).bind(
+      id,
+      userId,
+      await encryptToken(`access-${id}`, calendarTokenKey),
+      await encryptToken(`refresh-${id}`, calendarTokenKey),
+      "2099-01-01T00:00:00.000Z",
+      "https://www.googleapis.com/auth/calendar.events"
+    ).run();
+  }
+
+  it("creates separate events for the client and provider calendars", async () => {
+    await seedBooking({ id: "bk-calendar" });
+    await connectCalendar("cal-client", "user-client");
+    await connectCalendar("cal-provider", "user-provider");
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "google-client-event" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "google-provider-event" }), { status: 200 }));
+
+    const result = await syncBookingToGoogle(
+      { ...env, GOOGLE_CALENDAR_TOKEN_KEY: calendarTokenKey },
+      "bk-calendar"
+    );
+
+    expect(result.connected).toBe(true);
+    expect(result.synced).toBe(true);
+    expect(result.results).toHaveLength(2);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const events = await env.DB.prepare(
+      "SELECT connection_id, external_event_id FROM calendar_events WHERE booking_id=? ORDER BY connection_id"
+    ).bind("bk-calendar").all();
+    expect(events.results).toEqual([
+      { connection_id: "cal-client", external_event_id: "google-client-event" },
+      { connection_id: "cal-provider", external_event_id: "google-provider-event" },
+    ]);
+  });
+
+  it("keeps the successful calendar sync when the other connection fails", async () => {
+    await seedBooking({ id: "bk-calendar-failure" });
+    await connectCalendar("cal-client", "user-client");
+    await connectCalendar("cal-provider", "user-provider");
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "google-client-event" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "forbidden" } }), { status: 403 }));
+
+    const result = await syncBookingToGoogle(
+      { ...env, GOOGLE_CALENDAR_TOKEN_KEY: calendarTokenKey },
+      "bk-calendar-failure"
+    );
+
+    expect(result.connected).toBe(true);
+    expect(result.synced).toBe(false);
+    expect(result.results.filter((item) => item.synced)).toHaveLength(1);
+    const events = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM calendar_events WHERE booking_id=?"
+    ).bind("bk-calendar-failure").first();
+    expect(events.count).toBe(1);
   });
 });

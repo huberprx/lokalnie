@@ -4484,6 +4484,27 @@
     }
   }
 
+  function renderGoogleCalendarSettings(role) {
+    const connection = googleCalendarConnection();
+    const isProvider = role === "provider";
+    const audience = isProvider ? "usługodawcy" : "klienta";
+    const description = isProvider
+      ? "Potwierdzone wizyty są automatycznie zapisywane jako prywatne wydarzenia w Twoim kalendarzu firmowym."
+      : "Potwierdzone wizyty są automatycznie zapisywane jako prywatne wydarzenia.";
+    return connection
+      ? `<div class="settings__row settings__row--actions" data-field="google-calendar">
+           <span class="settings__key">Google Calendar</span>
+           <p class="settings__help">${description}</p>
+           <p class="settings__help settings__help--tight">Połączono dla konta ${audience}${connection.lastError ? " — ostatnia synchronizacja wymaga ponowienia" : ""}.</p>
+           <button type="button" class="btn btn--ghost account-actions__btn" data-action="disconnect-google-calendar">Odłącz Google Calendar</button>
+         </div>`
+      : `<div class="settings__row settings__row--actions" data-field="google-calendar">
+           <span class="settings__key">Google Calendar</span>
+           <p class="settings__help">${description}</p>
+           <button type="button" class="btn btn--primary account-actions__btn" data-action="connect-google-calendar">Połącz Google Calendar</button>
+         </div>`;
+  }
+
   function renderGuestAccount() {
     return `
       <div class="app-screen app-screen--client app-screen--guest-account">
@@ -4566,19 +4587,7 @@
     const cp = ensureClientProfile();
     const notes = cp.notifications;
     const providers = listOwnedProviders();
-    const calendarConnection = googleCalendarConnection();
-    const calendarSettings = calendarConnection
-      ? `<div class="settings__row settings__row--actions" data-field="google-calendar">
-           <span class="settings__key">Google Calendar</span>
-           <p class="settings__help">Potwierdzone wizyty są automatycznie zapisywane jako prywatne wydarzenia.</p>
-           <p class="settings__help settings__help--tight">Połączono${calendarConnection.lastError ? " — ostatnia synchronizacja wymaga ponowienia" : ""}.</p>
-           <button type="button" class="btn btn--ghost account-actions__btn" data-action="disconnect-google-calendar">Odłącz Google Calendar</button>
-         </div>`
-      : `<div class="settings__row settings__row--actions" data-field="google-calendar">
-           <span class="settings__key">Google Calendar</span>
-           <p class="settings__help">Automatycznie zapisuj potwierdzone wizyty w swoim prywatnym Google Calendar.</p>
-           <button type="button" class="btn btn--primary account-actions__btn" data-action="connect-google-calendar">Połącz Google Calendar</button>
-         </div>`;
+    const calendarSettings = renderGoogleCalendarSettings("client");
     const providerRows = providers
       .map(function (p) {
         const status = p.deactivated
@@ -12189,6 +12198,7 @@
     });
     let booking = null;
     let bookingBefore = null;
+    let calendarSync = null;
     const rescheduleQueueBefore = cloneMutationState(ensureProvCalRescheduleQueue());
     const editing = !!draft.bookingId;
     if (editing) {
@@ -12249,7 +12259,8 @@
       };
       if (shouldPersistApiMutation()) {
         try {
-          await window.LokalnieApi.createBookingFromApp(booking);
+          const result = await window.LokalnieApi.createBookingFromApp(booking);
+          calendarSync = result && result.calendar;
         } catch (err) {
           showToast(apiMutationErrorMessage(err, "Nie udało się dodać terminu."));
           renderAll();
@@ -12260,7 +12271,7 @@
     }
     if (shouldPersistApiMutation() && booking && editing && booking._fromApi) {
       try {
-        await window.LokalnieApi.patchBookingFromApp(
+        const result = await window.LokalnieApi.patchBookingFromApp(
           booking,
           {
             status: booking.status,
@@ -12271,6 +12282,7 @@
           },
           "edit-booking"
         );
+        calendarSync = result && result.calendar;
       } catch (err) {
         Object.keys(booking).forEach(function (key) {
           delete booking[key];
@@ -12309,11 +12321,13 @@
     renderAll();
     hapticTap(22);
     showToast(
-      editing
-        ? isBookingInRescheduleQueue(booking.id)
-          ? "Zmiana w kolejce — wyślij propozycję klientowi."
-          : "Termin zapisany ✓"
-        : "Termin dodany ✓"
+      calendarSync && calendarSync.synced === false
+        ? "Termin zapisany ✓ Nie udało się zsynchronizować wszystkich kalendarzy."
+        : editing
+          ? isBookingInRescheduleQueue(booking.id)
+            ? "Zmiana w kolejce — wyślij propozycję klientowi."
+            : "Termin zapisany ✓"
+          : "Termin dodany ✓"
     );
   }
 
@@ -16269,6 +16283,7 @@
             ${renderSettingsGroup("Social media", renderSettingsSocial(p))}
             ${renderSettingsGroup("Lokalizacje (miejsce wykonywania usług)", renderSettingsLocations(p))}
             ${renderSettingsGroup("Rezerwacje online", visibilityRow + renderSettingsBookingRules(p))}
+            ${renderSettingsGroup("Kalendarz firmowy", renderGoogleCalendarSettings("provider"))}
             ${renderSettingsGroup("Zarządzanie profilem", renderProviderProfileManagement(p))}
           </div>
         </div>
@@ -17702,6 +17717,7 @@
     const bkBefore = cloneMutationState(bk);
     const req = (window.AppState.requests || []).find((r) => r.id === bk.requestId);
     const reqBefore = cloneMutationState(req);
+    let calendarSync = null;
     bk.status = "confirmed";
     delete bk.reschedulePrevDateISO;
     delete bk.reschedulePrevFrom;
@@ -17713,7 +17729,8 @@
     }
     if (shouldPersistApiMutation() && bk._fromApi) {
       try {
-        await window.LokalnieApi.updateBookingStatusFromApp(bk.id, "confirmed");
+        const result = await window.LokalnieApi.updateBookingStatusFromApp(bk.id, "confirmed");
+        calendarSync = result && result.calendar;
       } catch (err) {
         Object.keys(bk).forEach(function (key) { delete bk[key]; });
         Object.assign(bk, bkBefore);
@@ -17729,7 +17746,11 @@
     }
     saveState();
     renderAll();
-    showToast("Termin potwierdzony ✓");
+    showToast(
+      calendarSync && calendarSync.synced === false
+        ? "Termin potwierdzony ✓ Nie udało się zsynchronizować wszystkich kalendarzy."
+        : "Termin potwierdzony ✓"
+    );
   }
 
   async function rejectProposal(bookingId) {

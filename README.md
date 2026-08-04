@@ -39,12 +39,13 @@ npm run deploy
 
 Szczegóły: [`worker/README.md`](worker/README.md).
 
-## Google Calendar klienta
+## Google Calendar klienta i usługodawcy
 
-W ustawieniach konta klient może kliknąć **Połącz Google Calendar** i udzielić
-Lokalnie osobnej zgody OAuth na tworzenie wydarzeń. Po potwierdzeniu rezerwacji
-Lokalnie automatycznie zapisuje prywatne wydarzenie w kalendarzu `primary`
-klienta, a zmianę terminu lub anulowanie synchronizuje z tym wydarzeniem.
+Klient i usługodawca mogą w swoich ustawieniach kliknąć **Połącz Google Calendar**
+i udzielić Lokalnie osobnej zgody OAuth na tworzenie wydarzeń. Po potwierdzeniu
+rezerwacji Lokalnie automatycznie zapisuje prywatne wydarzenie w kalendarzu
+`primary` każdej podłączonej strony; zmiana terminu i anulowanie synchronizują
+oba wydarzenia niezależnie.
 
 Do uruchomienia integracji ustaw dodatkowo sekrety:
 
