@@ -19306,12 +19306,15 @@
       case "open-legal":
         event.preventDefault();
         {
-          const labels = {
-            privacy: "Polityka prywatności",
-            terms: "Regulamin",
-            contact: "Kontakt: hello@lokalnie.app",
+          const pages = {
+            privacy: "polityka-prywatnosci.html",
+            terms: "regulamin.html",
           };
-          showToast(labels[d.doc] || "Informacja");
+          if (pages[d.doc]) {
+            window.location.href = pages[d.doc];
+          } else if (d.doc === "contact") {
+            window.location.href = "mailto:szaroczarnytrzmiel@gmail.com";
+          }
         }
         break;
       case "check-pwa-update":
