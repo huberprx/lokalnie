@@ -435,6 +435,31 @@
     }
   }
 
+  /** Zapis profilu usługodawcy na serwerze (pola obsługiwane przez PATCH /provider/me). */
+  async function updateProviderMe(profile) {
+    if (!profile || (!isProductionHostname() && !getAuthToken())) return null;
+    try {
+      const res = await request("/provider/me", {
+        method: "PATCH",
+        json: {
+          name: profile.name || "",
+          city: profile.city || "",
+          address: profile.address || "",
+          about: profile.about || "",
+          email: profile.email || "",
+          phone: profile.phone || "",
+          emailVisible: !!profile.emailVisible,
+          visibleInSearch: !!profile.visibleInSearch,
+          multiSelect: !!profile.multiSelect,
+        },
+      });
+      return (res && res.provider) || null;
+    } catch (err) {
+      console.warn("[LokalnieApi] updateProviderMe failed", err);
+      return null;
+    }
+  }
+
   async function upsertClient(appProviderId, client) {
     if (!client || !client.name) return null;
     try {
@@ -728,6 +753,23 @@
     clearAuthToken();
   }
 
+  /** Trwałe usunięcie / anonimizacja konta zalogowanego użytkownika. */
+  async function deleteAccount() {
+    if (!isProductionHostname() && !getAuthToken()) {
+      clearAuthToken();
+      return true;
+    }
+    try {
+      await request("/me", { method: "DELETE" });
+      clearAuthToken();
+      return true;
+    } catch (err) {
+      console.warn("[LokalnieApi] deleteAccount failed", err);
+      clearAuthToken();
+      return false;
+    }
+  }
+
   async function listCalendarConnections() {
     const res = await request("/calendar/connections");
     return Array.isArray(res.connections) ? res.connections : [];
@@ -755,6 +797,7 @@
     request: request,
     syncFromServer: syncFromServer,
     updateMe: updateMe,
+    updateProviderMe: updateProviderMe,
     upsertClient: upsertClient,
     createBookingFromApp: createBookingFromApp,
     createRequestFromApp: createRequestFromApp,
@@ -767,6 +810,7 @@
     releaseIdempotencyKey: releaseIdempotencyKey,
     uploadAvatar: uploadAvatar,
     logout: logout,
+    deleteAccount: deleteAccount,
     listCalendarConnections: listCalendarConnections,
     disconnectCalendar: disconnectCalendar,
   };

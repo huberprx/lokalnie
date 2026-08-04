@@ -10366,6 +10366,20 @@ body.service-sheet-open {
   border-color: color-mix(in srgb, var(--accent-provider) 45%, var(--border));
 }
 
+.client-sheet__add-save {
+  align-self: stretch;
+  width: 100%;
+  margin-top: 0.15rem;
+  min-height: 2.45rem;
+  font-weight: 700;
+  background: var(--accent-provider);
+  color: #fff;
+}
+
+.client-sheet__add-save:hover {
+  filter: brightness(0.96);
+}
+
 .client-sheet__avatar {
   flex: 0 0 2.55rem;
   width: 2.55rem;
@@ -10944,6 +10958,22 @@ body.client-sheet-open {
 
 .prov-cal-add__foot .bottom-nav__book:disabled {
   opacity: 0.45;
+}
+
+.prov-cal-add__foot .bottom-nav__clear {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+.prov-cal-add__foot .bottom-nav__clear--danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+}
+
+.prov-cal-add__foot .bottom-nav__clear--danger:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: var(--danger);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -12756,6 +12786,11 @@ body.prov-cal-resizing * {
 .bottom-nav__icon--close {
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.25' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.25' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E");
+}
+
+.bottom-nav__icon--trash {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='3 6 5 6 21 6'/%3E%3Cpath d='M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'/%3E%3Cpath d='M10 11v6M14 11v6'/%3E%3Cpath d='M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='3 6 5 6 21 6'/%3E%3Cpath d='M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'/%3E%3Cpath d='M10 11v6M14 11v6'/%3E%3Cpath d='M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2'/%3E%3C/svg%3E");
 }
 
 .bottom-nav--booking {
@@ -16383,6 +16418,60 @@ body.prov-cal-resizing * {
   flex-direction: column;
   gap: 1.15rem;
   padding-bottom: 0.5rem;
+}
+
+/* Stały pasek Zapisz nad dolnym menu (ustawienia usługodawcy). */
+.settings-save-bar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  width: 100%;
+  padding: 0.55rem var(--app-pad-x, 0.75rem);
+  border-top: 1px solid var(--border);
+  background: var(--surface, #fff);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.05);
+  z-index: 118;
+}
+
+.settings-save-bar__btn {
+  width: 100%;
+  min-height: 2.6rem;
+  font-weight: 700;
+}
+
+@media (min-width: 900px) {
+  .app-fullscreen .app-screen--settings > .settings-save-bar {
+    max-width: 40rem;
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    align-self: center;
+    box-sizing: border-box;
+  }
+}
+
+@media (max-width: 899px) {
+  .app-fullscreen .app-screen--settings > .settings-save-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: var(--bottom-nav-clearance);
+  }
+
+  .app-fullscreen .app-screen--settings .app-scroll {
+    padding-bottom: calc(var(--bottom-nav-clearance) + 4.25rem);
+  }
+
+  .device-frame .app-screen--settings > .settings-save-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: var(--bottom-nav-clearance);
+  }
+
+  .device-frame .app-screen--settings .app-scroll {
+    padding-bottom: calc(var(--bottom-nav-clearance) + 4.25rem);
+  }
 }
 
 .settings__group {

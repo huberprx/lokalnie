@@ -6,6 +6,7 @@ import {
   handleGoogleCalendarCallback,
   logoutSession,
   startGoogleCalendarAuth,
+  sessionCookie,
 } from "./oauth.js";
 import { disconnectCalendar, listCalendarConnections, syncBookingToGoogle } from "./calendar.js";
 import { prepareEmailOutbox, listOutbox, processDueEmails } from "./email.js";
@@ -91,7 +92,7 @@ async function routeRequest(request, env) {
             calendarGoogleConnect: "GET /calendar/google/connect",
             calendarConnections: "GET /calendar/connections",
             authLogout: "POST /auth/logout",
-            me: "GET|PATCH /me",
+            me: "GET|PATCH|DELETE /me",
             provider: "GET|PATCH /provider/me",
             clients: "GET|POST /provider/me/clients",
             bookings: "GET|POST /bookings",
@@ -144,6 +145,7 @@ async function routeRequest(request, env) {
       if (path === "/me") {
         if (request.method === "GET") return getMe(request, env);
         if (request.method === "PATCH") return patchMe(request, env);
+        if (request.method === "DELETE") return deleteMe(request, env);
       }
 
       if (path === "/provider/me") {
@@ -248,7 +250,9 @@ function rateLimitConfig(path, method) {
   if (isAdminPath(path) && method === "GET") {
     return { route: "admin-read", limit: 60 };
   }
-  if (method === "POST" || method === "PATCH") return { route: path, limit: 30 };
+  if (method === "POST" || method === "PATCH" || method === "DELETE") {
+    return { route: path, limit: 30 };
+  }
   return null;
 }
 
@@ -326,6 +330,80 @@ async function getProviderMe(request, env) {
   if (auth.error) return auth.error;
   if (!auth.provider) return json({ error: "provider_not_found" }, 404);
   return json({ provider: await mapProvider(auth.provider, env) });
+}
+
+/** Usunięcie konta: anonimizacja PII, odcięcie logowania, ukrycie profilu firmowego. */
+async function deleteMe(request, env) {
+  const auth = await requireDemoUser(request, env);
+  if (auth.error) return auth.error;
+  if (auth.authMode === "demo") {
+    return json({ error: "demo_delete_forbidden" }, 403);
+  }
+
+  const userId = auth.user.id;
+  const ts = nowIso();
+  const deletedLabel = "Usunięte konto";
+
+  // Anonimizuj dane klienta w rezerwacjach i prośbach (historia zostaje bez PII).
+  await env.DB.prepare(
+    `UPDATE bookings SET client_name = ?, client_phone = NULL, client_email = NULL, client_user_id = NULL, updated_at = ?
+     WHERE client_user_id = ?`
+  )
+    .bind(deletedLabel, ts, userId)
+    .run();
+  await env.DB.prepare(
+    `UPDATE booking_requests SET client_name = ?, client_phone = NULL, client_email = NULL, client_user_id = NULL, updated_at = ?
+     WHERE client_user_id = ?`
+  )
+    .bind(deletedLabel, ts, userId)
+    .run();
+  await env.DB.prepare(
+    `UPDATE provider_clients SET client_user_id = NULL, name = ?, phone = NULL, email = NULL, updated_at = ?
+     WHERE client_user_id = ?`
+  )
+    .bind(deletedLabel, ts, userId)
+    .run();
+
+  // Profil usługodawcy — ukryj i zanonimizuj (bez kasowania historii wizyt klientów).
+  if (auth.provider) {
+    await env.DB.prepare(
+      `UPDATE provider_profiles SET name = ?, about = '', email = NULL, phone = NULL, address = '',
+         email_visible = 0, visible_in_search = 0, avatar_key = NULL, updated_at = ?
+       WHERE user_id = ?`
+    )
+      .bind(deletedLabel, ts, userId)
+      .run();
+  }
+
+  // Media w R2 (best-effort) + wiersze w D1.
+  const mediaRows = await env.DB.prepare("SELECT id, storage_key FROM media WHERE owner_user_id = ?")
+    .bind(userId)
+    .all();
+  if (env.MEDIA && mediaRows.results) {
+    for (const row of mediaRows.results) {
+      try {
+        await env.MEDIA.delete(row.storage_key);
+      } catch (err) {
+        /* ignore */
+      }
+    }
+  }
+  await env.DB.prepare("DELETE FROM media WHERE owner_user_id = ?").bind(userId).run();
+  await env.DB.prepare("DELETE FROM calendar_connections WHERE user_id = ?").bind(userId).run();
+  await env.DB.prepare("DELETE FROM oauth_identities WHERE user_id = ?").bind(userId).run();
+  await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId).run();
+
+  // Zablokuj i zanonimizuj użytkownika — e-mail NULL, żeby Google mógł założyć nowe konto.
+  await env.DB.prepare(
+    `UPDATE users SET email = NULL, name = ?, phone = NULL, avatar_key = NULL,
+       notification_booking = 0, notification_reminder = 0, notification_marketing = 0,
+       blocked = 1, blocked_at = ?, blocked_reason = ?, role_provider = 0, updated_at = ?
+     WHERE id = ?`
+  )
+    .bind(deletedLabel, ts, "account_deleted", ts, userId)
+    .run();
+
+  return json({ ok: true, deleted: true }, 200, { "Set-Cookie": sessionCookie("", env, 0) });
 }
 
 async function patchProviderMe(request, env) {

@@ -125,7 +125,7 @@ export function sessionTokenFromCookie(request) {
   }
 }
 
-function sessionCookie(token, env, maxAge = SESSION_DAYS * 24 * 60 * 60) {
+export function sessionCookie(token, env, maxAge = SESSION_DAYS * 24 * 60 * 60) {
   return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${
     env.ENVIRONMENT === "production" ? "; Secure" : ""
   }`;

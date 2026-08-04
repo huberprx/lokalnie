@@ -268,8 +268,8 @@
     };
   }
 
-  /** Max własnych profili usługodawcy pod jednym kontem. */
-  const MAX_PROVIDER_PROFILES = 2;
+  /** Max własnych profili usługodawcy pod jednym kontem (1 klient + 1 firma). */
+  const MAX_PROVIDER_PROFILES = 1;
 
   const CURRENT_LOCATION_LABEL = "Obecna lokalizacja";
   const SEARCH_RADIUS_OPTIONS = [5, 10, 15, 20, 25, 30, 40, 50];
@@ -529,13 +529,21 @@
     ) {
       window.AppState.providerProfiles.push(legacy);
     }
-    // Deduplikacja po id + limit.
+    // Deduplikacja po id + limit (preferuj aktywny / nie-dezaktywowany).
     const seen = Object.create(null);
+    const activePrefer = window.AppState.activeProviderId;
     window.AppState.providerProfiles = window.AppState.providerProfiles
       .filter(function (p) {
         if (!p || typeof p !== "object" || !p.id || seen[p.id]) return false;
         seen[p.id] = true;
         return true;
+      })
+      .sort(function (a, b) {
+        if (a.id === activePrefer) return -1;
+        if (b.id === activePrefer) return 1;
+        if (!a.deactivated && b.deactivated) return -1;
+        if (a.deactivated && !b.deactivated) return 1;
+        return 0;
       })
       .slice(0, MAX_PROVIDER_PROFILES);
 
@@ -3792,16 +3800,14 @@
       })
       .join("");
 
-    // Dodawanie firmy tylko w kontekście klienta (max 2).
+    // Dodawanie firmy tylko w kontekście klienta (max 1 profil usługodawcy).
     const addProviderBlock =
       loggedIn && clientActive && canAddProviderProfile()
         ? `<button type="button" class="app-menu__profile app-menu__profile--add" data-action="add-provider-profile">
            <span class="app-menu__avatar app-menu__avatar--add" aria-hidden="true">+</span>
            <span class="app-menu__profile-text">
              <span class="app-menu__profile-label">Profil usługodawcy</span>
-             <span class="app-menu__profile-name">${
-               providers.length ? "Dodaj kolejny profil" : "Dodaj profil"
-             }</span>
+             <span class="app-menu__profile-name">Dodaj profil</span>
            </span>
          </button>`
         : "";
@@ -4607,11 +4613,11 @@
       .join("");
     const addProviderBtn = canAddProviderProfile()
       ? `<button type="button" class="btn btn--ghost account-actions__btn" data-action="add-provider-profile">
-           ${providers.length ? "Dodaj kolejny profil usługodawcy" : "Dodaj profil usługodawcy"}
+           Dodaj profil usługodawcy
          </button>
-         <p class="settings__help settings__help--tight">Możesz mieć maksymalnie ${MAX_PROVIDER_PROFILES} profile firmowe.</p>`
+         <p class="settings__help settings__help--tight">Jedno konto = jeden profil klienta i jeden profil firmy.</p>`
       : providers.length
-        ? `<p class="settings__help settings__help--tight">Osiągnięto limit ${MAX_PROVIDER_PROFILES} profili usługodawcy.</p>`
+        ? `<p class="settings__help settings__help--tight">Masz już profil usługodawcy — jedno konto = jedna firma.</p>`
         : "";
 
     return `
@@ -4704,7 +4710,7 @@
             ${calendarSettings}
             <div class="settings__row settings__row--actions" data-field="account-providers">
               <span class="settings__key">Profile usługodawcy</span>
-              <p class="settings__help">Najpierw jesteś klientem. Firmę dodajesz opcjonalnie — maksymalnie ${MAX_PROVIDER_PROFILES}.</p>
+              <p class="settings__help">Najpierw jesteś klientem. Firmę dodajesz opcjonalnie — jedno konto, jeden profil usługodawcy.</p>
               ${providerRows}
               ${addProviderBtn}
             </div>
@@ -4718,6 +4724,19 @@
             <div class="settings__row settings__row--actions">
               <button type="button" class="btn btn--ghost account-actions__btn account-actions__btn--logout" data-action="logout">Wyloguj</button>
             </div>
+            ${renderSettingsGroup(
+              "Zarządzanie kontem",
+              `<div class="settings__row settings__row--profile-management" data-field="account-management">
+                <div class="profile-management__item profile-management__item--delete">
+                  <div class="profile-management__text">
+                    <span class="settings__hint">Usuń konto</span>
+                    <span class="settings-contact__toggle-hint">Trwale usuwa konto, dane profilu i dostęp do logowania. Tej operacji nie można cofnąć.</span>
+                  </div>
+                  <button type="button" class="btn btn--danger profile-management__btn"
+                    data-action="delete-account">Usuń konto</button>
+                </div>
+              </div>`
+            )}
           </div>
         </div>
         ${bottomNav("account")}
@@ -8656,6 +8675,7 @@
     window.AppState.provCalAddDraft = null;
     clearProvCalReplyMode();
     setProvCalAddClientPickOpen(false);
+    markProvCalRescheduleEnterAnim();
     window.AppState.provCalRescheduleOpen = true;
     setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
     closeProvCalViewCloud();
@@ -10156,6 +10176,8 @@
               <input type="email" class="client-sheet__add-input" data-role="client-sheet-new-email"
                 value="${escapeHtml(newEmail)}" placeholder="Adres e-mail" autocomplete="email" inputmode="email" />
             </label>
+            <button type="button" class="btn btn--primary client-sheet__add-save"
+              data-action="prov-cal-add-new-client" data-name="${escapeHtml(raw)}">Zapisz</button>
           </div>
         </div>`;
     } else if (draft) {
@@ -10854,6 +10876,13 @@
       </div>`;
   }
 
+  /** Animacja wjazdu panelu zmian — tylko przy otwarciu, nie przy drag/renderAll. */
+  let provCalReschedulePlayEnterAnim = false;
+
+  function markProvCalRescheduleEnterAnim() {
+    if (!window.AppState.provCalRescheduleOpen) provCalReschedulePlayEnterAnim = true;
+  }
+
   function renderProvCalReschedulePanel() {
     if (!window.AppState.provCalRescheduleOpen) return "";
     const queue = ensureProvCalRescheduleQueue();
@@ -10892,8 +10921,10 @@
           </li>`;
       })
       .join("");
+    const enterCls = provCalReschedulePlayEnterAnim ? " prov-cal-reschedule--enter" : "";
+    provCalReschedulePlayEnterAnim = false;
     return `
-      <div class="prov-cal-reschedule prov-cal-reschedule--enter" data-role="prov-cal-reschedule">
+      <div class="prov-cal-reschedule${enterCls}" data-role="prov-cal-reschedule">
         <div class="prov-cal-reschedule__sheet" role="dialog" aria-modal="true" aria-label="Zmiany terminu">
           <div class="prov-cal-reschedule__head">
             <h3 class="prov-cal-reschedule__title">Zmiany terminu</h3>
@@ -11183,6 +11214,18 @@
     if (orphanService) orphanService.remove();
     saveState();
     renderAll();
+  }
+
+  /** Kosz w stopce panelu „+”: odwołaj edytowaną wizytę albo porzuć nowy termin. */
+  function deleteProvCalAddEvent() {
+    const draft = window.AppState.provCalAddDraft;
+    if (!draft || draft.requestId) return;
+    if (draft.bookingId) {
+      openCancelVisitDialog(draft.bookingId);
+      return;
+    }
+    closeProvCalAdd();
+    showToast("Anulowano nowy termin.");
   }
 
   function provCalAddServiceDisplayName(s) {
@@ -12546,6 +12589,12 @@
             </div>`;
 
     const summaryEmpty = !hasSvc;
+    const deleteBtnHtml = isReply
+      ? ""
+      : `<button type="button" class="bottom-nav__clear bottom-nav__clear--danger" data-action="delete-prov-cal-add"
+            aria-label="Usuń wydarzenie" title="Usuń">
+            <span class="bottom-nav__icon bottom-nav__icon--trash" aria-hidden="true"></span>
+          </button>`;
     const footHtml = `<div class="prov-cal-add__foot booking-confirm-bar">
             <div class="bottom-nav__summary${summaryEmpty ? " bottom-nav__summary--empty" : ""}">
               <span class="bottom-nav__summary-label">${isReply ? "Wybrane:" : "Suma:"}</span>
@@ -12557,6 +12606,7 @@
             <button type="button" class="bottom-nav__book" data-role="prov-cal-add-cta" data-action="${saveAction}"${saveAttrs}${
               canSave ? "" : " disabled"
             }>${escapeHtml(saveLabel)}</button>
+            ${deleteBtnHtml}
           </div>`;
 
     const closeBtnHtml = `<button type="button" class="prov-cal-add__close" data-action="close-prov-cal-add" aria-label="Zamknij">
@@ -13243,7 +13293,7 @@
         ${renderServiceEditPhotos(photos)}
         ${renderServiceEditVariants(variants)}
         <div class="service-edit__actions">
-          <button type="button" class="btn btn--primary" data-action="save-service" data-service-id="${escapeHtml(serviceId)}">${isNew ? "Dodaj" : "Zapisz"}</button>
+          <button type="button" class="btn btn--primary" data-action="save-service" data-service-id="${escapeHtml(serviceId)}">Zapisz</button>
           <button type="button" class="btn btn--ghost" data-action="cancel-edit-service">Anuluj</button>
         </div>
         ${
@@ -16237,6 +16287,37 @@
       </div>`;
   }
 
+  function saveProviderSettings() {
+    const p = myProvider();
+    if (!p) return;
+    captureProviderProfileFields();
+    captureProviderContactFields();
+    captureProviderLocationFields();
+    saveState();
+    syncProviderCompletenessUi();
+    showToast("Zapisano ustawienia.");
+    queueProviderProfileSync();
+  }
+
+  let providerProfileSyncTimer = null;
+
+  /** Zapis profilu usługodawcy na serwer — bez tego dane giną przy kolejnym logowaniu. */
+  function queueProviderProfileSync() {
+    if (isTesterMode()) return;
+    const api = window.LokalnieApi;
+    if (!api || !api.updateProviderMe) return;
+    const onProd = api.isProductionHostname && api.isProductionHostname();
+    const hasToken = api.getAuthToken && api.getAuthToken();
+    if (!onProd && !hasToken) return;
+    if (providerProfileSyncTimer) clearTimeout(providerProfileSyncTimer);
+    providerProfileSyncTimer = setTimeout(function () {
+      providerProfileSyncTimer = null;
+      const p = myProvider();
+      if (!p) return;
+      void api.updateProviderMe(p);
+    }, 400);
+  }
+
   function renderSettings() {
     const p = myProvider();
     if (!p) return renderDashboard();
@@ -16286,6 +16367,9 @@
             ${renderSettingsGroup("Kalendarz firmowy", renderGoogleCalendarSettings("provider"))}
             ${renderSettingsGroup("Zarządzanie profilem", renderProviderProfileManagement(p))}
           </div>
+        </div>
+        <div class="settings-save-bar" role="region" aria-label="Zapisz ustawienia">
+          <button type="button" class="btn btn--primary settings-save-bar__btn" data-action="save-provider-settings">Zapisz</button>
         </div>
         ${providerBottomNav("settings")}
       </div>`;
@@ -18136,6 +18220,25 @@
       }
     }
     closeCancelVisitDialog();
+    if (
+      window.AppState.provCalAddDraft &&
+      window.AppState.provCalAddDraft.bookingId === bookingId
+    ) {
+      window.AppState.provCalAddOpen = false;
+      window.AppState.provCalAddMinimized = false;
+      window.AppState.provCalAddDraft = null;
+      window.AppState.provCalAddTab = "new";
+      clearProvCalReplyMode();
+      setProvCalAddClientPickOpen(false);
+      setProvCalAddServicePickOpen(false);
+      const orphanClient = document.getElementById("prov-cal-add-client-menu");
+      if (orphanClient) orphanClient.remove();
+      const orphanService = document.getElementById("prov-cal-add-service-sheet");
+      if (orphanService) orphanService.remove();
+      if (window.AppState.provCalSelection && window.AppState.provCalSelection.bookingId === bookingId) {
+        window.AppState.provCalSelection = null;
+      }
+    }
     saveState();
     renderAll();
     showToast("Wizyta odwołana.");
@@ -18627,7 +18730,7 @@
   /** Tworzy profil usługodawcy i od razu otwiera pełne ustawienia (bez mini-formularza). */
   function createProviderProfileAndOpenSettings() {
     if (!canAddProviderProfile()) {
-      showToast("Możesz mieć maksymalnie " + MAX_PROVIDER_PROFILES + " profile usługodawcy.");
+      showToast("Możesz mieć tylko jeden profil usługodawcy.");
       return false;
     }
     const cp = ensureClientProfile();
@@ -18675,7 +18778,7 @@
   function addProviderProfile() {
     if (!requireLogin({ type: "menu" })) return;
     if (!canAddProviderProfile()) {
-      showToast("Możesz mieć maksymalnie " + MAX_PROVIDER_PROFILES + " profile usługodawcy.");
+      showToast("Możesz mieć tylko jeden profil usługodawcy.");
       return;
     }
     closeAppMenuThen(function () {
@@ -18816,6 +18919,43 @@
     saveState();
     goMarketplace();
     showToast("Wylogowano.");
+  }
+
+  function clearLocalSessionState() {
+    if (window.LokalnieApi && window.LokalnieApi.clearAuthToken) {
+      window.LokalnieApi.clearAuthToken();
+    }
+    try {
+      localStorage.removeItem(STATE_KEY);
+      sessionStorage.removeItem(PENDING_INTENT_KEY);
+      sessionStorage.removeItem(PENDING_DRAFT_KEY);
+      sessionStorage.removeItem("lokalnie.pendingSlug");
+    } catch (err) {
+      /* ignore */
+    }
+    setTesterMode(false);
+    window.AppState = defaultState();
+    saveState();
+  }
+
+  async function deleteAccount() {
+    if (!isLoggedIn()) return;
+    const confirmed = window.confirm(
+      "Czy na pewno chcesz trwale usunąć konto?\n\nDane profilu i dostęp do logowania zostaną usunięte. Tej operacji nie można cofnąć."
+    );
+    if (!confirmed) return;
+
+    let apiOk = true;
+    if (window.LokalnieApi && window.LokalnieApi.deleteAccount) {
+      try {
+        apiOk = await window.LokalnieApi.deleteAccount();
+      } catch (err) {
+        apiOk = false;
+      }
+    }
+    clearLocalSessionState();
+    goMarketplace();
+    showToast(apiOk ? "Konto zostało usunięte." : "Konto usunięte lokalnie. Jeśli problem się powtórzy, napisz do wsparcia.");
   }
 
   function closeAppMenuThen(fn) {
@@ -19189,6 +19329,10 @@
         break;
       case "open-my-calendar": event.preventDefault(); openMyCalendar(); break;
       case "logout": logout(); break;
+      case "delete-account":
+        event.preventDefault();
+        void deleteAccount();
+        break;
       case "open-admin":
         event.preventDefault();
         openAdmin();
@@ -19852,6 +19996,10 @@
         event.preventDefault();
         setProvCalAddSlot(d.slot);
         break;
+      case "delete-prov-cal-add":
+        event.preventDefault();
+        deleteProvCalAddEvent();
+        break;
       case "confirm-prov-cal-add":
         event.preventDefault();
         confirmProvCalAdd();
@@ -19917,6 +20065,10 @@
           const form = btn.closest("form.service-edit");
           saveService(d.serviceId, form);
         }
+        break;
+      case "save-provider-settings":
+        event.preventDefault();
+        saveProviderSettings();
         break;
       case "delete-service":
         event.preventDefault();
