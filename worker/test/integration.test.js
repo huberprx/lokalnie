@@ -114,6 +114,53 @@ describe("production schema and authorization", () => {
     expect(demo).toBeNull();
   });
 
+  it("isolates provider clients, bookings, and requests between providers", async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE users SET role_provider=1 WHERE id='user-other'`
+      ),
+      env.DB.prepare(
+        `INSERT INTO provider_profiles (id, user_id, slug, name, email)
+         VALUES ('provider-2', 'user-other', 'provider-two', 'Provider Two', 'other@example.com')`
+      ),
+      env.DB.prepare(
+        `INSERT INTO provider_clients (id, provider_id, name, email)
+         VALUES ('pc-other', 'provider-2', 'Other Client', 'other-client@example.com')`
+      ),
+      env.DB.prepare(
+        `INSERT INTO bookings (
+          id, provider_id, client_name, client_email, status
+        ) VALUES ('bk-other-provider', 'provider-2', 'Other Client', 'other-client@example.com', 'confirmed')`
+      ),
+      env.DB.prepare(
+        `INSERT INTO booking_requests (
+          id, provider_id, client_name, client_email, status
+        ) VALUES ('rq-other-provider', 'provider-2', 'Other Client', 'other-client@example.com', 'pending')`
+      ),
+    ]);
+
+    const clients = await api("/provider/me/clients", { token: PROVIDER_TOKEN });
+    expect(clients.status).toBe(200);
+    expect((await clients.json()).clients).toEqual([]);
+
+    const bookings = await api("/bookings", { token: PROVIDER_TOKEN });
+    expect(bookings.status).toBe(200);
+    expect((await bookings.json()).bookings).toEqual([]);
+
+    const requests = await api("/requests", { token: PROVIDER_TOKEN });
+    expect(requests.status).toBe(200);
+    expect((await requests.json()).requests).toEqual([]);
+
+    const client = await api("/provider/me/clients/pc-other", { token: PROVIDER_TOKEN });
+    expect(client.status).toBe(404);
+
+    const booking = await api("/bookings/bk-other-provider", { token: PROVIDER_TOKEN });
+    expect(booking.status).toBe(403);
+
+    const request = await api("/requests/rq-other-provider", { token: PROVIDER_TOKEN });
+    expect(request.status).toBe(403);
+  });
+
   it("does not trust clientUserId when creating CRM clients", async () => {
     const response = await api("/provider/me/clients", {
       method: "POST",
