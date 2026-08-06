@@ -13199,14 +13199,31 @@ button.time-row {
   flex: 0 0 auto;
 }
 
-/* Mobile: bez terminu i miejsca — tylko Suma + przyciski (separatory znikają z segmentami). */
+/* Mobile: bez terminu i miejsca — Suma max ~38%, reszta na Rezerwuj + X. */
 .device-frame[data-view="mobile"] .booking-confirm-bar__when,
 .device-frame[data-view="mobile"] .booking-confirm-bar__place {
   display: none;
 }
 
 .device-frame[data-view="mobile"] .booking-confirm-bar__info {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 38%) minmax(0, 1fr);
+}
+
+.device-frame[data-view="mobile"] .booking-confirm-bar__info > .bottom-nav__summary::after {
+  display: none;
+}
+
+.device-frame[data-view="mobile"] .booking-confirm-bar__actions {
+  padding-left: 0.55rem;
+}
+
+.device-frame[data-view="mobile"] .booking-confirm-bar__actions .bottom-nav__book {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  width: auto;
+  padding-left: 1.1rem;
+  padding-right: 1.1rem;
 }
 
 @media (max-width: 899px) {
@@ -13216,13 +13233,23 @@ button.time-row {
   }
 
   .app-fullscreen .booking-confirm-bar__info {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 38%) minmax(0, 1fr);
   }
 
+  .app-fullscreen .booking-confirm-bar__info > .bottom-nav__summary::after {
+    display: none;
+  }
+
+  .app-fullscreen .booking-confirm-bar__actions {
+    padding-left: 0.55rem;
+  }
+
+  .app-fullscreen .booking-confirm-bar__actions .bottom-nav__book,
   .booking-confirm-bar:not(.booking-confirm-bar--split) .bottom-nav__book {
     flex: 1 1 auto;
     min-width: 0;
     max-width: none;
+    width: auto;
     padding-left: 1.1rem;
     padding-right: 1.1rem;
   }
@@ -13233,15 +13260,6 @@ button.time-row {
     max-width: 11rem;
     padding-left: 1.45rem;
     padding-right: 1.45rem;
-  }
-
-  /* W ramce mobile Rezerwuj może rosnąć w swojej połowie. */
-  .device-frame[data-view="mobile"] .booking-confirm-bar .bottom-nav__book {
-    flex: 1 1 auto;
-    min-width: 0;
-    max-width: none;
-    padding-left: 1.1rem;
-    padding-right: 1.1rem;
   }
 }
 
