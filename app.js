@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.219";
+  const APP_VERSION = "1.0.220";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -20815,8 +20815,8 @@
     if (bookingModeSwitch) {
       const group = bookingModeSwitch.getAttribute("data-group");
       const picked = group || normalizeBookingMode(bookingModeSwitch.getAttribute("data-mode"));
-      // Jedna kategoria aktywna naraz; wyłączenie wraca do „klient potwierdza”.
-      const next = bookingModeSwitch.checked ? picked : "confirm";
+      // Jedna kategoria aktywna naraz; klik aktywnego przełącza na drugi wariant.
+      const next = bookingModeSwitch.checked ? picked : picked === "ask" ? "confirm" : "ask";
       setServiceBookingMode(next, bookingModeSwitch);
       return;
     }

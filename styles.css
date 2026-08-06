@@ -12607,39 +12607,52 @@ button.time-row {
 .time-row__check {
   display: grid;
   place-items: center;
-  width: 2rem;
-  height: 2rem;
-  margin: 0 -0.1rem 0 0;
+  width: 44px;
+  height: 44px;
+  margin: 0;
   flex-shrink: 0;
+  border-radius: 50%;
+  transition: background 0.15s ease;
 }
 
 .time-row__check-visual {
   display: grid;
   place-items: center;
-  width: 0.95rem;
-  height: 0.95rem;
-  border: 1.5px solid rgba(0, 0, 0, 0.18);
+  width: 1.2rem;
+  height: 1.2rem;
+  border: 1.5px solid rgba(0, 0, 0, 0.22);
   border-radius: 50%;
   background: transparent;
-  opacity: 0.4;
+  opacity: 1;
+  box-shadow: none;
   transition: opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
 .time-row__check-visual::after {
   content: "";
   display: block;
-  width: 0.38rem;
-  height: 0.22rem;
+  width: 0.42rem;
+  height: 0.24rem;
   margin-top: -0.08rem;
   border-left: 1.5px solid transparent;
   border-bottom: 1.5px solid transparent;
+  border-radius: 0;
+  background: transparent;
   transform: rotate(-45deg);
   transition: border-color 0.15s ease;
 }
 
+.time-row:not(.time-row--chip):hover .time-row__check {
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+}
+
 .time-row:not(.time-row--chip):hover .time-row__check-visual {
-  opacity: 0.7;
+  opacity: 1;
   border-color: var(--accent-client);
+}
+
+.time-row--selected:not(.time-row--chip):hover .time-row__check {
+  background: color-mix(in srgb, var(--accent-client) 12%, transparent);
 }
 
 .time-row__check--on .time-row__check-visual {
@@ -12652,6 +12665,7 @@ button.time-row {
 .time-row__check--on .time-row__check-visual::after {
   border-left-color: #fff;
   border-bottom-color: #fff;
+  background: transparent;
 }
 
 .booking-mobile .time-row--chip {
@@ -14337,6 +14351,10 @@ button.time-row {
 
 .app-screen--provider .time-row:not(.time-row--chip):hover .time-row__check-visual {
   border-color: var(--accent-provider);
+}
+
+.app-screen--provider .time-row--selected:not(.time-row--chip):hover .time-row__check {
+  background: color-mix(in srgb, var(--accent-provider) 12%, transparent);
 }
 
 .app-screen--provider .time-row__check--on .time-row__check-visual {
