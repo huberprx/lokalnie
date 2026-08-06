@@ -42,8 +42,11 @@ export async function withIdempotency(request, env, { userId, endpoint }, operat
       return json({ error: "idempotency_key_reused" }, 409);
     }
     if (existing.status === "completed") {
-      return new Response(existing.response_json || "", {
-        status: existing.response_status || 200,
+      const status = existing.response_status || 200;
+      const body =
+        status === 204 || status === 205 || status === 304 ? null : existing.response_json || "";
+      return new Response(body, {
+        status,
         headers: { "Content-Type": "application/json; charset=utf-8" },
       });
     }

@@ -23,6 +23,7 @@ beforeEach(async () => {
     env.DB.prepare("DELETE FROM bookings"),
     env.DB.prepare("DELETE FROM booking_requests"),
     env.DB.prepare("DELETE FROM provider_clients"),
+    env.DB.prepare("DELETE FROM provider_services"),
     env.DB.prepare("DELETE FROM sessions"),
     env.DB.prepare("DELETE FROM oauth_identities"),
     env.DB.prepare("DELETE FROM provider_profiles"),
@@ -196,6 +197,101 @@ describe("production schema and authorization", () => {
   });
 });
 
+describe("provider service catalog", () => {
+  const serviceBody = {
+    name: "Strzyżenie męskie",
+    description: "Strzyżenie i stylizacja.",
+    bookingMode: "auto",
+    durationMin: 30,
+    price: 50,
+    photoIds: [],
+    locationIds: ["salon-main"],
+    variants: [
+      { durationMin: 30, price: 50, label: "Standard" },
+      { durationMin: 45, price: 70, label: "Włosy i broda" },
+    ],
+  };
+
+  it("creates, lists, updates, and deletes an owned service", async () => {
+    const createdResponse = await api("/provider/me/services", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      body: serviceBody,
+      key: "create-service-1",
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = (await createdResponse.json()).service;
+    expect(created.id).toMatch(/^svc_/);
+    expect(created.price).toBe(50);
+    expect(created.variants).toHaveLength(2);
+
+    const listResponse = await api("/provider/me/services", { token: PROVIDER_TOKEN });
+    expect(listResponse.status).toBe(200);
+    expect((await listResponse.json()).services).toEqual([created]);
+
+    const updateResponse = await api(`/provider/me/services/${created.id}`, {
+      method: "PATCH",
+      token: PROVIDER_TOKEN,
+      body: { ...serviceBody, name: "Strzyżenie premium", bookingMode: "approval", price: null },
+      key: "update-service-1",
+    });
+    expect(updateResponse.status).toBe(200);
+    expect((await updateResponse.json()).service).toMatchObject({
+      name: "Strzyżenie premium",
+      bookingMode: "approval",
+      price: null,
+    });
+
+    const deleteResponse = await api(`/provider/me/services/${created.id}`, {
+      method: "DELETE",
+      token: PROVIDER_TOKEN,
+      key: "delete-service-1",
+    });
+    expect(deleteResponse.status).toBe(204);
+    const deleteReplay = await api(`/provider/me/services/${created.id}`, {
+      method: "DELETE",
+      token: PROVIDER_TOKEN,
+      key: "delete-service-1",
+    });
+    expect(deleteReplay.status).toBe(204);
+    expect(
+      await env.DB.prepare("SELECT id FROM provider_services WHERE id=?").bind(created.id).first()
+    ).toBeNull();
+  });
+
+  it("isolates service mutations between providers", async () => {
+    const createdResponse = await api("/provider/me/services", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      body: serviceBody,
+      key: "create-service-2",
+    });
+    const created = (await createdResponse.json()).service;
+
+    const updateResponse = await api(`/provider/me/services/${created.id}`, {
+      method: "PATCH",
+      token: OTHER_TOKEN,
+      body: { ...serviceBody, name: "Przejęta usługa" },
+      key: "update-service-other",
+    });
+    expect(updateResponse.status).toBe(403);
+
+    const clientResponse = await api("/provider/me/services", { token: CLIENT_TOKEN });
+    expect(clientResponse.status).toBe(403);
+  });
+
+  it("rejects invalid service values", async () => {
+    const response = await api("/provider/me/services", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      body: { ...serviceBody, durationMin: 0, bookingMode: "invalid" },
+      key: "create-service-invalid",
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_service" });
+  });
+});
+
 describe("required idempotency keys", () => {
   it("rejects every frontend mutation without a key", async () => {
     const cases = [
@@ -206,6 +302,9 @@ describe("required idempotency keys", () => {
       ["/requests/missing/decline", "POST", CLIENT_TOKEN],
       ["/requests/missing/request-more", "POST", CLIENT_TOKEN],
       ["/bookings/missing", "PATCH", CLIENT_TOKEN],
+      ["/provider/me/services", "POST", PROVIDER_TOKEN],
+      ["/provider/me/services/missing", "PATCH", PROVIDER_TOKEN],
+      ["/provider/me/services/missing", "DELETE", PROVIDER_TOKEN],
     ];
     for (const [path, method, token] of cases) {
       const response = await api(path, { method, token, body: {} });

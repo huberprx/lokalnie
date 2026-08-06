@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.217";
+  const APP_VERSION = "1.0.219";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -3019,7 +3019,7 @@
     if (mode === "approval") return "Prośba o termin z możliwością wyboru dnia";
     if (mode === "request") return "Prośba o termin";
     if (mode === "queue") return "Kolejny wolny termin";
-    return "Wybór terminu";
+    return "Lista terminów";
   }
 
   function bookingModeDescription(mode) {
@@ -3032,7 +3032,7 @@
     if (mode === "queue") {
       return "Klient widzi tylko pierwszy wolny termin — a jeśli masz kilka dostępności w dniu, po jednym na każdą";
     }
-    return "Klient sam wybiera godzinę — po rezerwacji wizyta zapisuje się u Ciebie i u niego w kalendarzu";
+    return "Klient wybiera godzinę z listy terminów — po rezerwacji wizyta zapisuje się u Ciebie i u niego w kalendarzu";
   }
 
   /** Koszyk listy ofert: confirm = klient potwierdza, ask = klient pyta. */
@@ -3070,16 +3070,18 @@
   }
 
   /** Ustawia wariant rezerwacji dla wszystkich ofert w koszyku (confirm|ask). */
-  function setProviderServicesGroupMode(group, mode) {
+  async function setProviderServicesGroupMode(group, mode) {
     const p = myProvider();
     if (!p || !Array.isArray(p.services)) return;
     mode = normalizeBookingMode(mode);
     if (bookingModeGroup(mode) !== group) return;
     let changed = 0;
+    const changedServices = [];
     p.services.forEach(function (s) {
       if (!s) return;
       if (bookingModeGroup(serviceBookingMode(s, p)) !== group) return;
       if (s.bookingMode !== mode) {
+        changedServices.push({ service: s, previousMode: s.bookingMode });
         s.bookingMode = mode;
         changed += 1;
       }
@@ -3096,6 +3098,29 @@
     if (!changed) {
       showToast("Wszystkie oferty w grupie mają już ten tryb.");
       return;
+    }
+    const persistRemotely =
+      window.LokalnieApi &&
+      typeof window.LokalnieApi.updateServicesBookingMode === "function" &&
+      (isProductionHostname() || hasApiToken());
+    if (persistRemotely) {
+      try {
+        await window.LokalnieApi.updateServicesBookingMode(
+          changedServices.map(function (entry) {
+            return entry.service.id;
+          }),
+          mode
+        );
+      } catch (err) {
+        changedServices.forEach(function (entry) {
+          entry.service.bookingMode = entry.previousMode;
+        });
+        saveState();
+        if (!refreshProviderServicesListInPlace()) renderAll();
+        console.warn("[Lokalnie] service booking mode save failed", err);
+        showToast("Nie udało się zmienić trybu rezerwacji.");
+        return;
+      }
     }
     // Bez pełnego renderAll — inaczej lista/edycja skacze do góry.
     if (!refreshProviderServicesListInPlace()) renderAll();
@@ -6360,7 +6385,7 @@
     let html = "";
     if (openBook.length) {
       html += `<div class="service-list__group-head">
-          <h4 class="service-list__group-title">Wybór terminu</h4>
+          <h4 class="service-list__group-title">Lista terminów</h4>
         </div>${rowsHtml(openBook)}`;
     }
     if (requests.length) {
@@ -13434,7 +13459,7 @@
           <span class="service-edit__label">Opis</span>
         </label>
         <div class="service-edit__field" data-field="bookingMode">
-          <span class="service-edit__label">Jak klient rezerwuje</span>
+          <span class="service-edit__label">w jaki sposób klient będzie rezerwować termin</span>
           <div class="service-edit__mode-list service-edit__mode-list--category" data-role="service-booking-mode-panel">
             <div class="settings-contact__toggle service-edit__mode-toggle">
               <div class="settings__toggle-text">
@@ -13589,7 +13614,7 @@
           ${renderProviderServicesGroupSeg(
             "confirm",
             [
-              { mode: "auto", label: "Dowolny wybór" },
+              { mode: "auto", label: "Lista terminów" },
               { mode: "queue", label: "Kolejka" },
             ],
             confirmMode,
@@ -13601,7 +13626,7 @@
             : `<p class="empty-note service-list__group-empty">Brak ofert w tej grupie.</p>`
         }`;
     list += `<div class="service-list__sep service-list__sep--divider">
-          <h4 class="service-list__group-title">Typ rezerwacji — na prośbę</h4>
+          <h4 class="service-list__group-title">- typ rezerwacji - klient prosi o podanie terminu</h4>
           ${renderProviderServicesGroupSeg(
             "ask",
             [
@@ -13682,10 +13707,10 @@
             <div class="app-scroll app-scroll--svc-side">
               ${renderProviderServicesListHtml(p, editId)}
             </div>
-            ${renderServicesFab()}
           </aside>
           <section class="prov-svc__edit" data-role="prov-svc-edit" aria-label="Panel edycji usługi">
             ${editPane}
+            ${renderServicesFab()}
           </section>
         </div>
         ${providerBottomNav("services")}
@@ -13806,7 +13831,7 @@
     renderAll();
   }
 
-  function addServicePhotosFromFiles(fileList) {
+  async function addServicePhotosFromFiles(fileList) {
     captureServiceEditDraft();
     const files = Array.prototype.slice.call(fileList || []).filter(function (f) {
       return f && /^image\//.test(f.type);
@@ -13822,42 +13847,44 @@
       return;
     }
     const toRead = files.slice(0, room);
-    let pending = toRead.length;
-    toRead.forEach(function (file) {
+    const persistRemotely =
+      window.LokalnieApi &&
+      typeof window.LokalnieApi.uploadServicePhoto === "function" &&
+      (isProductionHostname() || hasApiToken());
+    const uploaded = [];
+    for (const file of toRead) {
       if (file.size > 2.5 * 1024 * 1024) {
         showToast("Jedno ze zdjęć jest za duże (max 2,5 MB).");
-        pending -= 1;
-        if (pending === 0) {
-          setEditServicePhotos(photos);
-          saveState();
-          renderAll();
-        }
-        return;
+        continue;
       }
-      const reader = new FileReader();
-      reader.onload = function () {
-        photos.push(String(reader.result || ""));
-        pending -= 1;
-        if (pending === 0) {
-          setEditServicePhotos(photos);
-          saveState();
-          renderAll();
-          showToast(toRead.length === 1 ? "Zdjęcie dodane." : "Zdjęcia dodane.");
+      try {
+        let photoUrl = "";
+        if (persistRemotely) {
+          photoUrl = await window.LokalnieApi.uploadServicePhoto(file);
+        } else {
+          photoUrl = await new Promise(function (resolve, reject) {
+            const reader = new FileReader();
+            reader.onload = function () {
+              resolve(String(reader.result || ""));
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
         }
-      };
-      reader.onerror = function () {
-        pending -= 1;
-        if (pending === 0) {
-          setEditServicePhotos(photos);
-          saveState();
-          renderAll();
-        }
-      };
-      reader.readAsDataURL(file);
-    });
+        if (photoUrl) uploaded.push(photoUrl);
+      } catch (err) {
+        console.warn("[Lokalnie] service photo upload failed", err);
+        showToast("Nie udało się dodać jednego ze zdjęć.");
+      }
+    }
+    if (!uploaded.length) return;
+    setEditServicePhotos(photos.concat(uploaded));
+    saveState();
+    renderAll();
+    showToast(uploaded.length === 1 ? "Zdjęcie dodane." : "Zdjęcia dodane.");
   }
 
-  function saveService(serviceId, form) {
+  async function saveService(serviceId, form) {
     const p = myProvider();
     if (!p || !form) return;
     const isNew = serviceId === "__new__";
@@ -13931,51 +13958,69 @@
       }
     }
 
-    if (isNew) {
-      if (!Array.isArray(p.services)) p.services = [];
-      s = {
-        id: "svc-" + Date.now().toString(36),
-        name: name,
-        bookingMode: bookingMode,
-        durationMin: durationMin,
-        price: price,
-        photos: photos,
-      };
-      if (description) s.description = description;
-      if (locationIds) s.locationIds = locationIds;
-      if (variants.length > 1) {
-        s.variants = variants.map(function (v, i) {
-          return {
-            id: s.id + "-v" + (i + 1),
-            durationMin: Math.round(v.durationMin),
-            price: v.price,
-            label: v.label || "",
-          };
-        });
-      }
-      p.services.push(s);
+    const localId = isNew ? "svc-" + Date.now().toString(36) : s.id;
+    let nextService = Object.assign({}, isNew ? {} : s, {
+      id: localId,
+      name: name,
+      description: description || undefined,
+      bookingMode: bookingMode,
+      durationMin: durationMin,
+      price: price,
+      photos: photos,
+    });
+    delete nextService.subtitle;
+    if (locationIds) nextService.locationIds = locationIds;
+    else delete nextService.locationIds;
+    if (variants.length > 1) {
+      nextService.variants = variants.map(function (v, i) {
+        return {
+          id: v.id && String(v.id).indexOf(localId) === 0 ? v.id : localId + "-v" + (i + 1),
+          durationMin: Math.round(v.durationMin),
+          price: v.price,
+          label: v.label || "",
+        };
+      });
     } else {
-      s.name = name;
-      s.description = description || undefined;
-      delete s.subtitle;
-      s.bookingMode = bookingMode;
-      s.durationMin = durationMin;
-      s.price = price;
-      s.photos = photos;
-      if (locationIds) s.locationIds = locationIds;
-      else delete s.locationIds;
-      if (variants.length > 1) {
-        s.variants = variants.map(function (v, i) {
-          return {
-            id: v.id && String(v.id).indexOf(s.id) === 0 ? v.id : s.id + "-v" + (i + 1),
-            durationMin: Math.round(v.durationMin),
-            price: v.price,
-            label: v.label || "",
-          };
-        });
-      } else {
-        delete s.variants;
+      delete nextService.variants;
+    }
+
+    const persistRemotely =
+      window.LokalnieApi &&
+      typeof window.LokalnieApi.upsertService === "function" &&
+      (isProductionHostname() || hasApiToken());
+    const saveButton = form.querySelector('[data-action="save-service"]');
+    if (persistRemotely) {
+      if (saveButton) {
+        saveButton.disabled = true;
+        saveButton.setAttribute("aria-busy", "true");
       }
+      try {
+        const saved = await window.LokalnieApi.upsertService(nextService, isNew);
+        if (!saved) throw new Error("service_save_failed");
+        nextService = saved;
+      } catch (err) {
+        console.warn("[Lokalnie] service save failed", err);
+        showToast("Nie udało się zapisać usługi. Spróbuj ponownie.");
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.removeAttribute("aria-busy");
+        }
+        return;
+      }
+    }
+
+    if (!Array.isArray(p.services)) p.services = [];
+    if (isNew) {
+      p.services.push(nextService);
+    } else {
+      const serviceIndex = p.services.findIndex(function (service) {
+        return service && service.id === serviceId;
+      });
+      if (serviceIndex === -1) {
+        showToast("Nie znaleziono edytowanej usługi.");
+        return;
+      }
+      p.services[serviceIndex] = nextService;
     }
 
     if (window.AppState.params.provider) {
@@ -14045,11 +14090,25 @@
     document.body.classList.add("cancel-visit-dialog-open");
   }
 
-  function deleteServices(serviceIds) {
+  async function deleteServices(serviceIds) {
     const p = myProvider();
     if (!p || !Array.isArray(p.services)) return;
     const ids = (Array.isArray(serviceIds) ? serviceIds : [serviceIds]).filter(Boolean);
     if (!ids.length) return;
+    const persistRemotely =
+      window.LokalnieApi &&
+      typeof window.LokalnieApi.deleteServices === "function" &&
+      (isProductionHostname() || hasApiToken());
+    if (persistRemotely) {
+      try {
+        await window.LokalnieApi.deleteServices(ids);
+      } catch (err) {
+        console.warn("[Lokalnie] service delete failed", err);
+        closeDeleteServiceDialog();
+        showToast("Nie udało się usunąć usługi. Spróbuj ponownie.");
+        return;
+      }
+    }
     const idSet = {};
     ids.forEach(function (id) {
       idSet[id] = true;
@@ -14653,6 +14712,29 @@
   }
 
   /**
+   * Safari/WebKit: input[type=time] bywa z pustym .value mimo value="HH:MM" w HTML
+   * (dopóki użytkownik nie otworzy pickera). Bierzemy attribute / draft jako fallback.
+   */
+  function readAvailTimeInput(el, fallback) {
+    const raw =
+      (el && (el.value || el.getAttribute("value") || el.defaultValue)) || fallback || "";
+    return normalizeAvailTimeValue(raw);
+  }
+
+  function isAvailFormVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    if (el.closest && el.closest("[hidden]")) return false;
+    try {
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden") return false;
+    } catch (err) {
+      /* ignore */
+    }
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  /**
    * Standardowy natywny picker godzin (koło na iOS, zegar na Androidzie).
    * Kluczowe: BEZ <label> naokoło (label re-dispatchuje tap i zamyka picker na mobile)
    * oraz BEZ appearance:none (to wyłącza natywny picker w WebKit).
@@ -14772,15 +14854,13 @@
     if (source && source.closest) {
       const direct = source.matches && source.matches(selector) ? source : source.closest(selector);
       if (direct) return direct;
-      const scope = source.closest(".avail-day-group, .app-screen, .app-mount");
+      const scope = source.closest(".avail-day-group, .app-screen, .app-mount, #app-fullscreen");
       const scoped = scope && scope.querySelector(selector);
       if (scoped) return scoped;
     }
     const forms = Array.prototype.slice.call(document.querySelectorAll(selector));
     return (
-      forms.find(function (form) {
-        return form.offsetParent !== null;
-      }) ||
+      forms.find(isAvailFormVisible) ||
       forms.find(function (form) {
         return form.closest("#app-fullscreen");
       }) ||
@@ -14793,11 +14873,15 @@
     if (!dateISO) return;
     if (window.AppState.availEditDate === dateISO) {
       // Przycisk w stanie otwartym = Zapisz i zamknij.
+      // Najpierw zsynchronizuj draft z formularza (Safari: puste .value time).
+      syncAvailDraftFromForm(dateISO, source);
       saveAvailDayEdit(dateISO, { quiet: true, source: source });
+      const saved = blocksFromAvailDraft(dateISO);
       window.AppState.availEditDate = null;
       saveState();
       refreshAvailListOnly();
       patchAvailMonthBusyDots();
+      if (saved.length) showToast("Zapisano dostępność.");
       return;
     }
     openAvailDayEdit(dateISO);
@@ -14810,15 +14894,18 @@
     if (!form) return draft;
     const rows = form.querySelectorAll("[data-avail-block]");
     const blocks = [];
-    rows.forEach(function (row) {
+    rows.forEach(function (row, idx) {
+      const prev = (draft.blocks && draft.blocks[idx]) || null;
       const fromEl = row.querySelector('[name="from"]');
       const toEl = row.querySelector('[name="to"]');
       const locEl = row.querySelector('[name="locationId"]');
       const repeatEl = row.querySelector('[name="repeat"]');
-      const from = fromEl ? fromEl.value : draft.blocks[blocks.length] && draft.blocks[blocks.length].from;
-      const to = toEl ? toEl.value : draft.blocks[blocks.length] && draft.blocks[blocks.length].to;
+      const from = readAvailTimeInput(fromEl, prev && prev.from);
+      const to = readAvailTimeInput(toEl, prev && prev.to);
       if (!from || !to) return;
-      const repeat = normalizeAvailRepeat({ repeat: repeatEl ? repeatEl.value : "none" });
+      const repeat = normalizeAvailRepeat({
+        repeat: repeatEl && repeatEl.value ? repeatEl.value : (prev && prev.repeat) || "none",
+      });
       blocks.push({
         from: from,
         to: to,
@@ -14931,22 +15018,55 @@
     });
   }
 
+  function blocksFromAvailDraft(dateISO) {
+    const p = myProvider();
+    const draft = ensureAvailDraft(dateISO);
+    if (!p || !draft) return [];
+    return (draft.blocks || [])
+      .filter(function (b) {
+        if (!b || !b.from || !b.to) return false;
+        const from = normalizeAvailTimeValue(b.from);
+        const to = normalizeAvailTimeValue(b.to);
+        return timeToMinutes(from) < timeToMinutes(to);
+      })
+      .map(function (b, idx) {
+        const from = normalizeAvailTimeValue(b.from);
+        const to = normalizeAvailTimeValue(b.to);
+        const repeat = normalizeAvailRepeat(b);
+        return {
+          id: "blk-" + p.id + "-" + dateISO + "-" + idx,
+          from: from,
+          to: to,
+          locationId: b.locationId || defaultAvailBlock(p).locationId,
+          repeat: repeat,
+          recurring: repeat !== "none",
+        };
+      });
+  }
+
   function blocksFromAvailForm(dateISO, source) {
     const p = myProvider();
     if (!p || !dateISO) return [];
     const form = availEditFormForDate(dateISO, source);
-    if (!form) return [];
+    const draft = ensureAvailDraft(dateISO);
+    if (!form) return blocksFromAvailDraft(dateISO);
+    const rows = form.querySelectorAll("[data-avail-block]");
+    // Brak wierszy = użytkownik usunął wszystkie przedziały.
+    if (!rows.length) return [];
     const blocks = [];
-    form.querySelectorAll("[data-avail-block]").forEach(function (row, idx) {
+    rows.forEach(function (row, idx) {
+      const prev = draft && draft.blocks && draft.blocks[idx];
       const fromEl = row.querySelector('[name="from"]');
       const toEl = row.querySelector('[name="to"]');
       const locEl = row.querySelector('[name="locationId"]');
       const repeatEl = row.querySelector('[name="repeat"]');
-      const from = fromEl ? fromEl.value : "";
-      const to = toEl ? toEl.value : "";
+      const from = readAvailTimeInput(fromEl, prev && prev.from);
+      const to = readAvailTimeInput(toEl, prev && prev.to);
       if (!from || !to) return;
       if (timeToMinutes(from) >= timeToMinutes(to)) return;
-      const repeat = normalizeAvailRepeat({ repeat: repeatEl ? repeatEl.value : "none" });
+      const repeat = normalizeAvailRepeat({
+        repeat: repeatEl && repeatEl.value ? repeatEl.value : (prev && prev.repeat) || "none",
+      });
       blocks.push({
         id: "blk-" + p.id + "-" + dateISO + "-" + idx,
         from: from,
@@ -14956,6 +15076,10 @@
         recurring: repeat !== "none",
       });
     });
+    // Safari: puste .value na wszystkich polach time → nie kasuj draftu / dostępności.
+    if (!blocks.length && draft && draft.blocks && draft.blocks.length) {
+      return blocksFromAvailDraft(dateISO);
+    }
     return blocks;
   }
 
@@ -20332,7 +20456,7 @@
         event.preventDefault();
         {
           const form = btn.closest("form.service-edit");
-          saveService(d.serviceId, form);
+          void saveService(d.serviceId, form);
         }
         break;
       case "save-provider-settings":
@@ -20351,7 +20475,7 @@
         break;
       case "set-services-group-mode":
         event.preventDefault();
-        setProviderServicesGroupMode(
+        void setProviderServicesGroupMode(
           d.group || btn.getAttribute("data-group"),
           d.mode || btn.getAttribute("data-mode")
         );
@@ -20378,7 +20502,7 @@
                 return x.trim();
               }).filter(Boolean)
             : [];
-          deleteServices(ids);
+          void deleteServices(ids);
         }
         break;
       case "select-provider-visit":

@@ -17,6 +17,14 @@ import { cleanupIdempotencyKeys, withIdempotency } from "./idempotency.js";
 import { enforceRateLimit, rateLimitScope } from "./rateLimit.js";
 import { decryptPhone, encryptPhone } from "./pii.js";
 import {
+  createProviderService,
+  deleteProviderService,
+  deleteProviderServices,
+  listProviderServices,
+  updateProviderService,
+  updateProviderServicesBookingMode,
+} from "./services.js";
+import {
   adminStats,
   adminListUsers,
   adminBlockUser,
@@ -94,6 +102,7 @@ async function routeRequest(request, env) {
             authLogout: "POST /auth/logout",
             me: "GET|PATCH|DELETE /me",
             provider: "GET|PATCH /provider/me",
+            services: "GET|POST /provider/me/services, PATCH|DELETE /provider/me/services/:id",
             clients: "GET|POST /provider/me/clients",
             bookings: "GET|POST /bookings",
             requests: "GET|POST /requests",
@@ -156,6 +165,22 @@ async function routeRequest(request, env) {
       if (path === "/provider/me/clients") {
         if (request.method === "GET") return listClients(request, env);
         if (request.method === "POST") return createClient(request, env);
+      }
+
+      if (path === "/provider/me/services") {
+        if (request.method === "GET") return listProviderServices(request, env);
+        if (request.method === "POST") return createProviderService(request, env);
+        if (request.method === "DELETE") return deleteProviderServices(request, env);
+      }
+
+      if (path === "/provider/me/services/booking-mode" && request.method === "PATCH") {
+        return updateProviderServicesBookingMode(request, env);
+      }
+
+      if (parts[0] === "provider" && parts[1] === "me" && parts[2] === "services" && parts[3]) {
+        const serviceId = parts[3];
+        if (request.method === "PATCH") return updateProviderService(request, env, serviceId);
+        if (request.method === "DELETE") return deleteProviderService(request, env, serviceId);
       }
 
       if (parts[0] === "provider" && parts[1] === "me" && parts[2] === "clients" && parts[3]) {
@@ -1303,6 +1328,9 @@ async function uploadMedia(request, env) {
   const kind = String(form.get("kind") || "avatar");
   if (!file || typeof file === "string") return json({ error: "file_required" }, 400);
   if (!["avatar", "service", "provider"].includes(kind)) return json({ error: "invalid_kind" }, 400);
+  if ((kind === "service" || kind === "provider") && !auth.provider) {
+    return json({ error: "provider_required" }, 403);
+  }
 
   const contentType = file.type || "application/octet-stream";
   if (!ALLOWED_IMAGE.has(contentType)) return json({ error: "unsupported_type", allowed: [...ALLOWED_IMAGE] }, 415);
@@ -1316,7 +1344,7 @@ async function uploadMedia(request, env) {
   if (!detectedType || detectedType !== contentType) {
     return json({ error: "invalid_image_bytes" }, 415);
   }
-  const isPublic = kind === "avatar" || kind === "provider" ? 1 : 0;
+  const isPublic = kind === "avatar" || kind === "provider" || kind === "service" ? 1 : 0;
 
   await env.MEDIA.put(storageKey, bytes, {
     httpMetadata: { contentType },

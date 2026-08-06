@@ -177,6 +177,12 @@
     return BASE + "/media/" + encodeURIComponent(mediaId);
   }
 
+  function mediaIdFromUrl(value) {
+    const text = String(value || "");
+    const match = text.match(/\/media\/([^/?#]+)(?:[?#]|$)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  }
+
   async function request(path, opts) {
     opts = opts || {};
     const method = String(opts.method || "GET").toUpperCase();
@@ -298,6 +304,43 @@
     };
   }
 
+  function mapServiceToApp(service) {
+    if (!service) return null;
+    return {
+      id: service.id,
+      name: service.name || "",
+      description: service.description || "",
+      bookingMode: service.bookingMode || "auto",
+      durationMin: Number(service.durationMin) || 30,
+      price: service.price == null ? null : Number(service.price),
+      photos: (service.photoIds || []).map(mediaUrl),
+      locationIds: Array.isArray(service.locationIds) ? service.locationIds : [],
+      variants: Array.isArray(service.variants) ? service.variants : [],
+      _fromApi: true,
+    };
+  }
+
+  function serviceToApi(service) {
+    return {
+      name: service.name || "",
+      description: service.description || "",
+      bookingMode: service.bookingMode || "auto",
+      durationMin: Number(service.durationMin),
+      price: service.price == null || service.price === "" ? null : Number(service.price),
+      photoIds: (service.photos || []).map(mediaIdFromUrl).filter(Boolean),
+      locationIds: Array.isArray(service.locationIds) ? service.locationIds : [],
+      variants: Array.isArray(service.variants)
+        ? service.variants.map(function (variant) {
+            return {
+              durationMin: Number(variant.durationMin),
+              price: variant.price == null || variant.price === "" ? null : Number(variant.price),
+              label: variant.label || "",
+            };
+          })
+        : [],
+    };
+  }
+
   function mapClientToApp(c) {
     if (!c) return null;
     return {
@@ -327,6 +370,7 @@
       const apiProviderId = me.provider && me.provider.id;
       const appProviderId = toAppProviderId(apiProviderId) || (apiProviderId ? apiProviderId : "grzesiu-barber");
       let clients = [];
+      let providerServices = [];
 
       if (me.user) {
         if (!window.AppState.clientProfile || typeof window.AppState.clientProfile !== "object") {
@@ -347,6 +391,25 @@
       }
 
       if (apiProviderId) {
+        try {
+          const servicesRes = await request("/provider/me/services");
+          providerServices = (servicesRes.services || []).map(mapServiceToApp).filter(Boolean);
+          const profiles = window.AppState.providerProfiles || [];
+          let ownedProvider = profiles.find(function (profile) {
+            return profile && (profile.apiId === apiProviderId || profile.id === appProviderId);
+          });
+          // Backend obsługuje obecnie jeden profil na konto; podepnij starszy profil lokalny.
+          if (!ownedProvider && profiles.length === 1) ownedProvider = profiles[0];
+          if (ownedProvider) {
+            ownedProvider.apiId = apiProviderId;
+            ownedProvider.services = providerServices;
+            if (window.AppState.activeProviderId === ownedProvider.id) {
+              window.AppState.myProvider = ownedProvider;
+            }
+          }
+        } catch (err) {
+          console.warn("[LokalnieApi] services sync skipped", err);
+        }
         try {
           const clientsRes = await request("/provider/me/clients");
           clients = (clientsRes.clients || []).map(mapClientToApp).filter(Boolean);
@@ -400,6 +463,7 @@
         ok: true,
         appProviderId: appProviderId,
         hasProvider: !!apiProviderId,
+        services: providerServices.length,
         clients: clients.length,
         bookings: serverBookings.length,
         requests: serverRequests.length,
@@ -458,6 +522,62 @@
       console.warn("[LokalnieApi] updateProviderMe failed", err);
       return null;
     }
+  }
+
+  async function upsertService(service, isNew) {
+    if (!service || (!isProductionHostname() && !getAuthToken())) return null;
+    const path = isNew
+      ? "/provider/me/services"
+      : "/provider/me/services/" + encodeURIComponent(service.id);
+    const payload = serviceToApi(service);
+    const res = await idempotentRequest(
+      isNew ? "create-service" : "update-service",
+      String(service.id || service.name) + "." + JSON.stringify(payload),
+      path,
+      {
+        method: isNew ? "POST" : "PATCH",
+        json: payload,
+      }
+    );
+    return mapServiceToApp(res && res.service);
+  }
+
+  async function deleteService(serviceId) {
+    if (!serviceId || (!isProductionHostname() && !getAuthToken())) return false;
+    await idempotentRequest(
+      "delete-service",
+      String(serviceId),
+      "/provider/me/services/" + encodeURIComponent(serviceId),
+      { method: "DELETE" }
+    );
+    return true;
+  }
+
+  async function deleteServices(serviceIds) {
+    const ids = Array.isArray(serviceIds) ? serviceIds.filter(Boolean) : [];
+    if (!ids.length || (!isProductionHostname() && !getAuthToken())) return false;
+    await idempotentRequest(
+      "delete-services",
+      ids.slice().sort().join(","),
+      "/provider/me/services",
+      { method: "DELETE", json: { serviceIds: ids } }
+    );
+    return true;
+  }
+
+  async function updateServicesBookingMode(serviceIds, bookingMode) {
+    const ids = Array.isArray(serviceIds) ? serviceIds.filter(Boolean) : [];
+    if (!ids.length || (!isProductionHostname() && !getAuthToken())) return false;
+    await idempotentRequest(
+      "update-services-booking-mode",
+      ids.slice().sort().join(",") + "." + String(bookingMode || ""),
+      "/provider/me/services/booking-mode",
+      {
+        method: "PATCH",
+        json: { serviceIds: ids, bookingMode: bookingMode },
+      }
+    );
+    return true;
   }
 
   async function upsertClient(appProviderId, client) {
@@ -744,6 +864,19 @@
     }
   }
 
+  async function uploadServicePhoto(file) {
+    if (!file || !/^image\/(?:jpeg|png|webp|gif)$/i.test(String(file.type || ""))) {
+      throw new Error("unsupported_image_type");
+    }
+    file = await resizeImageForUpload(file, 1600);
+    if (file.size > 5 * 1024 * 1024) throw new Error("image_too_large");
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("kind", "service");
+    const res = await request("/media", { method: "POST", body: fd });
+    return res && res.media && res.media.id ? mediaUrl(res.media.id) : null;
+  }
+
   async function logout() {
     try {
       await request("/auth/logout", { method: "POST" });
@@ -798,6 +931,10 @@
     syncFromServer: syncFromServer,
     updateMe: updateMe,
     updateProviderMe: updateProviderMe,
+    upsertService: upsertService,
+    deleteService: deleteService,
+    deleteServices: deleteServices,
+    updateServicesBookingMode: updateServicesBookingMode,
     upsertClient: upsertClient,
     createBookingFromApp: createBookingFromApp,
     createRequestFromApp: createRequestFromApp,
@@ -809,6 +946,7 @@
     patchBookingFromApp: patchBookingFromApp,
     releaseIdempotencyKey: releaseIdempotencyKey,
     uploadAvatar: uploadAvatar,
+    uploadServicePhoto: uploadServicePhoto,
     logout: logout,
     deleteAccount: deleteAccount,
     listCalendarConnections: listCalendarConnections,

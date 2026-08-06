@@ -8632,11 +8632,7 @@ button.provider-info-pop__line {
 .prov-svc__list .app-scroll--svc-side {
   flex: 1 1 0;
   min-height: 0;
-  padding: 0.7rem 0.85rem 5rem;
-}
-
-.prov-svc__list .service-list-fab {
-  bottom: max(0.85rem, env(safe-area-inset-bottom, 0px));
+  padding: 0.7rem 0.85rem 1rem;
 }
 
 .prov-svc__list .service-row--static {
@@ -8659,6 +8655,7 @@ button.provider-info-pop__line {
 }
 
 .prov-svc__edit {
+  position: relative;
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
@@ -8671,10 +8668,14 @@ button.provider-info-pop__line {
 .prov-svc__edit .app-scroll--svc-edit {
   flex: 1 1 0;
   min-height: 0;
-  padding: 1rem 1.75rem 1.75rem;
+  padding: 1rem 1.75rem 5rem;
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+
+.prov-svc__edit .service-list-fab {
+  bottom: max(0.85rem, env(safe-area-inset-bottom, 0px));
 }
 
 .prov-svc__edit .service-edit {
