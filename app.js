@@ -13799,8 +13799,14 @@
     const p = myProvider();
     const g = group === "ask" || group === "confirm" ? group : "confirm";
     const mode = defaultModeForBookingGroup(p, g);
+    const operationId =
+      "svc-" +
+      (window.crypto && typeof window.crypto.randomUUID === "function"
+        ? window.crypto.randomUUID().replace(/-/g, "")
+        : Date.now().toString(36));
     window.AppState.params.provider = Object.assign({}, window.AppState.params.provider || {}, {
       editServiceId: "__new__",
+      editServiceOperationId: operationId,
       editServicePhotos: [],
       editServiceDraft: { bookingMode: mode },
     });
@@ -13813,6 +13819,7 @@
   function cancelEditService() {
     if (window.AppState.params.provider) {
       delete window.AppState.params.provider.editServiceId;
+      delete window.AppState.params.provider.editServiceOperationId;
       delete window.AppState.params.provider.editServicePhotos;
       delete window.AppState.params.provider.editServiceDraft;
     }
@@ -13958,7 +13965,10 @@
       }
     }
 
-    const localId = isNew ? "svc-" + Date.now().toString(36) : s.id;
+    const localId = isNew
+      ? (window.AppState.params.provider && window.AppState.params.provider.editServiceOperationId) ||
+        "svc-" + Date.now().toString(36)
+      : s.id;
     let nextService = Object.assign({}, isNew ? {} : s, {
       id: localId,
       name: name,
@@ -14025,6 +14035,7 @@
 
     if (window.AppState.params.provider) {
       delete window.AppState.params.provider.editServiceId;
+      delete window.AppState.params.provider.editServiceOperationId;
       delete window.AppState.params.provider.editServicePhotos;
       delete window.AppState.params.provider.editServiceDraft;
     }

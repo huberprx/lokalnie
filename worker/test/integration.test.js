@@ -290,6 +290,79 @@ describe("provider service catalog", () => {
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "invalid_service" });
   });
+
+  it("updates booking modes and deletes multiple services in single operations", async () => {
+    const first = await api("/provider/me/services", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      body: serviceBody,
+      key: "create-service-bulk-1",
+    });
+    const second = await api("/provider/me/services", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      body: { ...serviceBody, name: "Broda" },
+      key: "create-service-bulk-2",
+    });
+    const ids = [(await first.json()).service.id, (await second.json()).service.id];
+
+    const modeResponse = await api("/provider/me/services/booking-mode", {
+      method: "PATCH",
+      token: PROVIDER_TOKEN,
+      body: { serviceIds: ids, bookingMode: "approval" },
+      key: "services-mode-bulk",
+    });
+    expect(modeResponse.status).toBe(200);
+    expect((await modeResponse.json()).updated).toBe(2);
+    const modes = await env.DB.prepare(
+      "SELECT booking_mode FROM provider_services WHERE provider_id='provider-1'"
+    ).all();
+    expect(modes.results.map((row) => row.booking_mode)).toEqual(["approval", "approval"]);
+
+    const deleteResponse = await api("/provider/me/services", {
+      method: "DELETE",
+      token: PROVIDER_TOKEN,
+      body: { serviceIds: ids },
+      key: "services-delete-bulk",
+    });
+    expect(deleteResponse.status).toBe(200);
+    expect((await deleteResponse.json()).deleted).toBe(2);
+    expect(
+      await env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM provider_services WHERE provider_id='provider-1'"
+      ).first()
+    ).toMatchObject({ count: 0 });
+  });
+
+  it("accepts only service photos owned by the provider", async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO media (id, owner_user_id, kind, storage_key, content_type, byte_size)
+         VALUES ('media-owned', 'user-provider', 'service', 'owned.webp', 'image/webp', 10)`
+      ),
+      env.DB.prepare(
+        `INSERT INTO media (id, owner_user_id, kind, storage_key, content_type, byte_size)
+         VALUES ('media-other', 'user-other', 'service', 'other.webp', 'image/webp', 10)`
+      ),
+    ]);
+    const owned = await api("/provider/me/services", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      body: { ...serviceBody, photoIds: ["media-owned"] },
+      key: "create-service-owned-photo",
+    });
+    expect(owned.status).toBe(201);
+    expect((await owned.json()).service.photoIds).toEqual(["media-owned"]);
+
+    const foreign = await api("/provider/me/services", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      body: { ...serviceBody, photoIds: ["media-other"] },
+      key: "create-service-foreign-photo",
+    });
+    expect(foreign.status).toBe(400);
+    expect(await foreign.json()).toEqual({ error: "invalid_service_photos" });
+  });
 });
 
 describe("required idempotency keys", () => {
@@ -303,6 +376,8 @@ describe("required idempotency keys", () => {
       ["/requests/missing/request-more", "POST", CLIENT_TOKEN],
       ["/bookings/missing", "PATCH", CLIENT_TOKEN],
       ["/provider/me/services", "POST", PROVIDER_TOKEN],
+      ["/provider/me/services", "DELETE", PROVIDER_TOKEN],
+      ["/provider/me/services/booking-mode", "PATCH", PROVIDER_TOKEN],
       ["/provider/me/services/missing", "PATCH", PROVIDER_TOKEN],
       ["/provider/me/services/missing", "DELETE", PROVIDER_TOKEN],
     ];
