@@ -1,4 +1,4 @@
-import { json } from "./http.js";
+import { json, parseJsonField } from "./http.js";
 import { hashToken, sessionTokenFromCookie } from "./oauth.js";
 import { decryptPhone } from "./pii.js";
 
@@ -173,5 +173,10 @@ export async function mapProvider(row, env) {
     visibleInSearch: !!row.visible_in_search,
     multiSelect: !!row.multi_select,
     avatarKey: row.avatar_key,
+    services: parseJsonField(row.services_json, []),
+    availability: parseJsonField(row.availability_json, []),
+    locations: parseJsonField(row.locations_json, []),
+    bookingRules: parseJsonField(row.booking_rules_json, {}),
+    deactivated: !!row.deactivated,
   };
 }
