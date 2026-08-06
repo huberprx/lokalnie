@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.220";
+  const APP_VERSION = "1.0.221";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -4640,17 +4640,71 @@
   }
 
   let clientProfileSyncTimer = null;
+  let clientProfileSyncPromise = null;
+  let clientProfileRevision = 0;
+  let clientProfileSavedRevision = 0;
 
   /** Zapis profilu klienta na serwer — bez tego dane giną przy kolejnym logowaniu. */
+  function persistClientProfileNow() {
+    if (clientProfileSyncTimer) {
+      clearTimeout(clientProfileSyncTimer);
+      clientProfileSyncTimer = null;
+    }
+    if (isTesterMode()) return Promise.resolve(true);
+    if (clientProfileSyncPromise) {
+      return clientProfileSyncPromise.then(function (ok) {
+        if (!ok) return false;
+        return clientProfileSavedRevision < clientProfileRevision
+          ? persistClientProfileNow()
+          : true;
+      });
+    }
+    if (!window.LokalnieApi || !window.LokalnieApi.updateMe) return Promise.resolve(false);
+    const onProd =
+      window.LokalnieApi.isProductionHostname && window.LokalnieApi.isProductionHostname();
+    const hasToken =
+      window.LokalnieApi.getAuthToken && window.LokalnieApi.getAuthToken();
+    if (!onProd && !hasToken) return Promise.resolve(false);
+    const targetRevision = clientProfileRevision;
+    const snapshot = JSON.parse(JSON.stringify(ensureClientProfile()));
+    const requestPromise = window.LokalnieApi
+      .updateMe(snapshot)
+      .then(function (saved) {
+        if (saved) {
+          clientProfileSavedRevision = Math.max(clientProfileSavedRevision, targetRevision);
+        }
+        return !!saved;
+      });
+    clientProfileSyncPromise = requestPromise;
+    return requestPromise.then(function (ok) {
+      if (clientProfileSyncPromise === requestPromise) clientProfileSyncPromise = null;
+      if (!ok) return false;
+      return clientProfileSavedRevision < clientProfileRevision
+        ? persistClientProfileNow()
+        : true;
+    });
+  }
+
   function queueClientProfileSync() {
     if (isTesterMode()) return;
-    if (!window.LokalnieApi || !window.LokalnieApi.updateMe) return;
-    if (!window.LokalnieApi.getAuthToken || !window.LokalnieApi.getAuthToken()) return;
+    clientProfileRevision += 1;
     if (clientProfileSyncTimer) clearTimeout(clientProfileSyncTimer);
     clientProfileSyncTimer = setTimeout(function () {
-      clientProfileSyncTimer = null;
-      void window.LokalnieApi.updateMe(ensureClientProfile());
+      void persistClientProfileNow().then(function (saved) {
+        if (!saved) showToast("Nie udało się zapisać profilu. Spróbuj ponownie.");
+      });
     }, 800);
+  }
+
+  function flushClientProfileSync() {
+    if (
+      !clientProfileSyncTimer &&
+      !clientProfileSyncPromise &&
+      clientProfileSavedRevision >= clientProfileRevision
+    ) {
+      return Promise.resolve(true);
+    }
+    return persistClientProfileNow();
   }
 
   function googleCalendarConnection() {
@@ -7099,13 +7153,32 @@
       window.AppState.requests = [];
     }
     ensureClientProfile();
-    const hasApiProvider = !!(me.user && me.user.roles && me.user.roles.provider) || !!me.provider;
+    // Rola bez rekordu profilu nie wystarcza do odtworzenia panelu.
+    // Źródłem prawdy jest provider_profiles zwrócony przez /me.
+    const hasApiProvider = !!me.provider;
     ensureProviderProfiles();
-    if (listOwnedProviders().length) return; // lokalne profile wygrywają
     if (!hasApiProvider) {
       window.AppState.providerRoleActive = false;
       return;
     }
+    if (me.provider && window.LokalnieApi && window.LokalnieApi.mapProviderToApp) {
+      const mapped = window.LokalnieApi.mapProviderToApp(me.provider);
+      const existing = listOwnedProviders().find(function (profile) {
+        return profile && (profile.apiId === me.provider.id || profile.id === mapped.id);
+      });
+      if (existing) {
+        const services = existing.services || [];
+        const availability = existing.availability || [];
+        Object.assign(existing, mapped);
+        existing.services = services;
+        existing.availability = availability;
+        selectOwnedProvider(existing.id);
+      } else {
+        addOwnedProvider(mapped);
+      }
+      return;
+    }
+    if (listOwnedProviders().length) return;
     const apiSlug =
       window.LokalnieApi && window.LokalnieApi.toAppProviderId
         ? window.LokalnieApi.toAppProviderId(me.provider && me.provider.id)
@@ -14880,7 +14953,7 @@
     );
   }
 
-  function toggleAvailDayEdit(dateISO, source) {
+  async function toggleAvailDayEdit(dateISO, source) {
     if (!dateISO) return;
     if (window.AppState.availEditDate === dateISO) {
       // Przycisk w stanie otwartym = Zapisz i zamknij.
@@ -14892,7 +14965,8 @@
       saveState();
       refreshAvailListOnly();
       patchAvailMonthBusyDots();
-      if (saved.length) showToast("Zapisano dostępność.");
+      const persisted = await flushProviderAvailabilitySync();
+      if (saved.length && persisted) showToast("Zapisano dostępność.");
       return;
     }
     openAvailDayEdit(dateISO);
@@ -15126,6 +15200,7 @@
     draft.blocks.push(nextAvailBlock(p, draft.blocks));
     persistAvailDraft(dateISO);
     saveState();
+    queueProviderAvailabilitySync();
     refreshAvailListOnly();
   }
 
@@ -15137,6 +15212,7 @@
     draft.blocks.splice(i, 1);
     persistAvailDraft(dateISO);
     saveState();
+    queueProviderAvailabilitySync();
     refreshAvailListOnly();
   }
 
@@ -15229,6 +15305,7 @@
     }
 
     saveState();
+    queueProviderAvailabilitySync();
     refreshAvailListOnly();
     patchAvailMonthBusyDots();
     showToast(
@@ -15259,6 +15336,85 @@
       cloud.removeAttribute("data-for-date");
       cloud.removeAttribute("data-for-index");
     }
+  }
+
+  let providerAvailabilitySyncTimer = null;
+  let providerAvailabilitySyncPromise = null;
+  let providerAvailabilityRevision = 0;
+  let providerAvailabilitySavedRevision = 0;
+
+  function persistProviderAvailabilityNow() {
+    if (providerAvailabilitySyncTimer) {
+      clearTimeout(providerAvailabilitySyncTimer);
+      providerAvailabilitySyncTimer = null;
+    }
+    if (isTesterMode()) return Promise.resolve(true);
+    if (providerAvailabilitySyncPromise) {
+      return providerAvailabilitySyncPromise.then(function (ok) {
+        if (!ok) return false;
+        return providerAvailabilitySavedRevision < providerAvailabilityRevision
+          ? persistProviderAvailabilityNow()
+          : true;
+      });
+    }
+    const api = window.LokalnieApi;
+    const p = myProvider();
+    const onProd = api && api.isProductionHostname && api.isProductionHostname();
+    const hasToken = api && api.getAuthToken && api.getAuthToken();
+    if (!api || !api.updateProviderAvailability || !p || (!onProd && !hasToken)) {
+      return Promise.resolve(false);
+    }
+    const targetRevision = providerAvailabilityRevision;
+    const snapshot = JSON.parse(JSON.stringify(p.availability || []));
+    const requestPromise = api
+      .updateProviderAvailability(snapshot)
+      .then(function (availability) {
+        providerAvailabilitySavedRevision = Math.max(
+          providerAvailabilitySavedRevision,
+          targetRevision
+        );
+        // Starsza odpowiedź nie może nadpisać zmian wykonanych w trakcie requestu.
+        if (targetRevision === providerAvailabilityRevision) {
+          p.availability = availability;
+          saveState();
+        }
+        return true;
+      })
+      .catch(function (err) {
+        console.warn("[Lokalnie] availability save failed", err);
+        showToast("Nie udało się zapisać dostępności. Spróbuj ponownie.");
+        return false;
+      });
+    providerAvailabilitySyncPromise = requestPromise;
+    return requestPromise.then(function (ok) {
+      if (providerAvailabilitySyncPromise === requestPromise) {
+        providerAvailabilitySyncPromise = null;
+      }
+      if (!ok) return false;
+      return providerAvailabilitySavedRevision < providerAvailabilityRevision
+        ? persistProviderAvailabilityNow()
+        : true;
+    });
+  }
+
+  function queueProviderAvailabilitySync() {
+    if (isTesterMode()) return;
+    providerAvailabilityRevision += 1;
+    if (providerAvailabilitySyncTimer) clearTimeout(providerAvailabilitySyncTimer);
+    providerAvailabilitySyncTimer = setTimeout(function () {
+      void persistProviderAvailabilityNow();
+    }, 500);
+  }
+
+  function flushProviderAvailabilitySync() {
+    if (
+      !providerAvailabilitySyncTimer &&
+      !providerAvailabilitySyncPromise &&
+      providerAvailabilitySavedRevision >= providerAvailabilityRevision
+    ) {
+      return Promise.resolve(true);
+    }
+    return persistProviderAvailabilityNow();
   }
 
   /** Klik × → chmurka: Usuń dzień / Usuń serię. */
@@ -15348,6 +15504,7 @@
     // godzina nie znikała użytkownikowi z pola przy najbliższym re-renderze.
     syncAvailDraftFromForm(dateISO, opts.source);
     saveState();
+    queueProviderAvailabilitySync();
     // Zmiana godziny: NIE przebudowujemy edytora, bo podmiana <input> w trakcie
     // potwierdzania natywnego pickera (iOS/Android) gubi właśnie wybraną wartość.
     if (opts.noRender) {
@@ -15365,6 +15522,12 @@
         if (again) again.scrollTop = scrollTop;
       });
     }
+  }
+
+  async function saveAvailDayAndConfirm(dateISO, source) {
+    saveAvailDayEdit(dateISO, { source: source });
+    const persisted = await flushProviderAvailabilitySync();
+    if (persisted) showToast("Zapisano dostępność.");
   }
 
   function clearAvailDay(dateISO, options) {
@@ -15387,6 +15550,7 @@
       window.AppState.availEditDate = dateISO;
     }
     saveState();
+    queueProviderAvailabilitySync();
     refreshAvailListOnly();
     patchAvailMonthBusyDots();
     if (!opts.quiet) showToast("Usunięto dostępność w tym dniu.");
@@ -16598,35 +16762,102 @@
       </div>`;
   }
 
-  function saveProviderSettings() {
+  async function saveProviderSettings() {
     const p = myProvider();
     if (!p) return;
     captureProviderProfileFields();
     captureProviderContactFields();
     captureProviderLocationFields();
+    markProviderProfileDirty();
     saveState();
     syncProviderCompletenessUi();
+    if (isTesterMode()) {
+      showToast("Zapisano ustawienia.");
+      return;
+    }
+    const saved = await persistProviderProfileNow();
+    if (!saved) {
+      showToast("Nie udało się zapisać ustawień. Spróbuj ponownie.");
+      return;
+    }
+    Object.assign(p, saved, {
+      services: p.services || [],
+      availability: p.availability || [],
+    });
+    saveState();
     showToast("Zapisano ustawienia.");
-    queueProviderProfileSync();
   }
 
   let providerProfileSyncTimer = null;
+  let providerProfileSyncPromise = null;
+  let providerProfileRevision = 0;
+  let providerProfileSavedRevision = 0;
+
+  function markProviderProfileDirty() {
+    providerProfileRevision += 1;
+  }
 
   /** Zapis profilu usługodawcy na serwer — bez tego dane giną przy kolejnym logowaniu. */
-  function queueProviderProfileSync() {
-    if (isTesterMode()) return;
+  function persistProviderProfileNow() {
+    if (providerProfileSyncTimer) {
+      clearTimeout(providerProfileSyncTimer);
+      providerProfileSyncTimer = null;
+    }
+    const p = myProvider();
+    if (isTesterMode()) return Promise.resolve(p);
+    if (providerProfileSyncPromise) {
+      return providerProfileSyncPromise.then(function (saved) {
+        if (!saved) return null;
+        return providerProfileSavedRevision < providerProfileRevision
+          ? persistProviderProfileNow()
+          : saved;
+      });
+    }
     const api = window.LokalnieApi;
-    if (!api || !api.updateProviderMe) return;
+    if (!api || !api.updateProviderMe || !p) return Promise.resolve(null);
     const onProd = api.isProductionHostname && api.isProductionHostname();
     const hasToken = api.getAuthToken && api.getAuthToken();
-    if (!onProd && !hasToken) return;
+    if (!onProd && !hasToken) return Promise.resolve(null);
+    const targetRevision = providerProfileRevision;
+    const snapshot = JSON.parse(JSON.stringify(p));
+    const requestPromise = api.updateProviderMe(snapshot).then(function (saved) {
+      if (saved) {
+        providerProfileSavedRevision = Math.max(providerProfileSavedRevision, targetRevision);
+      }
+      return saved;
+    });
+    providerProfileSyncPromise = requestPromise;
+    return requestPromise.then(function (saved) {
+      if (providerProfileSyncPromise === requestPromise) providerProfileSyncPromise = null;
+      if (!saved) return null;
+      return providerProfileSavedRevision < providerProfileRevision
+        ? persistProviderProfileNow()
+        : saved;
+    });
+  }
+
+  function queueProviderProfileSync() {
+    if (isTesterMode()) return;
+    markProviderProfileDirty();
     if (providerProfileSyncTimer) clearTimeout(providerProfileSyncTimer);
     providerProfileSyncTimer = setTimeout(function () {
-      providerProfileSyncTimer = null;
-      const p = myProvider();
-      if (!p) return;
-      void api.updateProviderMe(p);
+      void persistProviderProfileNow().then(function (saved) {
+        if (!saved) showToast("Nie udało się zapisać ustawień profilu.");
+      });
     }, 400);
+  }
+
+  function flushProviderProfileSync() {
+    if (
+      !providerProfileSyncTimer &&
+      !providerProfileSyncPromise &&
+      providerProfileSavedRevision >= providerProfileRevision
+    ) {
+      return Promise.resolve(true);
+    }
+    return persistProviderProfileNow().then(function (saved) {
+      return !!saved;
+    });
   }
 
   function renderSettings() {
@@ -18990,17 +19221,24 @@
         if (me && me.user) {
           applyGoogleUserToClientProfile(me.user);
           applyApiAuth(me);
-          window.AppState.activeRole = "client";
-          const showOnboarding = needsClientOnboarding(me.user);
+          const showOnboarding = needsClientOnboarding(me.user) && !me.provider;
+          const restoreProvider = !showOnboarding && !!me.provider && !peekPendingIntent();
+          window.AppState.activeRole = restoreProvider ? "provider" : "client";
+          if (restoreProvider) window.AppState.screen.provider = DEFAULT_SCREEN.provider;
           window.AppState.onboarding = showOnboarding ? "client" : null;
           saveState();
+          updateAppHeader(window.AppState.activeRole);
           renderAll();
           showToast(showOnboarding ? "Zalogowano. Sprawdź swój profil." : "Zalogowano.");
-          return window.LokalnieApi.syncFromServer().then(function () {
+          return window.LokalnieApi.syncFromServer().then(function (result) {
             // Sync nie może zjeść ekranu onboardingu.
             if (showOnboarding) window.AppState.onboarding = "client";
             saveState();
+            updateAppHeader(window.AppState.activeRole);
             renderAll();
+            if (!result || !result.ok) {
+              showToast("Nie udało się pobrać wszystkich danych panelu. Spróbuj odświeżyć.");
+            }
             if (!showOnboarding) resumePendingIntent();
           });
         }
@@ -19044,7 +19282,7 @@
     return cp;
   }
 
-  function onboardingClientSubmit() {
+  async function onboardingClientSubmit() {
     const cp = ensureClientProfile();
     const name = readOnboardingInput("onb-client-name");
     const phone = readOnboardingInput("onb-client-phone");
@@ -19060,11 +19298,28 @@
     if (phoneEl) phoneEl.classList.remove("onboarding__field-invalid");
     if (name) cp.name = name;
     cp.phone = phone;
-    // E-mail zostaje z Google (pole readonly).
+    if (!isTesterMode()) {
+      const api = window.LokalnieApi;
+      const onProd = api && api.isProductionHostname && api.isProductionHostname();
+      const hasToken = api && api.getAuthToken && api.getAuthToken();
+      if (!api || !api.updateMe || (!onProd && !hasToken)) {
+        showToast("Nie udało się zapisać profilu. Zaloguj się ponownie.");
+        return;
+      }
+      const saved = await api.updateMe(cp);
+      if (!saved || !String(saved.phone || "").trim()) {
+        window.AppState.onboarding = "client";
+        saveState();
+        renderAll();
+        showToast("Nie udało się zapisać profilu. Spróbuj ponownie.");
+        return;
+      }
+      applyGoogleUserToClientProfile(saved);
+    }
+    // E-mail zostaje z Google (pole readonly). Ekran zamykamy dopiero po zapisie API.
     window.AppState.onboarding = null;
     window.AppState.activeRole = "client";
     saveState();
-    queueClientProfileSync();
     updateAppHeader("client");
     renderAll();
     showToast("Profil zapisany. Miłego szukania!");
@@ -19076,7 +19331,7 @@
   }
 
   function onboardingChooseClient() {
-    onboardingClientSubmit();
+    void onboardingClientSubmit();
   }
 
   function onboardingChooseProvider() {
@@ -19129,7 +19384,7 @@
   }
 
   /** Tworzy profil usługodawcy i od razu otwiera pełne ustawienia (bez mini-formularza). */
-  function createProviderProfileAndOpenSettings() {
+  async function createProviderProfileAndOpenSettings() {
     if (!canAddProviderProfile()) {
       showToast("Możesz mieć tylko jeden profil usługodawcy.");
       return false;
@@ -19139,7 +19394,7 @@
     const name = cp.name || "Mój profil";
     const id = n === 0 ? "my-provider" : "my-provider-" + (n + 1) + "-" + Date.now().toString(36);
     const slug = uniqueProviderSlug(slugifyProviderSlug(name, id), id);
-    const created = addOwnedProvider({
+    let profile = {
       id: id,
       slug: slug,
       name: name,
@@ -19156,7 +19411,26 @@
       avatarUrl: null,
       avatarInitials: accountInitials(name) || "MP",
       _mine: true,
-    });
+    };
+    if (!isTesterMode()) {
+      const api = window.LokalnieApi;
+      const onProd = api && api.isProductionHostname && api.isProductionHostname();
+      const hasToken = api && api.getAuthToken && api.getAuthToken();
+      if (!api || !api.createProviderMe || (!onProd && !hasToken)) {
+        showToast("Nie udało się utworzyć profilu firmy.");
+        return false;
+      }
+      try {
+        const serverProfile = await api.createProviderMe(profile);
+        if (!serverProfile) throw new Error("provider_create_failed");
+        profile = serverProfile;
+      } catch (err) {
+        console.warn("[Lokalnie] provider create failed", err);
+        showToast("Nie udało się utworzyć profilu firmy. Spróbuj ponownie.");
+        return false;
+      }
+    }
+    const created = addOwnedProvider(profile);
     if (!created) {
       showToast("Nie udało się dodać profilu.");
       return false;
@@ -19169,9 +19443,9 @@
     return true;
   }
 
-  function onboardingProviderSubmit() {
+  async function onboardingProviderSubmit() {
     // Legacy action — ten sam flow co „Dodaj profil”.
-    if (!createProviderProfileAndOpenSettings()) return;
+    if (!(await createProviderProfileAndOpenSettings())) return;
     renderAll();
     showPage("app");
     showToast("Uzupełnij dane firmy w ustawieniach.");
@@ -19183,8 +19457,8 @@
       showToast("Możesz mieć tylko jeden profil usługodawcy.");
       return;
     }
-    closeAppMenuThen(function () {
-      if (!createProviderProfileAndOpenSettings()) return;
+    closeAppMenuThen(async function () {
+      if (!(await createProviderProfileAndOpenSettings())) return;
       renderAll();
       showPage("app");
       showToast("Uzupełnij dane firmy w ustawieniach.");
@@ -19243,18 +19517,24 @@
         if (!me || !me.user) return;
         setTesterMode(false);
         window.AppState.loggedIn = true;
-        window.AppState.activeRole = "client";
         applyGoogleUserToClientProfile(me.user);
         applyApiAuth(me);
-        const showOnboarding = needsClientOnboarding(me.user);
+        const showOnboarding = needsClientOnboarding(me.user) && !me.provider;
+        const restoreProvider = !showOnboarding && !!me.provider && !peekPendingIntent();
+        window.AppState.activeRole = restoreProvider ? "provider" : "client";
+        if (restoreProvider) window.AppState.screen.provider = DEFAULT_SCREEN.provider;
         window.AppState.onboarding = showOnboarding ? "client" : null;
-        updateAppHeader("client");
+        updateAppHeader(window.AppState.activeRole);
         showPage("app");
         renderAll();
-        return window.LokalnieApi.syncFromServer().then(function () {
+        return window.LokalnieApi.syncFromServer().then(function (result) {
           if (showOnboarding) window.AppState.onboarding = "client";
           saveState();
+          updateAppHeader(window.AppState.activeRole);
           renderAll();
+          if (!result || !result.ok) {
+            showToast("Nie udało się pobrać wszystkich danych panelu. Spróbuj odświeżyć.");
+          }
         });
       })
       .catch(function (err) {
@@ -19302,9 +19582,18 @@
     }, 0);
   }
 
-  function logout() {
+  async function logout() {
+    const pendingSaved = await Promise.all([
+      flushClientProfileSync(),
+      flushProviderProfileSync(),
+      flushProviderAvailabilitySync(),
+    ]);
+    if (pendingSaved.some(function (saved) { return !saved; })) {
+      showToast("Nie wylogowano — najpierw zapisz dane ponownie.");
+      return;
+    }
     if (window.LokalnieApi && window.LokalnieApi.logout) {
-      void window.LokalnieApi.logout();
+      await window.LokalnieApi.logout();
     } else if (window.LokalnieApi && window.LokalnieApi.clearAuthToken) {
       window.LokalnieApi.clearAuthToken();
     }
@@ -19417,25 +19706,45 @@
     });
   }
 
-  function deactivateProviderProfile() {
+  async function deactivateProviderProfile() {
     const p = myProvider();
     if (!p || p.deactivated) return;
     captureProviderProfileFields();
     captureProviderContactFields();
+    const previousVisible = !!p.visibleInSearch;
     p.deactivated = true;
     p.visibleInSearch = false;
+    markProviderProfileDirty();
     saveState();
     renderAll();
+    const saved = await persistProviderProfileNow();
+    if (!saved) {
+      p.deactivated = false;
+      p.visibleInSearch = previousVisible;
+      saveState();
+      renderAll();
+      showToast("Nie udało się dezaktywować profilu.");
+      return;
+    }
     showToast("Profil został dezaktywowany.");
   }
 
-  function reactivateProviderProfile() {
+  async function reactivateProviderProfile() {
     const p = myProvider();
     if (!p || !p.deactivated) return;
     p.deactivated = false;
     p.visibleInSearch = false;
+    markProviderProfileDirty();
     saveState();
     renderAll();
+    const saved = await persistProviderProfileNow();
+    if (!saved) {
+      p.deactivated = true;
+      saveState();
+      renderAll();
+      showToast("Nie udało się aktywować profilu.");
+      return;
+    }
     showToast(
       providerProfileGaps(p).length
         ? "Profil aktywowany. Uzupełnij braki, aby opublikować go w katalogu."
@@ -19730,7 +20039,7 @@
         closeAuth();
         break;
       case "open-my-calendar": event.preventDefault(); openMyCalendar(); break;
-      case "logout": logout(); break;
+      case "logout": void logout(); break;
       case "delete-account":
         event.preventDefault();
         void deleteAccount();
@@ -19808,11 +20117,11 @@
         break;
       case "deactivate-provider-profile":
         event.preventDefault();
-        deactivateProviderProfile();
+        void deactivateProviderProfile();
         break;
       case "reactivate-provider-profile":
         event.preventDefault();
-        reactivateProviderProfile();
+        void reactivateProviderProfile();
         break;
       case "delete-provider-profile":
         event.preventDefault();
@@ -19841,7 +20150,7 @@
         break;
       case "onboarding-client-submit":
         event.preventDefault();
-        onboardingClientSubmit();
+        void onboardingClientSubmit();
         break;
       case "onboarding-back":
         event.preventDefault();
@@ -19849,7 +20158,7 @@
         break;
       case "onboarding-provider-submit":
         event.preventDefault();
-        onboardingProviderSubmit();
+        void onboardingProviderSubmit();
         break;
       case "open-legal":
         event.preventDefault();
@@ -20080,7 +20389,7 @@
         break;
       case "save-avail-day":
         event.preventDefault();
-        saveAvailDayEdit(d.date, { source: btn });
+        void saveAvailDayAndConfirm(d.date, btn);
         break;
       case "toggle-avail-loc":
         event.preventDefault();
@@ -20472,7 +20781,7 @@
         break;
       case "save-provider-settings":
         event.preventDefault();
-        saveProviderSettings();
+        void saveProviderSettings();
         break;
       case "delete-service":
         event.preventDefault();

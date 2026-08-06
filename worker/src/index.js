@@ -25,6 +25,12 @@ import {
   updateProviderServicesBookingMode,
 } from "./services.js";
 import {
+  createProviderMe,
+  getProviderAvailability,
+  patchProviderMe as updateProviderMeProfile,
+  putProviderAvailability,
+} from "./provider.js";
+import {
   adminStats,
   adminListUsers,
   adminBlockUser,
@@ -101,7 +107,8 @@ async function routeRequest(request, env) {
             calendarConnections: "GET /calendar/connections",
             authLogout: "POST /auth/logout",
             me: "GET|PATCH|DELETE /me",
-            provider: "GET|PATCH /provider/me",
+            provider: "GET|POST|PATCH /provider/me",
+            availability: "GET|PUT /provider/me/availability",
             services: "GET|POST /provider/me/services, PATCH|DELETE /provider/me/services/:id",
             clients: "GET|POST /provider/me/clients",
             bookings: "GET|POST /bookings",
@@ -159,7 +166,13 @@ async function routeRequest(request, env) {
 
       if (path === "/provider/me") {
         if (request.method === "GET") return getProviderMe(request, env);
-        if (request.method === "PATCH") return patchProviderMe(request, env);
+        if (request.method === "POST") return createProviderMe(request, env);
+        if (request.method === "PATCH") return updateProviderMeProfile(request, env);
+      }
+
+      if (path === "/provider/me/availability") {
+        if (request.method === "GET") return getProviderAvailability(request, env);
+        if (request.method === "PUT") return putProviderAvailability(request, env);
       }
 
       if (path === "/provider/me/clients") {
@@ -429,62 +442,6 @@ async function deleteMe(request, env) {
     .run();
 
   return json({ ok: true, deleted: true }, 200, { "Set-Cookie": sessionCookie("", env, 0) });
-}
-
-async function patchProviderMe(request, env) {
-  const auth = await requireDemoUser(request, env);
-  if (auth.error) return auth.error;
-  if (!auth.provider) return json({ error: "provider_not_found" }, 404);
-  const body = await readJson(request);
-  if (!body) return json({ error: "invalid_json" }, 400);
-
-  const p = auth.provider;
-  const existingPhone = await decryptPhone(p.phone, env);
-  const textFields = {
-    name: normalizeText(body.name ?? p.name, 120, { required: true }),
-    city: normalizeText(body.city ?? p.city, 120),
-    address: normalizeText(body.address ?? p.address, 240),
-    about: normalizeText(body.about ?? p.about, 2000),
-    email: normalizeText(body.email ?? p.email, 254),
-    phone: normalizeText(body.phone ?? existingPhone, 40),
-  };
-  if (Object.values(textFields).some((field) => field.error)) {
-    return json({ error: "invalid_provider_fields" }, 400);
-  }
-  const fields = {
-    name: textFields.name.value,
-    city: textFields.city.value,
-    address: textFields.address.value,
-    about: textFields.about.value,
-    email: textFields.email.value,
-    email_visible: body.emailVisible != null ? (body.emailVisible ? 1 : 0) : p.email_visible,
-    phone: await encryptPhone(textFields.phone.value, env),
-    booking_mode: body.bookingMode === "approval" || body.bookingMode === "auto" ? body.bookingMode : p.booking_mode,
-    visible_in_search: body.visibleInSearch != null ? (body.visibleInSearch ? 1 : 0) : p.visible_in_search,
-    multi_select: body.multiSelect != null ? (body.multiSelect ? 1 : 0) : p.multi_select,
-  };
-
-  await env.DB.prepare(
-    `UPDATE provider_profiles SET name=?, city=?, address=?, about=?, email=?, email_visible=?, phone=?, booking_mode=?, visible_in_search=?, multi_select=?, updated_at=? WHERE id=?`
-  )
-    .bind(
-      fields.name,
-      fields.city,
-      fields.address,
-      fields.about,
-      fields.email,
-      fields.email_visible,
-      fields.phone,
-      fields.booking_mode,
-      fields.visible_in_search,
-      fields.multi_select,
-      nowIso(),
-      p.id
-    )
-    .run();
-
-  const provider = await env.DB.prepare("SELECT * FROM provider_profiles WHERE id=?").bind(p.id).first();
-  return json({ provider: await mapProvider(provider, env) });
 }
 
 async function requireProvider(request, env) {

@@ -255,7 +255,9 @@ async function upsertGoogleUser(env, profile) {
   if (identity) {
     const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(identity.user_id).first();
     if (!user) throw new Error("oauth_user_missing");
-    if (name && name !== user.name) {
+    // Nazwa z Google inicjalizuje konto, ale nie może nadpisywać późniejszej
+    // edycji wykonanej przez użytkownika w profilu Lokalnie.
+    if (name && !String(user.name || "").trim()) {
       await env.DB.prepare(
         "UPDATE users SET name = ?, updated_at = ? WHERE id = ?"
       )

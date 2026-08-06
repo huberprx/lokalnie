@@ -56,7 +56,8 @@ i muszą być załadowane jawnie wyłącznie do lokalnej bazy.
 | GET | `/auth/google/calendar/callback` | Powrót OAuth Google Calendar |
 | GET | `/calendar/connections` | Podłączone kalendarze |
 | DELETE | `/calendar/connections/:id` | Odłączenie kalendarza |
-| GET/PATCH | `/provider/me` | Profil usługodawcy |
+| GET/POST/PATCH | `/provider/me` | Odczyt, utworzenie i edycja profilu usługodawcy |
+| GET/PUT | `/provider/me/availability` | Odczyt lub atomowa podmiana całej dostępności |
 | GET/POST | `/provider/me/clients` | CRM klientów |
 | GET/PATCH/DELETE | `/provider/me/clients/:id` | Klient |
 | GET/POST | `/bookings` | Rezerwacje |
@@ -77,6 +78,50 @@ i muszą być załadowane jawnie wyłącznie do lokalnej bazy.
 | PATCH | `/admin/providers/:id` | Widoczność w katalogu (`visibleInSearch`) |
 | GET | `/admin/bookings` | Podgląd rezerwacji (admin) |
 | GET | `/admin/audit` | Log działań admina |
+
+### Profil usługodawcy
+
+`POST /provider/me` tworzy maksymalnie jeden profil dla zalogowanego użytkownika i
+w tej samej transakcji ustawia `users.role_provider=1`. Pole `name` może zostać
+pominięte, jeśli zalogowany użytkownik ma już niepustą nazwę konta.
+Opcjonalny `slug` musi mieć 3–80 małych znaków ASCII (`a-z`, `0-9`, `-`) i być
+unikalny; bez niego serwer generuje slug z nazwy i bezpiecznie rozwiązuje kolizję.
+Ponowienie żądania dla użytkownika mającego profil zwraca istniejący profil z
+`created: false` (HTTP 200). Nowy profil zwraca HTTP 201 i `created: true`.
+
+`PATCH /provider/me` obsługuje dotychczasowe pola profilu oraz `category`,
+`subcategory`, `locations`, `socialLinks`, `bookingRules` i `deactivated`.
+`locations` zawiera maksymalnie 20 pozycji `{ id, label, address, toneIndex }`,
+`socialLinks` maksymalnie 8 pozycji `{ id, kind, value }`, a `bookingRules` pola
+`futureDays`, `minLeadHours`, `cancelHours`, `proposeHoldHours` i `policy`.
+
+### Dostępność
+
+`PUT /provider/me/availability` atomowo zastępuje cały harmonogram zalogowanego
+usługodawcy. Identyfikator usługodawcy z body jest ignorowany. Kontrakt:
+
+```json
+{
+  "availability": [
+    {
+      "dateISO": "2026-10-01",
+      "blocks": [
+        {
+          "from": "09:00",
+          "to": "12:00",
+          "locationId": "loc-main",
+          "repeat": "weekly"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Dozwolone wartości `repeat` to `none`, `weekly` i `biweekly`. API przyjmuje
+maksymalnie 366 unikalnych dni i 3 niepokrywające się bloki na dzień.
+Niepuste `locationId` musi wskazywać lokalizację z profilu. `GET` i `PUT`
+zwracają znormalizowane `{ availability }`, posortowane po dacie i godzinie.
 
 ## Zasoby
 

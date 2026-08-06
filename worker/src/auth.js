@@ -1,4 +1,4 @@
-import { json } from "./http.js";
+import { json, parseJsonField } from "./http.js";
 import { hashToken, sessionTokenFromCookie } from "./oauth.js";
 import { decryptPhone } from "./pii.js";
 
@@ -157,6 +157,9 @@ export async function mapUser(row, env) {
 
 export async function mapProvider(row, env) {
   if (!row) return null;
+  const locations = parseJsonField(row.locations_json, []);
+  const socialLinks = parseJsonField(row.social_links_json, []);
+  const bookingRules = parseJsonField(row.booking_rules_json, {});
   return {
     id: row.id,
     slug: row.slug,
@@ -173,5 +176,12 @@ export async function mapProvider(row, env) {
     visibleInSearch: !!row.visible_in_search,
     multiSelect: !!row.multi_select,
     avatarKey: row.avatar_key,
+    locations: Array.isArray(locations) ? locations : [],
+    socialLinks: Array.isArray(socialLinks) ? socialLinks : [],
+    bookingRules:
+      bookingRules && typeof bookingRules === "object" && !Array.isArray(bookingRules)
+        ? bookingRules
+        : {},
+    deactivated: !!row.deactivated,
   };
 }

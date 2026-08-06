@@ -24,6 +24,7 @@ beforeEach(async () => {
     env.DB.prepare("DELETE FROM booking_requests"),
     env.DB.prepare("DELETE FROM provider_clients"),
     env.DB.prepare("DELETE FROM provider_services"),
+    env.DB.prepare("DELETE FROM provider_availability"),
     env.DB.prepare("DELETE FROM sessions"),
     env.DB.prepare("DELETE FROM oauth_identities"),
     env.DB.prepare("DELETE FROM provider_profiles"),
@@ -194,6 +195,260 @@ describe("production schema and authorization", () => {
       body: { proposalId: "prop-1" },
     });
     expect(ownerless.status).toBe(403);
+  });
+});
+
+describe("provider profile persistence", () => {
+  it("creates one profile, updates role_provider, and safely returns it on retry", async () => {
+    const body = {
+      name: "Łukasz Mobilny",
+      category: "naprawy",
+      city: "Gdańsk",
+      locations: [
+        { id: "loc-mobile", label: "Dojazd", address: "Gdańsk", toneIndex: 2 },
+      ],
+    };
+    const createdResponse = await api("/provider/me", {
+      method: "POST",
+      token: CLIENT_TOKEN,
+      body,
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = await createdResponse.json();
+    expect(created.created).toBe(true);
+    expect(created.provider).toMatchObject({
+      name: "Łukasz Mobilny",
+      category: "naprawy",
+      locations: body.locations,
+    });
+    expect(created.provider.slug).toMatch(/^lukasz-mobilny(?:-[a-f0-9]{8})?$/);
+
+    const retryResponse = await api("/provider/me", {
+      method: "POST",
+      token: CLIENT_TOKEN,
+      body: { name: "Ignored retry body", slug: "different-slug" },
+    });
+    expect(retryResponse.status).toBe(200);
+    const retry = await retryResponse.json();
+    expect(retry.created).toBe(false);
+    expect(retry.provider.id).toBe(created.provider.id);
+
+    const user = await env.DB.prepare(
+      "SELECT role_provider FROM users WHERE id='user-client'"
+    ).first();
+    const profiles = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM provider_profiles WHERE user_id='user-client'"
+    ).first();
+    expect(user.role_provider).toBe(1);
+    expect(profiles.count).toBe(1);
+  });
+
+  it("resolves an occupied requested slug and still creates the provider", async () => {
+    const response = await api("/provider/me", {
+      method: "POST",
+      token: OTHER_TOKEN,
+      body: { name: "Other Provider", slug: "provider-one" },
+    });
+    expect(response.status).toBe(201);
+    const created = await response.json();
+    expect(created.provider.slug).toMatch(/^provider-one-[a-f0-9]{8}$/);
+    const user = await env.DB.prepare(
+      "SELECT role_provider FROM users WHERE id='user-other'"
+    ).first();
+    expect(user.role_provider).toBe(1);
+  });
+
+  it("round-trips provider settings through PATCH and GET", async () => {
+    const settings = {
+      category: "zdrowie",
+      subcategory: "fizjoterapia",
+      locations: [
+        { id: "loc-clinic", label: "Gabinet", address: "ul. Zdrowa 1", toneIndex: 3 },
+        { id: "loc-home", label: "Dojazd", address: "", toneIndex: 4 },
+      ],
+      socialLinks: [
+        { id: "social-web", kind: "website", value: "https://example.com" },
+        { id: "social-ig", kind: "instagram", value: "@provider" },
+      ],
+      bookingRules: {
+        futureDays: 45,
+        minLeadHours: 4,
+        cancelHours: 12,
+        proposeHoldHours: 6,
+        policy: "Odwołaj wizytę z wyprzedzeniem.",
+      },
+      deactivated: true,
+    };
+    const patchResponse = await api("/provider/me", {
+      method: "PATCH",
+      token: PROVIDER_TOKEN,
+      body: settings,
+    });
+    expect(patchResponse.status).toBe(200);
+    expect((await patchResponse.json()).provider).toMatchObject(settings);
+
+    const getResponse = await api("/provider/me", { token: PROVIDER_TOKEN });
+    expect(getResponse.status).toBe(200);
+    expect((await getResponse.json()).provider).toMatchObject(settings);
+  });
+
+  it("round-trips and atomically replaces availability without crossing providers", async () => {
+    await api("/provider/me", {
+      method: "PATCH",
+      token: PROVIDER_TOKEN,
+      body: {
+        locations: [
+          { id: "loc-main", label: "Główny gabinet", address: "Warszawa", toneIndex: 0 },
+        ],
+      },
+    });
+    const firstSchedule = [
+      {
+        dateISO: "2026-10-01",
+        blocks: [
+          {
+            from: "09:00",
+            to: "11:00",
+            locationId: "loc-main",
+            repeat: "weekly",
+          },
+          {
+            from: "12:00",
+            to: "14:00",
+            locationId: "loc-main",
+            repeat: "none",
+          },
+        ],
+      },
+      {
+        dateISO: "2026-10-02",
+        blocks: [
+          {
+            from: "10:00",
+            to: "12:00",
+            locationId: "loc-main",
+            repeat: "biweekly",
+          },
+        ],
+      },
+    ];
+    const putResponse = await api("/provider/me/availability", {
+      method: "PUT",
+      token: PROVIDER_TOKEN,
+      body: { providerId: "provider-foreign", availability: firstSchedule },
+    });
+    expect(putResponse.status).toBe(200);
+    expect((await putResponse.json()).availability).toEqual(
+      firstSchedule.map((day) => ({
+        ...day,
+        blocks: day.blocks.map((block) => ({
+          ...block,
+          recurring: block.repeat !== "none",
+        })),
+      }))
+    );
+
+    const invalidResponse = await api("/provider/me/availability", {
+      method: "PUT",
+      token: PROVIDER_TOKEN,
+      body: {
+        availability: [
+          {
+            dateISO: "2026-10-04",
+            blocks: [
+              {
+                from: "09:00",
+                to: "08:00",
+                locationId: "loc-foreign",
+                repeat: "daily",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(invalidResponse.status).toBe(400);
+    expect(await invalidResponse.json()).toEqual({ error: "invalid_availability" });
+    const retainedResponse = await api("/provider/me/availability", {
+      token: PROVIDER_TOKEN,
+    });
+    expect((await retainedResponse.json()).availability).toHaveLength(2);
+
+    const createdOther = await api("/provider/me", {
+      method: "POST",
+      token: OTHER_TOKEN,
+      body: { name: "Other Provider" },
+    });
+    expect(createdOther.status).toBe(201);
+    const otherSchedule = await api("/provider/me/availability", { token: OTHER_TOKEN });
+    expect((await otherSchedule.json()).availability).toEqual([]);
+
+    const replacement = [
+      {
+        dateISO: "2026-10-03",
+        blocks: [
+          {
+            from: "08:30",
+            to: "09:30",
+            locationId: "loc-main",
+            repeat: "none",
+          },
+        ],
+      },
+    ];
+    const replaceResponse = await api("/provider/me/availability", {
+      method: "PUT",
+      token: PROVIDER_TOKEN,
+      body: { availability: replacement },
+    });
+    expect(replaceResponse.status).toBe(200);
+    const getResponse = await api("/provider/me/availability", {
+      token: PROVIDER_TOKEN,
+    });
+    expect((await getResponse.json()).availability).toEqual([
+      {
+        ...replacement[0],
+        blocks: [{ ...replacement[0].blocks[0], recurring: false }],
+      },
+    ]);
+    const rows = await env.DB.prepare(
+      "SELECT provider_id, date_iso FROM provider_availability"
+    ).all();
+    expect(rows.results).toEqual([
+      { provider_id: "provider-1", date_iso: "2026-10-03" },
+    ]);
+  });
+
+  it("stores the maximum availability payload in chunked D1 statements", async () => {
+    await api("/provider/me", {
+      method: "PATCH",
+      token: PROVIDER_TOKEN,
+      body: {
+        locations: [
+          { id: "loc-max", label: "Gabinet", address: "Warszawa", toneIndex: 0 },
+        ],
+      },
+    });
+    const start = Date.UTC(2026, 0, 1);
+    const availability = Array.from({ length: 366 }, (_, index) => ({
+      dateISO: new Date(start + index * 86400000).toISOString().slice(0, 10),
+      blocks: [
+        { from: "08:00", to: "10:00", locationId: "loc-max", repeat: "none" },
+        { from: "10:00", to: "12:00", locationId: "loc-max", repeat: "none" },
+        { from: "12:00", to: "14:00", locationId: "loc-max", repeat: "none" },
+      ],
+    }));
+    const response = await api("/provider/me/availability", {
+      method: "PUT",
+      token: PROVIDER_TOKEN,
+      body: { availability },
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).availability).toHaveLength(366);
+    const count = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM provider_availability WHERE provider_id='provider-1'"
+    ).first();
+    expect(count.count).toBe(1098);
   });
 });
 

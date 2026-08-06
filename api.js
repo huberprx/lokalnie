@@ -320,6 +320,76 @@
     };
   }
 
+  function mapProviderToApp(provider) {
+    if (!provider) return null;
+    const appId = toAppProviderId(provider.id) || provider.slug || provider.id;
+    const name = provider.name || "Mój profil";
+    return {
+      id: appId,
+      apiId: provider.id,
+      slug: provider.slug || appId,
+      name: name,
+      category: provider.category || "",
+      subcategory: provider.subcategory || "",
+      city: provider.city || "",
+      address: provider.address || "",
+      about: provider.about || "",
+      email: provider.email || "",
+      emailVisible: !!provider.emailVisible,
+      phone: provider.phone || "",
+      bookingMode: provider.bookingMode || "auto",
+      visibleInSearch: !!provider.visibleInSearch,
+      multiSelect: provider.multiSelect !== false,
+      locations: Array.isArray(provider.locations) ? provider.locations : [],
+      socialLinks: Array.isArray(provider.socialLinks) ? provider.socialLinks : [],
+      bookingRules:
+        provider.bookingRules && typeof provider.bookingRules === "object"
+          ? provider.bookingRules
+          : {},
+      deactivated: !!provider.deactivated,
+      avatarUrl: provider.avatarKey ? mediaUrl(provider.avatarKey) : null,
+      avatarInitials: String(name)
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map(function (part) {
+          return part.charAt(0);
+        })
+        .join("")
+        .toUpperCase() || "MP",
+      services: [],
+      availability: [],
+      _mine: true,
+      _fromApi: true,
+    };
+  }
+
+  function providerToApi(profile) {
+    return {
+      slug: profile.slug || "",
+      name: profile.name || "",
+      category: profile.category || "",
+      subcategory: profile.subcategory || "",
+      city: profile.city || "",
+      address: profile.address || "",
+      about: profile.about || "",
+      email: profile.email || "",
+      phone: profile.phone || "",
+      emailVisible: !!profile.emailVisible,
+      bookingMode: profile.bookingMode || "auto",
+      visibleInSearch: !!profile.visibleInSearch,
+      multiSelect: profile.multiSelect !== false,
+      locations: Array.isArray(profile.locations) ? profile.locations : [],
+      socialLinks: Array.isArray(profile.socialLinks) ? profile.socialLinks : [],
+      bookingRules:
+        profile.bookingRules && typeof profile.bookingRules === "object"
+          ? profile.bookingRules
+          : {},
+      deactivated: !!profile.deactivated,
+    };
+  }
+
   function serviceToApi(service) {
     return {
       name: service.name || "",
@@ -371,6 +441,7 @@
       const appProviderId = toAppProviderId(apiProviderId) || (apiProviderId ? apiProviderId : "grzesiu-barber");
       let clients = [];
       let providerServices = [];
+      const syncErrors = [];
 
       if (me.user) {
         if (!window.AppState.clientProfile || typeof window.AppState.clientProfile !== "object") {
@@ -391,15 +462,20 @@
       }
 
       if (apiProviderId) {
+        const serverProvider = mapProviderToApp(me.provider);
+        const profiles = window.AppState.providerProfiles || [];
+        let ownedProvider = profiles.find(function (profile) {
+          return profile && (profile.apiId === apiProviderId || profile.id === appProviderId);
+        });
+        if (!ownedProvider && profiles.length === 1) ownedProvider = profiles[0];
+        if (ownedProvider && serverProvider) {
+          Object.keys(serverProvider).forEach(function (key) {
+            if (key !== "services" && key !== "availability") ownedProvider[key] = serverProvider[key];
+          });
+        }
         try {
           const servicesRes = await request("/provider/me/services");
           providerServices = (servicesRes.services || []).map(mapServiceToApp).filter(Boolean);
-          const profiles = window.AppState.providerProfiles || [];
-          let ownedProvider = profiles.find(function (profile) {
-            return profile && (profile.apiId === apiProviderId || profile.id === appProviderId);
-          });
-          // Backend obsługuje obecnie jeden profil na konto; podepnij starszy profil lokalny.
-          if (!ownedProvider && profiles.length === 1) ownedProvider = profiles[0];
           if (ownedProvider) {
             ownedProvider.apiId = apiProviderId;
             ownedProvider.services = providerServices;
@@ -409,6 +485,18 @@
           }
         } catch (err) {
           console.warn("[LokalnieApi] services sync skipped", err);
+          syncErrors.push("services");
+        }
+        try {
+          const availabilityRes = await request("/provider/me/availability");
+          if (ownedProvider) {
+            ownedProvider.availability = Array.isArray(availabilityRes.availability)
+              ? availabilityRes.availability
+              : [];
+          }
+        } catch (err) {
+          console.warn("[LokalnieApi] availability sync skipped", err);
+          syncErrors.push("availability");
         }
         try {
           const clientsRes = await request("/provider/me/clients");
@@ -422,6 +510,7 @@
           }
         } catch (err) {
           console.warn("[LokalnieApi] clients sync skipped", err);
+          syncErrors.push("clients");
         }
       }
 
@@ -460,7 +549,9 @@
       window.AppState._apiSyncedAt = new Date().toISOString();
       window.AppState._apiOnline = true;
       return {
-        ok: true,
+        ok: syncErrors.length === 0,
+        partial: syncErrors.length > 0,
+        errors: syncErrors,
         appProviderId: appProviderId,
         hasProvider: !!apiProviderId,
         services: providerServices.length,
@@ -505,23 +596,35 @@
     try {
       const res = await request("/provider/me", {
         method: "PATCH",
-        json: {
-          name: profile.name || "",
-          city: profile.city || "",
-          address: profile.address || "",
-          about: profile.about || "",
-          email: profile.email || "",
-          phone: profile.phone || "",
-          emailVisible: !!profile.emailVisible,
-          visibleInSearch: !!profile.visibleInSearch,
-          multiSelect: !!profile.multiSelect,
-        },
+        json: providerToApi(profile),
       });
-      return (res && res.provider) || null;
+      return mapProviderToApp(res && res.provider);
     } catch (err) {
       console.warn("[LokalnieApi] updateProviderMe failed", err);
       return null;
     }
+  }
+
+  async function createProviderMe(profile) {
+    if (!profile || (!isProductionHostname() && !getAuthToken())) return null;
+    const res = await request("/provider/me", {
+      method: "POST",
+      json: providerToApi(profile),
+    });
+    return mapProviderToApp(res && res.provider);
+  }
+
+  async function getProviderAvailability() {
+    const res = await request("/provider/me/availability");
+    return Array.isArray(res && res.availability) ? res.availability : [];
+  }
+
+  async function updateProviderAvailability(availability) {
+    const res = await request("/provider/me/availability", {
+      method: "PUT",
+      json: { availability: Array.isArray(availability) ? availability : [] },
+    });
+    return Array.isArray(res && res.availability) ? res.availability : [];
   }
 
   async function upsertService(service, isNew) {
@@ -930,7 +1033,11 @@
     request: request,
     syncFromServer: syncFromServer,
     updateMe: updateMe,
+    mapProviderToApp: mapProviderToApp,
+    createProviderMe: createProviderMe,
     updateProviderMe: updateProviderMe,
+    getProviderAvailability: getProviderAvailability,
+    updateProviderAvailability: updateProviderAvailability,
     upsertService: upsertService,
     deleteService: deleteService,
     deleteServices: deleteServices,

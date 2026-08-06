@@ -598,4 +598,160 @@ test.describe("Lokalnie — kluczowe przepływy", function () {
     expect(calls.every(function (entry) { return !!entry.key; })).toBe(true);
     expect(calls[0].key).not.toBe(calls[2].key);
   });
+
+  test("onboarding czeka na zapis profilu także przy produkcyjnej sesji cookie", async function ({ page }) {
+    await resetAndLogin(page, "client");
+    await page.evaluate(function () {
+      localStorage.removeItem("lokalnie.testerMode");
+      window.__profileWrites = 0;
+      window.LokalnieApi.isProductionHostname = function () {
+        return true;
+      };
+      window.LokalnieApi.getAuthToken = function () {
+        return "";
+      };
+      window.LokalnieApi.updateMe = async function (profile) {
+        window.__profileWrites += 1;
+        return {
+          name: profile.name,
+          email: profile.email,
+          phone: profile.phone,
+          notifications: { booking: true, reminder: true, marketing: false },
+        };
+      };
+    });
+    await page.locator('#app-fullscreen [data-role="onb-client-phone"]').fill("+48 500 600 700");
+    await page.locator('#app-fullscreen [data-action="onboarding-client-submit"]').click();
+    await page.waitForFunction(function () {
+      return window.AppState.onboarding === null;
+    });
+    const result = await page.evaluate(function () {
+      return {
+        writes: window.__profileWrites,
+        phone: window.AppState.clientProfile.phone,
+        onboarding: window.AppState.onboarding,
+      };
+    });
+    expect(result).toEqual({
+      writes: 1,
+      phone: "+48 500 600 700",
+      onboarding: null,
+    });
+  });
+
+  test("sync odtwarza pełny panel usługodawcy, usługi i dostępność", async function ({ page }) {
+    await page.addInitScript(function () {
+      if (navigator.serviceWorker && navigator.serviceWorker.register) {
+        navigator.serviceWorker.register = function () {
+          return Promise.reject(new Error("e2e: service worker disabled"));
+        };
+      }
+    });
+    await page.route("https://api.lokalnie.app/**", async function (route) {
+      const path = new URL(route.request().url()).pathname;
+      const payloads = {
+        "/me": {
+          authenticated: true,
+          user: {
+            id: "user-returning",
+            name: "Anna Studio",
+            email: "anna@example.com",
+            phone: "+48 500 600 700",
+            roles: { client: true, provider: true },
+          },
+          provider: {
+            id: "provider-returning",
+            slug: "anna-studio",
+            name: "Anna Studio",
+            category: "beauty",
+            city: "Warszawa",
+            address: "Prosta 1",
+            about: "Opis",
+            email: "anna@example.com",
+            emailVisible: true,
+            phone: "+48 500 600 700",
+            bookingMode: "auto",
+            visibleInSearch: true,
+            multiSelect: true,
+            locations: [{ id: "salon", label: "Salon", address: "Prosta 1", toneIndex: 0 }],
+            socialLinks: [{ id: "social-1", kind: "instagram", value: "anna" }],
+            bookingRules: {
+              futureDays: 60,
+              minLeadHours: 2,
+              cancelHours: 24,
+              proposeHoldHours: 24,
+              policy: "",
+            },
+            deactivated: false,
+          },
+        },
+        "/provider/me/services": {
+          services: [
+            {
+              id: "svc-returning",
+              name: "Manicure",
+              bookingMode: "auto",
+              durationMin: 60,
+              price: 120,
+              photoIds: [],
+              locationIds: ["salon"],
+              variants: [],
+            },
+          ],
+        },
+        "/provider/me/availability": {
+          availability: [
+            {
+              dateISO: "2026-10-10",
+              blocks: [
+                {
+                  from: "09:00",
+                  to: "15:00",
+                  locationId: "salon",
+                  repeat: "none",
+                  recurring: false,
+                },
+              ],
+            },
+          ],
+        },
+        "/provider/me/clients": { clients: [] },
+        "/bookings": { bookings: [] },
+        "/requests": { requests: [] },
+        "/calendar/connections": { connections: [] },
+      };
+      const body = payloads[path];
+      await route.fulfill({
+        status: body ? 200 : 404,
+        contentType: "application/json",
+        body: JSON.stringify(body || { error: "not_found" }),
+      });
+    });
+    await page.goto("/index.html?e2e=provider-restore", { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(function () {
+      return !!(window.App && window.LokalnieApi);
+    });
+    const result = await page.evaluate(async function () {
+      window.LokalnieApi.setAuthToken("returning-user-token");
+      window.AppState.loggedIn = true;
+      const synced = await window.LokalnieApi.syncFromServer();
+      const provider = window.AppState.providerProfiles[0];
+      return {
+        synced: synced.ok,
+        name: provider && provider.name,
+        category: provider && provider.category,
+        locations: provider && provider.locations.length,
+        services: provider && provider.services.map(function (service) { return service.name; }),
+        availability: provider && provider.availability.map(function (day) { return day.dateISO; }),
+      };
+    });
+    expect(result).toEqual({
+      synced: true,
+      name: "Anna Studio",
+      category: "beauty",
+      locations: 1,
+      services: ["Manicure"],
+      availability: ["2026-10-10"],
+    });
+  });
 });
