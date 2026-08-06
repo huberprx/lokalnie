@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.215";
+  const APP_VERSION = "1.0.217";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -431,17 +431,20 @@
     const radius = Number(window.AppState.searchRadiusKm) || 15;
     const useCurrent = window.AppState.searchUseCurrentLocation;
     const loc = (window.AppState.searchLocation || "").trim().toLowerCase();
+    // Własne profile często nie mają distanceKm — brak liczby nie może wykluczać z katalogu.
+    const hasDistance = typeof p.distanceKm === "number" && Number.isFinite(p.distanceKm);
+    const withinRadius = !hasDistance || p.distanceKm <= radius;
 
     if (!p.address) return true;
 
     if (useCurrent || !loc) {
-      return p.distanceKm <= radius;
+      return withinRadius;
     }
 
     const inPlace =
       (p.city && p.city.toLowerCase().indexOf(loc) !== -1) ||
       (p.address && p.address.toLowerCase().indexOf(loc) !== -1);
-    return inPlace && p.distanceKm <= radius;
+    return inPlace && withinRadius;
   }
 
   const SEARCH_PERIODS = [
@@ -1751,12 +1754,66 @@
     return "";
   }
 
+  /** Ścieżki zarezerwowane — nie traktuj ich jako slug usługodawcy. */
+  const RESERVED_APP_PATHS = {
+    "": true,
+    "index.html": true,
+    assets: true,
+    api: true,
+    admin: true,
+    embed: true,
+    "sw.js": true,
+    "manifest.webmanifest": true,
+    "styles.css": true,
+    "app.js": true,
+    "api.js": true,
+    "data.js": true,
+    "simulator.js": true,
+    e2e: true,
+    worker: true,
+    scripts: true,
+  };
+
+  function providerPublicPath(slug) {
+    return "/" + encodeURIComponent(String(slug || "").trim());
+  }
+
+  function providerEmbedPath(slug) {
+    return "/embed/" + encodeURIComponent(String(slug || "").trim());
+  }
+
   function providerShareUrl(slug) {
-    return location.origin + location.pathname + "#provider/" + slug;
+    return location.origin + providerPublicPath(slug);
   }
 
   function providerEmbedUrl(slug) {
-    return location.origin + location.pathname + "#embed/" + slug;
+    return location.origin + providerEmbedPath(slug);
+  }
+
+  function syncPublicProviderUrl(slug, opts) {
+    opts = opts || {};
+    if (!slug) return;
+    const target = (opts.embed ? providerEmbedPath(slug) : providerPublicPath(slug)) + (location.search || "");
+    const current = (location.pathname || "/") + (location.search || "");
+    if (current === target) {
+      if (location.hash) history.replaceState(null, "", target);
+      return;
+    }
+    history[opts.replace ? "replaceState" : "pushState"](null, "", target);
+  }
+
+  function clearPublicProviderUrl() {
+    const path = location.pathname || "/";
+    if (path === "/" || path === "/index.html") {
+      if (location.hash && /^(#provider\/|#embed\/)/.test(location.hash)) {
+        history.replaceState(null, "", "/" + (location.search || ""));
+      }
+      return;
+    }
+    const route = parseAppRouteFromLocation();
+    if (route && (route.kind === "provider" || route.kind === "embed")) {
+      history.pushState(null, "", "/" + (location.search || ""));
+    }
   }
 
   function providerEmbedSnippet(slug) {
@@ -2671,8 +2728,13 @@
   function renderProviderCard(p, isOpen, opts) {
     opts = opts || {};
     const fav = window.AppState.favorites.indexOf(p.slug) !== -1;
-    const dist = p.address ? p.distanceKm.toFixed(1) + " km" : "Online";
-    const addrLine = p.address ? p.address + " · " + dist : dist;
+    const dist =
+      p.address && typeof p.distanceKm === "number" && Number.isFinite(p.distanceKm)
+        ? p.distanceKm.toFixed(1) + " km"
+        : p.address
+          ? ""
+          : "Online";
+    const addrLine = p.address ? (dist ? p.address + " · " + dist : p.address) : dist;
 
     const nameHtml = opts.staticMain
       ? `<span class="provider-card__name">${escapeHtml(p.name)}</span>`
@@ -16345,6 +16407,10 @@
     if (nameEl) {
       const n = String(nameEl.value || "").trim();
       p.name = n || p.name || "Firma";
+      // Auto-slug tylko gdy jeszcze „techniczny” (my-provider…); nie nadpisuj wybranego sluga.
+      if (/^my-provider(?:-|$)/.test(String(p.slug || ""))) {
+        p.slug = uniqueProviderSlug(slugifyProviderSlug(p.name, p.id), p.id);
+      }
     }
     if (catEl) p.category = String(catEl.value || "").trim();
     if (cityEl) p.city = String(cityEl.value || "").trim();
@@ -17189,6 +17255,9 @@
     saveState();
     renderAll();
     window.AppState.bookingPanelEnterSlug = null;
+    if (!opts.skipUrlSync) {
+      syncPublicProviderUrl(slug, { embed: !!opts.embed, replace: !!opts.replaceUrl });
+    }
   }
 
   function rebookVisit(bookingId) {
@@ -18510,11 +18579,57 @@
     showPage("app");
   }
 
-  function handleRouteHash() {
+  function parseAppRouteFromLocation() {
     const hash = (location.hash || "").replace(/^#/, "");
-    const embedMatch = hash.match(/^embed\/(.+)$/);
-    if (embedMatch && embedMatch[1]) {
-      const slug = decodeURIComponent(embedMatch[1]);
+    // OAuth / calendar callback w hashu — nie traktuj jako trasy profilu.
+    if (
+      hash &&
+      (hash.indexOf("access_token=") !== -1 ||
+        hash.indexOf("auth_error=") !== -1 ||
+        hash.indexOf("calendar_connected=") !== -1 ||
+        hash.indexOf("calendar_error=") !== -1)
+    ) {
+      return null;
+    }
+    const embedHash = hash.match(/^embed\/(.+)$/);
+    if (embedHash && embedHash[1]) {
+      return { kind: "embed", slug: decodeURIComponent(embedHash[1]), fromHash: true };
+    }
+    const providerHash = hash.match(/^provider\/(.+)$/);
+    if (providerHash && providerHash[1]) {
+      return { kind: "provider", slug: decodeURIComponent(providerHash[1]), fromHash: true };
+    }
+    if (hash === "simulator" || hash === "calendar") {
+      return { kind: "legacy-hash", hash: hash };
+    }
+
+    let path = location.pathname || "/";
+    if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+    if (path === "/" || path === "/index.html") return null;
+
+    const embedPath = path.match(/^\/embed\/([^/]+)$/);
+    if (embedPath && embedPath[1]) {
+      return { kind: "embed", slug: decodeURIComponent(embedPath[1]), fromHash: false };
+    }
+
+    const parts = path.split("/").filter(Boolean);
+    if (parts.length !== 1) return null;
+    const seg = parts[0];
+    if (RESERVED_APP_PATHS[seg] || seg.indexOf(".") !== -1) return null;
+    return { kind: "provider", slug: decodeURIComponent(seg), fromHash: false };
+  }
+
+  function applyAppRoute(route) {
+    if (!route) {
+      setEmbedMode(false);
+      return false;
+    }
+    if (route.kind === "legacy-hash") {
+      history.replaceState(null, "", "/" + (location.search || ""));
+      goMarketplace();
+      return true;
+    }
+    if (route.kind === "embed") {
       setEmbedMode(true);
       window.AppState.loggedIn = true;
       window.AppState.activeRole = "client";
@@ -18522,20 +18637,27 @@
       saveState();
       updateAppHeader("client");
       showPage("app");
-      openProvider(slug, { force: true, embed: true });
-      return;
+      openProvider(route.slug, { force: true, embed: true, skipUrlSync: true });
+      syncPublicProviderUrl(route.slug, { embed: true, replace: true });
+      return true;
     }
-    setEmbedMode(false);
-    if (hash === "simulator" || hash === "calendar") {
-      history.replaceState(null, "", window.location.pathname + window.location.search);
+    if (route.kind === "provider") {
+      setEmbedMode(false);
       goMarketplace();
-      return;
+      openProvider(route.slug, { skipUrlSync: true });
+      syncPublicProviderUrl(route.slug, { replace: true });
+      return true;
     }
-    const providerMatch = hash.match(/^provider\/(.+)$/);
-    if (providerMatch && providerMatch[1]) {
-      goMarketplace();
-      openProvider(decodeURIComponent(providerMatch[1]));
-    }
+    return false;
+  }
+
+  function handleAppRoute() {
+    applyAppRoute(parseAppRouteFromLocation());
+  }
+
+  /** @deprecated używaj handleAppRoute — zachowane dla starych wywołań */
+  function handleRouteHash() {
+    handleAppRoute();
   }
 
   function appHeaderNavItems(activeRole) {
@@ -18841,6 +18963,36 @@
     return el ? String(el.value || "").trim() : "";
   }
 
+  function slugifyProviderSlug(name, fallback) {
+    const raw = String(name || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/ł/g, "l")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48);
+    return raw || fallback || "moj-profil";
+  }
+
+  function uniqueProviderSlug(base, exceptId) {
+    let slug = base || "moj-profil";
+    let n = 2;
+    while (
+      (data().PROVIDERS || []).some(function (p) {
+        return p && p.slug === slug && p.id !== exceptId;
+      }) ||
+      listOwnedProviders().some(function (p) {
+        return p && p.slug === slug && p.id !== exceptId;
+      })
+    ) {
+      slug = base + "-" + n;
+      n += 1;
+      if (n > 99) break;
+    }
+    return slug;
+  }
+
   /** Tworzy profil usługodawcy i od razu otwiera pełne ustawienia (bez mini-formularza). */
   function createProviderProfileAndOpenSettings() {
     if (!canAddProviderProfile()) {
@@ -18851,9 +19003,10 @@
     const n = listOwnedProviders().length;
     const name = cp.name || "Mój profil";
     const id = n === 0 ? "my-provider" : "my-provider-" + (n + 1) + "-" + Date.now().toString(36);
+    const slug = uniqueProviderSlug(slugifyProviderSlug(name, id), id);
     const created = addOwnedProvider({
       id: id,
-      slug: id,
+      slug: slug,
       name: name,
       category: "",
       city: "",
@@ -19490,6 +19643,8 @@
         break;
       case "go-home":
         event.preventDefault();
+        clearPublicProviderUrl();
+        setEmbedMode(false);
         goMarketplace();
         break;
       case "show-simulator":
@@ -20487,6 +20642,8 @@
         }
         p.visibleInSearch = on;
         saveState();
+        queueProviderProfileSync();
+        updateProviderLists();
         const row = visibleSearchToggle.closest(".settings__row--toggle");
         const hint = row && row.querySelector(".settings__hint");
         if (hint) {
@@ -22501,7 +22658,7 @@
       saveState();
       renderAll();
     }, 60000);
-    handleRouteHash();
+    handleAppRoute();
     bindPwaInstallPrompt();
     registerServiceWorker();
 
@@ -22532,7 +22689,8 @@
     });
   });
 
-  window.addEventListener("hashchange", handleRouteHash);
+  window.addEventListener("hashchange", handleAppRoute);
+  window.addEventListener("popstate", handleAppRoute);
 
   document.addEventListener("keydown", function (event) {
     if (event.key === "Escape") {

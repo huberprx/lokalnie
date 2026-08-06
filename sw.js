@@ -1,5 +1,5 @@
 /* Lokalnie PWA — przy publikacji podbij CACHE (zgodnie z APP_VERSION w app.js). */
-const CACHE = "lokalnie-shell-v1.0.215";
+const CACHE = "lokalnie-shell-v1.0.217";
 const SHELL = [
   "./",
   "./index.html",
@@ -49,6 +49,13 @@ function networkFirst(request) {
         const copy = response.clone();
         caches.open(CACHE).then(function (cache) {
           cache.put(request, copy);
+        });
+        return response;
+      }
+      // Czyste URL-e profilu (/slug) — serwer może oddać 404; SPA i tak ładuje index.html.
+      if (request.mode === "navigate") {
+        return fetch("./index.html", { cache: "no-store" }).then(function (shell) {
+          return shell && shell.ok ? shell : caches.match("./index.html");
         });
       }
       return response;

@@ -2,7 +2,7 @@
   "name": "lokalnie",
   "private": true,
   "scripts": {
-    "start": "python3 -m http.server 8080 --bind 127.0.0.1",
+    "start": "python3 scripts/spa-server.py --bind 127.0.0.1 --port 8080",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
     "test:headed": "playwright test --headed"
