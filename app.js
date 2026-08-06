@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.221";
+  const APP_VERSION = "1.0.222";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -4978,7 +4978,7 @@
                 <div class="profile-management__item profile-management__item--delete">
                   <div class="profile-management__text">
                     <span class="settings__hint">Usuń konto</span>
-                    <span class="settings-contact__toggle-hint">Trwale usuwa konto, dane profilu i dostęp do logowania. Tej operacji nie można cofnąć.</span>
+                    <span class="settings-contact__toggle-hint">Usuwa dostęp do logowania i dane profilu. Historia wizyt zostaje w formie zanonimizowanej. Tej operacji nie można cofnąć.</span>
                   </div>
                   <button type="button" class="btn btn--danger profile-management__btn"
                     data-action="delete-account">Usuń konto</button>
@@ -10538,6 +10538,9 @@
   function renderClientSheetDetailHtml(providerId, name) {
     const contact = resolveClientSheetContact(providerId, name);
     if (!contact) return "";
+    const saved = findProviderClientByName(providerId, contact.name);
+    const canDeleteCrm =
+      !!(saved && saved.id && !/^cli(-virt)?-/.test(String(saved.id)));
     const visits = collectClientPastVisits(providerId, contact.name);
     const visitsHtml = visits.length
       ? `<ul class="client-sheet__visits">
@@ -10555,6 +10558,12 @@
             .join("")}
         </ul>`
       : `<p class="empty-note client-sheet__empty">Brak odbytych wizyt.</p>`;
+    const deleteHtml = canDeleteCrm
+      ? `<div class="client-sheet__detail-actions">
+          <button type="button" class="btn btn--danger btn--sm client-sheet__detail-delete"
+            data-action="delete-provider-client">Usuń klienta</button>
+        </div>`
+      : "";
     return `
       <div class="client-sheet__detail" data-role="client-sheet-detail" role="dialog" aria-modal="true" aria-label="Szczegóły kontaktu">
         <header class="client-sheet__detail-head">
@@ -10599,6 +10608,7 @@
           </div>
           <h4 class="client-sheet__detail-section">Odbyte wizyty</h4>
           ${visitsHtml}
+          ${deleteHtml}
         </div>
       </div>`;
   }
@@ -19495,11 +19505,17 @@
         history.replaceState(null, "", window.location.pathname + window.location.search);
         if (authError === "account_blocked") {
           showToast("Konto zostało zablokowane. Skontaktuj się z supportem.");
+        } else if (authError === "email_not_verified_for_link") {
+          showToast("Ten e-mail jest już używany. Zaloguj się zweryfikowanym kontem Google.");
+        } else if (authError === "invalid_oauth_state" || authError === "google_denied") {
+          showToast("Logowanie przerwane. Spróbuj ponownie.");
         } else {
           showToast("Logowanie nieudane.");
         }
         return false;
       }
+      // Poza produkcją Worker może zwrócić #access_token (cross-site localhost → API).
+      // W produkcji sesja jest wyłącznie w HttpOnly cookie — restoreCookieSession().
       const token = params.get("access_token");
       if (!token) return false;
       history.replaceState(null, "", window.location.pathname + window.location.search);
@@ -19632,21 +19648,74 @@
   async function deleteAccount() {
     if (!isLoggedIn()) return;
     const confirmed = window.confirm(
-      "Czy na pewno chcesz trwale usunąć konto?\n\nDane profilu i dostęp do logowania zostaną usunięte. Tej operacji nie można cofnąć."
+      "Czy na pewno chcesz usunąć konto?\n\nDostęp do logowania i dane profilu zostaną usunięte. Historia wizyt zostanie zanonimizowana. Tej operacji nie można cofnąć."
     );
     if (!confirmed) return;
 
-    let apiOk = true;
-    if (window.LokalnieApi && window.LokalnieApi.deleteAccount) {
-      try {
-        apiOk = await window.LokalnieApi.deleteAccount();
-      } catch (err) {
-        apiOk = false;
-      }
+    if (!window.LokalnieApi || !window.LokalnieApi.deleteAccount) {
+      showToast("Nie udało się usunąć konta. Spróbuj ponownie lub napisz na szaroczarnytrzmiel@gmail.com");
+      return;
+    }
+    try {
+      await window.LokalnieApi.deleteAccount();
+    } catch (err) {
+      showToast("Nie udało się usunąć konta. Spróbuj ponownie lub napisz na szaroczarnytrzmiel@gmail.com");
+      return;
     }
     clearLocalSessionState();
     goMarketplace();
-    showToast(apiOk ? "Konto zostało usunięte." : "Konto usunięte lokalnie. Jeśli problem się powtórzy, napisz do wsparcia.");
+    showToast("Konto zostało usunięte.");
+  }
+
+  async function deleteProviderClientFromSheet() {
+    const draft = ensureProvCalAddDraft();
+    const p = myProvider();
+    const name = draft ? String(draft.clientSheetDetailName || "").trim() : "";
+    if (!p || !name) return;
+    const saved = findProviderClientByName(p.id, name);
+    const clientId = saved && saved.id && !/^cli(-virt)?-/.test(String(saved.id)) ? saved.id : "";
+    if (!clientId) {
+      showToast("Ten kontakt nie jest zapisany w CRM — brak danych do usunięcia.");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Usunąć klienta „" + name + "” z kontaktów?\n\nDane kontaktowe znikną, a historia wizyt zostanie zanonimizowana."
+    );
+    if (!confirmed) return;
+
+    if (shouldPersistApiMutation() && window.LokalnieApi && window.LokalnieApi.deleteClient) {
+      try {
+        await window.LokalnieApi.deleteClient(clientId);
+      } catch (err) {
+        showToast("Nie udało się usunąć klienta. Spróbuj ponownie.");
+        return;
+      }
+    }
+
+    const list = ensureProviderClientsList(p.id);
+    window.AppState.providerClients[p.id] = list.filter(function (c) {
+      return !(c && c.id === clientId);
+    });
+    (window.AppState.bookings || []).forEach(function (b) {
+      if (!b || b.providerId !== p.id) return;
+      if (b.providerClientId === clientId) {
+        b.clientName = "Usunięty klient";
+        b.clientPhone = "";
+        b.clientEmail = "";
+        b.providerClientId = null;
+      }
+    });
+    draft.clientSheetDetailName = "";
+    if (draft.clientName && String(draft.clientName).trim().toLocaleLowerCase("pl") === name.toLocaleLowerCase("pl")) {
+      draft.clientName = "";
+      draft.clientPhone = "";
+      draft.clientEmail = "";
+      draft.clientAddress = "";
+    }
+    saveState();
+    refreshProvCalAddClientMenu({ focusSearch: false });
+    renderAll();
+    showToast("Klient został usunięty.");
   }
 
   function closeAppMenuThen(fn) {
@@ -20687,6 +20756,11 @@
         event.preventDefault();
         event.stopPropagation();
         closeClientSheetDetail();
+        break;
+      case "delete-provider-client":
+        event.preventDefault();
+        event.stopPropagation();
+        void deleteProviderClientFromSheet();
         break;
       case "prov-cal-add-new-client":
         event.preventDefault();
@@ -23074,7 +23148,7 @@
     } catch (err) {
       /* ignore */
     }
-    // Callback Google OAuth: #access_token=...
+    // Callback Google OAuth: #auth_error=... albo (poza prod) #access_token=...
     const justAuthed = consumeAuthHash();
     try {
       if (justAuthed) {

@@ -23,11 +23,16 @@ Backend Lokalnie na Cloudflare Workers (Free) + D1 (EU) + R2.
    - `http://localhost:8787/auth/google/callback` (lokalnie)
    - `http://localhost:8787/auth/google/calendar/callback` (lokalnie)
 3. Start: `GET /auth/google?return_to=https://lokalnie.app/`
-4. Po sukcesie redirect na front z `#access_token=...`
-5. Kolejne requesty: `Authorization: Bearer <token>`
-6. Wylogowanie: `POST /auth/logout`
+4. Po sukcesie (produkcja): redirect na front + `Set-Cookie: lokalnie_session` (HttpOnly, SameSite=Lax, Secure).
+5. Front ładuje sesję przez `GET /me` z `credentials: "include"` (cookie same-site `lokalnie.app` ↔ `api.lokalnie.app`).
+6. Wylogowanie: `POST /auth/logout` — kasuje sesję w D1 i wygasza cookie.
+7. Poza produkcją (`ENVIRONMENT != production`) callback dodatkowo dokłada `#access_token=...` na potrzeby lokalnych testów cross-site (localhost → API); Bearer w `localStorage` działa tylko poza produkcyjnym hostname.
 
-`state` OAuth jest podpisany HMAC (`GOOGLE_CLIENT_SECRET`) — bez cookie, żeby uniknąć `invalid_oauth_state` przy 302.
+Ochrona logowania:
+- jednorazowy `state` w tabeli D1 `oauth_states` (TTL 10 min),
+- PKCE `S256` (`code_challenge` / `code_verifier`),
+- OIDC `nonce` + weryfikacja podpisu i claimów `id_token` (JWKS Google),
+- łączenie kont po e-mailu tylko gdy `email_verified=true`.
 
 Lokalnie (opcjonalnie) skopiuj `.dev.vars.example` → `.dev.vars`.
 

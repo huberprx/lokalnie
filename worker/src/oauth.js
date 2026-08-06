@@ -1,5 +1,6 @@
 import { json, id, nowIso } from "./http.js";
 import { GOOGLE_CALENDAR_SCOPE, encryptToken } from "./calendar.js";
+import { verifyGoogleIdToken } from "./googleIdToken.js";
 
 const SESSION_DAYS = 30;
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -35,79 +36,6 @@ function bytesToBase64Url(bytes) {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function base64UrlToBytes(str) {
-  const pad = str.length % 4 === 0 ? "" : "=".repeat(4 - (str.length % 4));
-  const b64 = str.replace(/-/g, "+").replace(/_/g, "/") + pad;
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
-
-function textToBase64Url(text) {
-  return bytesToBase64Url(new TextEncoder().encode(text));
-}
-
-function base64UrlToText(str) {
-  return new TextDecoder().decode(base64UrlToBytes(str));
-}
-
-async function hmacKey(secret) {
-  return crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"]
-  );
-}
-
-async function signPayload(payloadB64, secret) {
-  const key = await hmacKey(secret);
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payloadB64));
-  return bytesToBase64Url(new Uint8Array(sig));
-}
-
-async function verifyPayload(payloadB64, sigB64, secret) {
-  const key = await hmacKey(secret);
-  const sig = base64UrlToBytes(sigB64);
-  return crypto.subtle.verify("HMAC", key, sig, new TextEncoder().encode(payloadB64));
-}
-
-/** Podpisany state — bez cookie (cookie na 302 często ginie w przeglądarce). */
-async function createOAuthState(returnTo, env, extra = {}) {
-  const secret = cleanSecret(env.GOOGLE_CLIENT_SECRET);
-  if (!secret) throw new Error("oauth_not_configured");
-  const payload = {
-    r: returnTo,
-    e: Date.now() + STATE_TTL_MS,
-    n: randomToken(8),
-    ...extra,
-  };
-  const payloadB64 = textToBase64Url(JSON.stringify(payload));
-  const sig = await signPayload(payloadB64, secret);
-  return `${payloadB64}.${sig}`;
-}
-
-async function parseOAuthState(state, env) {
-  const secret = cleanSecret(env.GOOGLE_CLIENT_SECRET);
-  if (!secret || !state || !state.includes(".")) return null;
-  const i = state.lastIndexOf(".");
-  const payloadB64 = state.slice(0, i);
-  const sigB64 = state.slice(i + 1);
-  if (!payloadB64 || !sigB64) return null;
-  const ok = await verifyPayload(payloadB64, sigB64, secret);
-  if (!ok) return null;
-  let payload;
-  try {
-    payload = JSON.parse(base64UrlToText(payloadB64));
-  } catch {
-    return null;
-  }
-  if (!payload || typeof payload.e !== "number" || Date.now() > payload.e) return null;
-  return payload;
-}
-
 export async function hashToken(token) {
   const data = new TextEncoder().encode(token);
   const digest = await crypto.subtle.digest("SHA-256", data);
@@ -116,7 +44,10 @@ export async function hashToken(token) {
 
 export function sessionTokenFromCookie(request) {
   const cookie = request.headers.get("Cookie") || "";
-  const entry = cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${SESSION_COOKIE}=`));
+  const entry = cookie
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${SESSION_COOKIE}=`));
   if (!entry) return "";
   try {
     return decodeURIComponent(entry.slice(SESSION_COOKIE.length + 1));
@@ -137,6 +68,20 @@ function randomToken(bytes = 32) {
   return [...arr].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+function randomBase64Url(bytes = 32) {
+  const arr = new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
+  return bytesToBase64Url(arr);
+}
+
+/** PKCE S256: zwraca { codeVerifier, codeChallenge }. */
+export async function createPkcePair() {
+  const codeVerifier = randomBase64Url(32);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(codeVerifier));
+  const codeChallenge = bytesToBase64Url(new Uint8Array(digest));
+  return { codeVerifier, codeChallenge };
+}
+
 function apiBase(request) {
   const url = new URL(request.url);
   return url.origin;
@@ -146,6 +91,77 @@ function cleanSecret(value) {
   return String(value || "")
     .trim()
     .replace(/^["']+|["']+$/g, "");
+}
+
+function appFallbackOrigin(env) {
+  return String(env.APP_ORIGIN || "https://lokalnie.app").replace(/\/+$/, "");
+}
+
+function redirectWithHash(returnTo, hashEntries) {
+  const dest = new URL(returnTo);
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(hashEntries)) {
+    params.set(key, value);
+  }
+  dest.hash = params.toString();
+  return new Response(null, { status: 302, headers: { Location: dest.toString() } });
+}
+
+function authErrorRedirect(returnTo, errorCode, env, clearCookie = false) {
+  const dest = sanitizeReturnTo(returnTo, env);
+  const headers = { Location: new URL(dest).toString() };
+  const url = new URL(dest);
+  url.hash = `auth_error=${encodeURIComponent(errorCode)}`;
+  headers.Location = url.toString();
+  if (clearCookie) headers["Set-Cookie"] = sessionCookie("", env, 0);
+  return new Response(null, { status: 302, headers });
+}
+
+async function cleanupExpiredOAuthStates(env) {
+  try {
+    await env.DB.prepare("DELETE FROM oauth_states WHERE expires_at < ? OR used_at IS NOT NULL")
+      .bind(new Date(Date.now() - STATE_TTL_MS).toISOString())
+      .run();
+  } catch {
+    /* best-effort */
+  }
+}
+
+async function storeOAuthState(env, { purpose, returnTo, codeVerifier, nonce, userId = null }) {
+  await cleanupExpiredOAuthStates(env);
+  const stateId = randomToken(32);
+  const expiresAt = new Date(Date.now() + STATE_TTL_MS).toISOString();
+  await env.DB.prepare(
+    `INSERT INTO oauth_states (id, purpose, return_to, code_verifier, nonce, user_id, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(stateId, purpose, returnTo, codeVerifier, nonce, userId, expiresAt)
+    .run();
+  return stateId;
+}
+
+/**
+ * Pobiera i zużywa state. Ponowne użycie lub wygaśnięcie → null.
+ * Eksportowane pod testy.
+ */
+export async function consumeOAuthState(env, stateId, expectedPurpose) {
+  if (!stateId) return null;
+  const now = nowIso();
+  const row = await env.DB.prepare(
+    `SELECT id, purpose, return_to, code_verifier, nonce, user_id, expires_at
+     FROM oauth_states
+     WHERE id = ? AND purpose = ? AND used_at IS NULL AND expires_at > ?`
+  )
+    .bind(stateId, expectedPurpose, now)
+    .first();
+  if (!row) return null;
+  const update = await env.DB.prepare(
+    `UPDATE oauth_states SET used_at = ? WHERE id = ? AND used_at IS NULL`
+  )
+    .bind(now, stateId)
+    .run();
+  if (!update.meta?.changes) return null;
+  return row;
 }
 
 export async function startGoogleAuth(request, env) {
@@ -163,13 +179,14 @@ export async function startGoogleAuth(request, env) {
 
   const url = new URL(request.url);
   const returnTo = sanitizeReturnTo(url.searchParams.get("return_to"), env);
-
-  let state;
-  try {
-    state = await createOAuthState(returnTo, env);
-  } catch (e) {
-    return json({ error: "oauth_not_configured", message: String(e?.message || e) }, 503);
-  }
+  const { codeVerifier, codeChallenge } = await createPkcePair();
+  const nonce = randomToken(16);
+  const state = await storeOAuthState(env, {
+    purpose: "login",
+    returnTo,
+    codeVerifier,
+    nonce,
+  });
 
   const redirectUri = `${apiBase(request)}/auth/google/callback`;
   const auth = new URL("https://accounts.google.com/o/oauth2/v2/auth");
@@ -180,6 +197,9 @@ export async function startGoogleAuth(request, env) {
   auth.searchParams.set("access_type", "online");
   auth.searchParams.set("prompt", "select_account");
   auth.searchParams.set("state", state);
+  auth.searchParams.set("nonce", nonce);
+  auth.searchParams.set("code_challenge", codeChallenge);
+  auth.searchParams.set("code_challenge_method", "S256");
 
   return new Response(null, { status: 302, headers: { Location: auth.toString() } });
 }
@@ -192,7 +212,15 @@ export async function startGoogleCalendarAuth(request, env, userId) {
   }
   const url = new URL(request.url);
   const returnTo = sanitizeReturnTo(url.searchParams.get("return_to"), env);
-  const state = await createOAuthState(returnTo, env, { p: "calendar", u: String(userId || "") });
+  const { codeVerifier, codeChallenge } = await createPkcePair();
+  const nonce = randomToken(16);
+  const state = await storeOAuthState(env, {
+    purpose: "calendar",
+    returnTo,
+    codeVerifier,
+    nonce,
+    userId: String(userId || ""),
+  });
   const redirectUri = `${apiBase(request)}/auth/google/calendar/callback`;
   const auth = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   auth.searchParams.set("client_id", clientId);
@@ -202,16 +230,19 @@ export async function startGoogleCalendarAuth(request, env, userId) {
   auth.searchParams.set("access_type", "offline");
   auth.searchParams.set("prompt", "consent");
   auth.searchParams.set("state", state);
+  auth.searchParams.set("code_challenge", codeChallenge);
+  auth.searchParams.set("code_challenge_method", "S256");
   return new Response(null, { status: 302, headers: { Location: auth.toString() } });
 }
 
-async function exchangeCode(code, redirectUri, env) {
+async function exchangeCode(code, redirectUri, env, codeVerifier) {
   const body = new URLSearchParams({
     code,
     client_id: cleanSecret(env.GOOGLE_CLIENT_ID),
     client_secret: cleanSecret(env.GOOGLE_CLIENT_SECRET),
     redirect_uri: redirectUri,
     grant_type: "authorization_code",
+    code_verifier: codeVerifier,
   });
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -227,18 +258,12 @@ async function exchangeCode(code, redirectUri, env) {
   return data;
 }
 
-async function fetchGoogleUser(accessToken) {
-  const res = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error_description || data.error || "userinfo_failed");
-  }
-  return data;
-}
-
-async function upsertGoogleUser(env, profile) {
+/**
+ * Upsert użytkownika po Google sub.
+ * Łączenie po e-mailu tylko gdy email_verified=true.
+ * Eksportowane pod testy.
+ */
+export async function upsertGoogleUser(env, profile) {
   const googleSub = String(profile.sub || "");
   const email = profile.email ? String(profile.email).toLowerCase() : null;
   const emailVerified = profile.email_verified === true || profile.email_verified === "true" ? 1 : 0;
@@ -258,9 +283,7 @@ async function upsertGoogleUser(env, profile) {
     // Nazwa z Google inicjalizuje konto, ale nie może nadpisywać późniejszej
     // edycji wykonanej przez użytkownika w profilu Lokalnie.
     if (name && !String(user.name || "").trim()) {
-      await env.DB.prepare(
-        "UPDATE users SET name = ?, updated_at = ? WHERE id = ?"
-      )
+      await env.DB.prepare("UPDATE users SET name = ?, updated_at = ? WHERE id = ?")
         .bind(name, nowIso(), user.id)
         .run();
       user.name = name;
@@ -275,7 +298,14 @@ async function upsertGoogleUser(env, profile) {
     user = await env.DB.prepare("SELECT * FROM users WHERE email = ?").bind(email).first();
   }
 
-  if (!user) {
+  if (user) {
+    // Account linking tylko dla zweryfikowanego e-maila Google.
+    if (!emailVerified) {
+      const err = new Error("email_not_verified_for_link");
+      err.code = "email_not_verified_for_link";
+      throw err;
+    }
+  } else {
     const userId = id("user");
     await env.DB.prepare(
       `INSERT INTO users (id, email, name, role_client, role_provider,
@@ -309,63 +339,82 @@ async function createSession(env, userId) {
   return { token, expiresAt: expires };
 }
 
+function profileFromIdToken(payload) {
+  return {
+    sub: payload.sub,
+    email: payload.email,
+    email_verified: payload.email_verified,
+    name: payload.name,
+    given_name: payload.given_name,
+  };
+}
+
 export async function handleGoogleCallback(request, env) {
   const clientId = cleanSecret(env.GOOGLE_CLIENT_ID);
   const clientSecret = cleanSecret(env.GOOGLE_CLIENT_SECRET);
+  const fallback = appFallbackOrigin(env);
+
   if (!clientId || !clientSecret) {
-    return json({ error: "oauth_not_configured" }, 503);
+    return authErrorRedirect(fallback, "oauth_not_configured", env);
   }
 
   const url = new URL(request.url);
   const err = url.searchParams.get("error");
-  if (err) {
-    return json({ error: "google_denied", message: err }, 400);
-  }
-
   const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
-  const parsed = await parseOAuthState(state, env);
+  const stateId = url.searchParams.get("state");
+  const state = await consumeOAuthState(env, stateId, "login");
+  const returnTo = state?.return_to ? sanitizeReturnTo(state.return_to, env) : fallback;
 
-  if (!code || !parsed) {
-    return json(
-      {
-        error: "invalid_oauth_state",
-        message: "Nieprawidłowy lub wygasły stan OAuth. Zamknij to okno i zaloguj się ponownie z Lokalnie.",
-      },
-      400
-    );
+  if (err) {
+    return authErrorRedirect(returnTo, "google_denied", env);
   }
-
-  const returnTo = sanitizeReturnTo(parsed.r, env);
+  if (!code || !state) {
+    return authErrorRedirect(returnTo, "invalid_oauth_state", env);
+  }
 
   try {
     const redirectUri = `${apiBase(request)}/auth/google/callback`;
-    const tokens = await exchangeCode(code, redirectUri, env);
-    const profile = await fetchGoogleUser(tokens.access_token);
+    const tokens = await exchangeCode(code, redirectUri, env, state.code_verifier);
+    if (!tokens.id_token) throw new Error("missing_id_token");
+
+    const claims = await verifyGoogleIdToken(tokens.id_token, {
+      clientId,
+      nonce: state.nonce,
+    });
+    const profile = profileFromIdToken(claims);
     const user = await upsertGoogleUser(env, profile);
-    const dest = new URL(returnTo.startsWith("http") ? returnTo : `https://lokalnie.app${returnTo}`);
+    const dest = new URL(returnTo.startsWith("http") ? returnTo : `${fallback}${returnTo}`);
+
     if (user.blocked) {
-      dest.hash = "auth_error=account_blocked";
-      return new Response(null, {
-        status: 302,
-        headers: { Location: dest.toString(), "Set-Cookie": sessionCookie("", env, 0) },
-      });
+      return authErrorRedirect(dest.toString(), "account_blocked", env, true);
     }
+
     const session = await createSession(env, user.id);
+    // Produkcja: wyłącznie HttpOnly cookie. Poza prod: dodatkowo #access_token
+    // dla lokalnych testów cross-site (localhost → api.lokalnie.app).
+    if (env.ENVIRONMENT !== "production") {
+      dest.hash = `access_token=${encodeURIComponent(session.token)}`;
+    }
 
     return new Response(null, {
       status: 302,
       headers: { Location: dest.toString(), "Set-Cookie": sessionCookie(session.token, env) },
     });
   } catch (e) {
-    console.error(JSON.stringify({ level: "error", oauth: String(e?.stack || e), details: e?.details || null }));
-    return json(
-      {
-        error: "oauth_failed",
-        ...(env.ENVIRONMENT === "production" ? {} : { message: String(e?.message || e) }),
-      },
-      500
+    console.error(
+      JSON.stringify({ level: "error", oauth: String(e?.stack || e), details: e?.details || null })
     );
+    const codeName =
+      e?.code === "email_not_verified_for_link"
+        ? "email_not_verified_for_link"
+        : e?.message === "invalid_nonce" ||
+            e?.message === "invalid_aud" ||
+            e?.message === "invalid_iss" ||
+            e?.message === "id_token_expired" ||
+            e?.message === "invalid_id_token_signature"
+          ? "oauth_token_invalid"
+          : "oauth_failed";
+    return authErrorRedirect(returnTo, codeName, env);
   }
 }
 
@@ -374,46 +423,34 @@ export async function handleGoogleCalendarCallback(request, env) {
   const clientSecret = cleanSecret(env.GOOGLE_CLIENT_SECRET);
   const tokenKey = cleanSecret(env.GOOGLE_CALENDAR_TOKEN_KEY);
   const url = new URL(request.url);
-  const returnTo = sanitizeReturnTo("", env);
   const error = url.searchParams.get("error");
-  const state = await parseOAuthState(url.searchParams.get("state"), env);
-  const destination = state?.r ? sanitizeReturnTo(state.r, env) : returnTo;
-  const redirectWith = (key, value = "1") => {
-    const dest = new URL(destination);
-    dest.hash = `${key}=${encodeURIComponent(value)}`;
-    return new Response(null, { status: 302, headers: { Location: dest.toString() } });
-  };
+  const state = await consumeOAuthState(env, url.searchParams.get("state"), "calendar");
+  const destination = state?.return_to
+    ? sanitizeReturnTo(state.return_to, env)
+    : sanitizeReturnTo("", env);
+
+  const redirectWith = (key, value = "1") => redirectWithHash(destination, { [key]: value });
 
   if (error) return redirectWith("calendar_error", "google_denied");
-  if (!clientId || !clientSecret || !tokenKey || !state || state.p !== "calendar" || !state.u) {
+  if (!clientId || !clientSecret || !tokenKey || !state || !state.user_id) {
     return redirectWith("calendar_error", "invalid_oauth_state");
   }
 
   const code = url.searchParams.get("code");
   if (!code) return redirectWith("calendar_error", "missing_code");
   const redirectUri = `${apiBase(request)}/auth/google/calendar/callback`;
-  const body = new URLSearchParams({
-    code,
-    client_id: clientId,
-    client_secret: clientSecret,
-    redirect_uri: redirectUri,
-    grant_type: "authorization_code",
-  });
 
   try {
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body,
-    });
-    const tokens = await tokenResponse.json();
-    if (!tokenResponse.ok || !tokens.access_token) {
+    const tokens = await exchangeCode(code, redirectUri, env, state.code_verifier);
+    if (!tokens.access_token) {
       throw new Error(tokens.error_description || tokens.error || "calendar_token_exchange_failed");
     }
 
     const previous = await env.DB.prepare(
       "SELECT * FROM calendar_connections WHERE user_id=? AND provider='google'"
-    ).bind(state.u).first();
+    )
+      .bind(state.user_id)
+      .first();
     const refreshToken = tokens.refresh_token
       ? await encryptToken(tokens.refresh_token, tokenKey)
       : previous?.encrypted_refresh_token;
@@ -434,16 +471,18 @@ export async function handleGoogleCalendarCallback(request, env) {
          status='connected',
          last_error=NULL,
          updated_at=excluded.updated_at`
-    ).bind(
-      connectionId,
-      state.u,
-      accessToken,
-      refreshToken,
-      expiresAt,
-      GOOGLE_CALENDAR_SCOPE,
-      nowIso(),
-      nowIso()
-    ).run();
+    )
+      .bind(
+        connectionId,
+        state.user_id,
+        accessToken,
+        refreshToken,
+        expiresAt,
+        GOOGLE_CALENDAR_SCOPE,
+        nowIso(),
+        nowIso()
+      )
+      .run();
     return redirectWith("calendar_connected", "1");
   } catch (err) {
     console.error(JSON.stringify({ level: "error", calendar_oauth: String(err?.stack || err) }));

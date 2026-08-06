@@ -992,18 +992,18 @@
   /** Trwałe usunięcie / anonimizacja konta zalogowanego użytkownika. */
   async function deleteAccount() {
     if (!isProductionHostname() && !getAuthToken()) {
-      clearAuthToken();
-      return true;
+      throw Object.assign(new Error("unauthorized"), { status: 401, data: { error: "unauthorized" } });
     }
-    try {
-      await request("/me", { method: "DELETE" });
-      clearAuthToken();
-      return true;
-    } catch (err) {
-      console.warn("[LokalnieApi] deleteAccount failed", err);
-      clearAuthToken();
-      return false;
-    }
+    await request("/me", { method: "DELETE" });
+    clearAuthToken();
+    return true;
+  }
+
+  /** Usunięcie klienta z CRM usługodawcy (z anonimizacją powiązanych rezerwacji). */
+  async function deleteClient(clientId) {
+    if (!clientId || (!isProductionHostname() && !getAuthToken())) return false;
+    await request("/provider/me/clients/" + encodeURIComponent(clientId), { method: "DELETE" });
+    return true;
   }
 
   async function listCalendarConnections() {
@@ -1056,6 +1056,7 @@
     uploadServicePhoto: uploadServicePhoto,
     logout: logout,
     deleteAccount: deleteAccount,
+    deleteClient: deleteClient,
     listCalendarConnections: listCalendarConnections,
     disconnectCalendar: disconnectCalendar,
   };

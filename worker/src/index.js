@@ -1,4 +1,4 @@
-import { json, id, nowIso, readJson, preflight, withCors, HttpError } from "./http.js";
+import { json, id, nowIso, readJson, preflight, withCors, HttpError, isAllowedOrigin } from "./http.js";
 import { requireDemoUser, requireAdmin, mapUser, mapProvider, isAdminUser } from "./auth.js";
 import {
   startGoogleAuth,
@@ -70,9 +70,27 @@ export default {
     }
   },
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(Promise.all([processDueEmails(env), cleanupIdempotencyKeys(env)]));
+    ctx.waitUntil(
+      Promise.all([processDueEmails(env), cleanupIdempotencyKeys(env), cleanupRetention(env)])
+    );
   },
 };
+
+const OUTBOX_RETENTION_DAYS = 30;
+
+/** Sprząta wygasłe rate limity i stare wpisy outboxu (PII w to_email / payload). */
+export async function cleanupRetention(env) {
+  const now = Date.now();
+  const outboxBefore = new Date(now - OUTBOX_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const [rateResult, outboxResult] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM rate_limits WHERE expires_at <= ?").bind(now),
+    env.DB.prepare("DELETE FROM email_outbox WHERE created_at < ?").bind(outboxBefore),
+  ]);
+  return {
+    rateLimits: Number(rateResult?.meta?.changes || 0),
+    emailOutbox: Number(outboxResult?.meta?.changes || 0),
+  };
+}
 
 async function routeRequest(request, env) {
     const url = new URL(request.url);
@@ -80,6 +98,8 @@ async function routeRequest(request, env) {
     try {
       const path = url.pathname.replace(/\/+$/, "") || "/";
       const parts = path.split("/").filter(Boolean);
+      const originRejected = rejectDisallowedMutationOrigin(request, env);
+      if (originRejected) return originRejected;
       const rate = rateLimitConfig(path, request.method);
       if (rate) {
         const limited = await enforceRateLimit(
@@ -276,6 +296,16 @@ async function routeRequest(request, env) {
     }
 }
 
+/** Defense-in-depth CSRF: jawnie zły Origin na mutacjach → 403. Brak Origin (curl) przepuszczamy. */
+function rejectDisallowedMutationOrigin(request, env) {
+  const method = request.method.toUpperCase();
+  if (!["POST", "PATCH", "PUT", "DELETE"].includes(method)) return null;
+  const origin = request.headers.get("Origin");
+  if (!origin) return null;
+  if (isAllowedOrigin(origin, env)) return null;
+  return json({ error: "origin_not_allowed" }, 403);
+}
+
 function rateLimitConfig(path, method) {
   if (path === "/auth/google" || path === "/auth/google/callback") {
     return { route: "auth", limit: 10 };
@@ -379,41 +409,16 @@ async function deleteMe(request, env) {
   }
 
   const userId = auth.user.id;
+  const userEmail = auth.user.email ? String(auth.user.email).trim() : "";
   const ts = nowIso();
   const deletedLabel = "Usunięte konto";
 
-  // Anonimizuj dane klienta w rezerwacjach i prośbach (historia zostaje bez PII).
-  await env.DB.prepare(
-    `UPDATE bookings SET client_name = ?, client_phone = NULL, client_email = NULL, client_user_id = NULL, updated_at = ?
-     WHERE client_user_id = ?`
-  )
-    .bind(deletedLabel, ts, userId)
-    .run();
-  await env.DB.prepare(
-    `UPDATE booking_requests SET client_name = ?, client_phone = NULL, client_email = NULL, client_user_id = NULL, updated_at = ?
-     WHERE client_user_id = ?`
-  )
-    .bind(deletedLabel, ts, userId)
-    .run();
-  await env.DB.prepare(
-    `UPDATE provider_clients SET client_user_id = NULL, name = ?, phone = NULL, email = NULL, updated_at = ?
-     WHERE client_user_id = ?`
-  )
-    .bind(deletedLabel, ts, userId)
-    .run();
+  const bookingRows = await env.DB.prepare("SELECT id FROM bookings WHERE client_user_id = ?")
+    .bind(userId)
+    .all();
+  const bookingIds = (bookingRows.results || []).map((row) => row.id);
 
-  // Profil usługodawcy — ukryj i zanonimizuj (bez kasowania historii wizyt klientów).
-  if (auth.provider) {
-    await env.DB.prepare(
-      `UPDATE provider_profiles SET name = ?, about = '', email = NULL, phone = NULL, address = '',
-         email_visible = 0, visible_in_search = 0, avatar_key = NULL, updated_at = ?
-       WHERE user_id = ?`
-    )
-      .bind(deletedLabel, ts, userId)
-      .run();
-  }
-
-  // Media w R2 (best-effort) + wiersze w D1.
+  // Media w R2 (best-effort) — przed batchem D1; awaria R2 nie blokuje usunięcia konta.
   const mediaRows = await env.DB.prepare("SELECT id, storage_key FROM media WHERE owner_user_id = ?")
     .bind(userId)
     .all();
@@ -426,20 +431,75 @@ async function deleteMe(request, env) {
       }
     }
   }
-  await env.DB.prepare("DELETE FROM media WHERE owner_user_id = ?").bind(userId).run();
-  await env.DB.prepare("DELETE FROM calendar_connections WHERE user_id = ?").bind(userId).run();
-  await env.DB.prepare("DELETE FROM oauth_identities WHERE user_id = ?").bind(userId).run();
-  await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId).run();
 
-  // Zablokuj i zanonimizuj użytkownika — e-mail NULL, żeby Google mógł założyć nowe konto.
-  await env.DB.prepare(
-    `UPDATE users SET email = NULL, name = ?, phone = NULL, avatar_key = NULL,
-       notification_booking = 0, notification_reminder = 0, notification_marketing = 0,
-       blocked = 1, blocked_at = ?, blocked_reason = ?, role_provider = 0, updated_at = ?
-     WHERE id = ?`
-  )
-    .bind(deletedLabel, ts, "account_deleted", ts, userId)
-    .run();
+  // Faza 1: anonimizacja historii (bez odcinania sesji — da się ponowić przy awarii).
+  const anonymizeStatements = [
+    env.DB.prepare(
+      `UPDATE bookings SET client_name = ?, client_phone = NULL, client_email = NULL, client_user_id = NULL, updated_at = ?
+       WHERE client_user_id = ?`
+    ).bind(deletedLabel, ts, userId),
+    env.DB.prepare(
+      `UPDATE booking_requests SET client_name = ?, client_phone = NULL, client_email = NULL, client_user_id = NULL, updated_at = ?
+       WHERE client_user_id = ?`
+    ).bind(deletedLabel, ts, userId),
+    env.DB.prepare(
+      `UPDATE provider_clients SET client_user_id = NULL, name = ?, phone = NULL, email = NULL,
+         address = '', notes = NULL, updated_at = ?
+       WHERE client_user_id = ?`
+    ).bind(deletedLabel, ts, userId),
+  ];
+  if (auth.provider) {
+    anonymizeStatements.push(
+      env.DB.prepare(
+        `UPDATE provider_profiles SET name = ?, about = '', email = NULL, phone = NULL, address = '',
+           email_visible = 0, visible_in_search = 0, avatar_key = NULL, updated_at = ?
+         WHERE user_id = ?`
+      ).bind(deletedLabel, ts, userId)
+    );
+  }
+  await env.DB.batch(anonymizeStatements);
+
+  // Faza 2: zaktualizuj wydarzenia Google (opis bez imienia) zanim skasujemy połączenie.
+  for (const bookingId of bookingIds) {
+    try {
+      await syncBookingToGoogle(env, bookingId);
+    } catch (err) {
+      /* Google nie może blokować usunięcia konta */
+    }
+  }
+
+  // Faza 3: odcięcie logowania + purge — jeden batch (atomowo w D1).
+  const purgeStatements = [
+    env.DB.prepare("DELETE FROM media WHERE owner_user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM calendar_connections WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM oauth_identities WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId),
+    env.DB.prepare(
+      `UPDATE users SET email = NULL, name = ?, phone = NULL, avatar_key = NULL,
+         notification_booking = 0, notification_reminder = 0, notification_marketing = 0,
+         blocked = 1, blocked_at = ?, blocked_reason = ?, role_provider = 0, updated_at = ?
+       WHERE id = ?`
+    ).bind(deletedLabel, ts, "account_deleted", ts, userId),
+    env.DB.prepare(
+      `INSERT INTO admin_audit_log (id, actor_user_id, action, target_type, target_id, meta_json)
+       VALUES (?, ?, 'account.deleted', 'user', ?, ?)`
+    ).bind(
+      id("audit"),
+      userId,
+      userId,
+      JSON.stringify({
+        bookingsAnonymized: bookingIds.length,
+        mediaRemoved: (mediaRows.results || []).length,
+        hadProvider: !!auth.provider,
+      })
+    ),
+  ];
+  if (userEmail) {
+    purgeStatements.push(
+      env.DB.prepare("DELETE FROM email_outbox WHERE lower(to_email) = lower(?)").bind(userEmail)
+    );
+  }
+  await env.DB.batch(purgeStatements);
 
   return json({ ok: true, deleted: true }, 200, { "Set-Cookie": sessionCookie("", env, 0) });
 }
@@ -559,11 +619,34 @@ async function patchClient(request, env, clientId) {
 async function deleteClient(request, env, clientId) {
   const auth = await requireProvider(request, env);
   if (auth.error) return auth.error;
-  const row = await env.DB.prepare("SELECT id FROM provider_clients WHERE id=? AND provider_id=?")
+  const row = await env.DB.prepare("SELECT * FROM provider_clients WHERE id=? AND provider_id=?")
     .bind(clientId, auth.provider.id)
     .first();
   if (!row) return json({ error: "not_found" }, 404);
-  await env.DB.prepare("DELETE FROM provider_clients WHERE id=?").bind(clientId).run();
+
+  const ts = nowIso();
+  const deletedLabel = "Usunięty klient";
+  const statements = [
+    env.DB.prepare(
+      `UPDATE bookings
+       SET client_name = ?, client_phone = NULL, client_email = NULL, provider_client_id = NULL, updated_at = ?
+       WHERE provider_client_id = ? AND provider_id = ?`
+    ).bind(deletedLabel, ts, clientId, auth.provider.id),
+    env.DB.prepare("DELETE FROM provider_clients WHERE id=? AND provider_id=?").bind(
+      clientId,
+      auth.provider.id
+    ),
+  ];
+  if (row.email) {
+    statements.unshift(
+      env.DB.prepare(
+        `UPDATE booking_requests
+         SET client_name = ?, client_phone = NULL, client_email = NULL, updated_at = ?
+         WHERE provider_id = ? AND lower(client_email) = lower(?)`
+      ).bind(deletedLabel, ts, auth.provider.id, row.email)
+    );
+  }
+  await env.DB.batch(statements);
   return json({ ok: true, deleted: clientId });
 }
 

@@ -10207,6 +10207,16 @@ body.service-sheet-open {
   opacity: 0.8;
 }
 
+.client-sheet__detail-actions {
+  margin-top: 1.1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid color-mix(in srgb, var(--border, #d8d4cc) 80%, transparent);
+}
+
+.client-sheet__detail-delete {
+  width: 100%;
+}
+
 .client-sheet__detail-section {
   margin: 0 0 0.45rem;
   font-size: 0.72rem;
