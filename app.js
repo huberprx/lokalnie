@@ -16535,11 +16535,12 @@
           </header>
           <div class="settings">
             ${renderProviderCompletenessBanner(p)}
+            ${renderSettingsGroup("Widoczność w katalogu", visibilityRow)}
             ${renderSettingsGroup("Dane firmy", renderSettingsProfile(p))}
             ${renderSettingsGroup("Kontakt", renderSettingsContact(p))}
             ${renderSettingsGroup("Social media", renderSettingsSocial(p))}
             ${renderSettingsGroup("Lokalizacje (miejsce wykonywania usług)", renderSettingsLocations(p))}
-            ${renderSettingsGroup("Rezerwacje online", visibilityRow + renderSettingsBookingRules(p))}
+            ${renderSettingsGroup("Rezerwacje online", renderSettingsBookingRules(p))}
             ${renderSettingsGroup("Kalendarz firmowy", renderGoogleCalendarSettings("provider"))}
             ${renderSettingsGroup("Zarządzanie profilem", renderProviderProfileManagement(p))}
           </div>
