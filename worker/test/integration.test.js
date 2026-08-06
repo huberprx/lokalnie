@@ -110,11 +110,11 @@ it("lists only complete and published provider profiles in the public catalog", 
     category: "beauty",
     services: [{ id: "service-1", name: "Strzyżenie", durationMin: 30 }],
   });
-  expect(body.providers[0]).not.toHaveProperty("phone");
+  expect(body.providers[0].phone).toBe("500100200");
   expect(body.providers[0]).not.toHaveProperty("email");
 
   await env.DB.prepare(
-    "UPDATE provider_profiles SET phone_visible=1, email_visible=1 WHERE id='provider-1'"
+    "UPDATE provider_profiles SET email_visible=1 WHERE id='provider-1'"
   ).run();
   const visibleContactsResponse = await api("/providers");
   const visibleContacts = await visibleContactsResponse.json();

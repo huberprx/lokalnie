@@ -3269,7 +3269,6 @@
     if (!provider) return null;
     if (typeof provider.phone !== "string") provider.phone = provider.phone ? String(provider.phone) : "";
     if (typeof provider.email !== "string") provider.email = provider.email ? String(provider.email) : "";
-    if (typeof provider.phoneVisible !== "boolean") provider.phoneVisible = !!provider.phone;
     if (typeof provider.emailVisible !== "boolean") provider.emailVisible = !!provider.email;
     ensureProviderSocialLinks(provider);
     return provider;
@@ -3343,7 +3342,6 @@
   function providerPublicPhone(provider) {
     if (!provider) return "";
     ensureProviderContact(provider);
-    if (!provider.phoneVisible) return "";
     return String(provider.phone || "").trim();
   }
 
@@ -7140,7 +7138,6 @@
       address: (me.provider && me.provider.address) || "",
       about: (me.provider && me.provider.about) || "",
       phone: (me.provider && me.provider.phone) || "",
-      phoneVisible: !!(me.provider && me.provider.phoneVisible),
       email: (me.provider && me.provider.email) || "",
       emailVisible: !!(me.provider && me.provider.emailVisible),
       bookingMode: (me.provider && me.provider.bookingMode) || "auto",
@@ -16083,11 +16080,9 @@
     if (!p) return;
     ensureProviderContact(p);
     const phoneEl = document.querySelector('[data-role="settings-phone"]');
-    const phoneVisEl = document.querySelector('[data-role="settings-phone-visible"]');
     const emailEl = document.querySelector('[data-role="settings-email"]');
     const emailVisEl = document.querySelector('[data-role="settings-email-visible"]');
     if (phoneEl) p.phone = String(phoneEl.value || "").trim();
-    if (phoneVisEl) p.phoneVisible = !!phoneVisEl.checked;
     if (emailEl) p.email = String(emailEl.value || "").trim();
     if (emailVisEl) p.emailVisible = !!emailVisEl.checked;
     captureProviderSocialFields();
@@ -16258,7 +16253,6 @@
 
   function renderSettingsContact(p) {
     ensureProviderContact(p);
-    const phoneOn = !!p.phoneVisible;
     const emailOn = !!p.emailVisible;
     return `
       <div class="settings__row settings__row--contact" data-field="contact">
@@ -16270,16 +16264,6 @@
           value: p.phone || "",
           attrs: 'autocomplete="tel" inputmode="tel"',
         })}
-        <div class="settings-contact__toggle">
-          <div class="settings__toggle-text">
-            <span class="settings__hint">${phoneOn ? "Telefon widoczny dla klientów" : "Telefon ukryty"}</span>
-            <span class="settings-contact__toggle-hint">${phoneOn ? "Klienci mogą zadzwonić na ten numer" : "Tylko Ty widzisz ten numer w ustawieniach"}</span>
-          </div>
-          <label class="settings__toggle">
-            <input type="checkbox" class="avail-edit__switch" data-role="settings-phone-visible"
-              ${phoneOn ? "checked" : ""} aria-label="Widoczność numeru telefonu" />
-          </label>
-        </div>
         ${renderSettingsFloatField({
           label: "E-mail",
           role: "settings-email",
@@ -19090,7 +19074,6 @@
       address: "",
       about: "",
       phone: String(cp.phone || ""),
-      phoneVisible: false,
       email: String(cp.email || ""),
       emailVisible: false,
       services: [],
@@ -20735,37 +20718,22 @@
       return;
     }
 
-    const contactVisibleToggle = event.target.closest(
-      '[data-role="settings-phone-visible"], [data-role="settings-email-visible"]'
-    );
-    if (contactVisibleToggle) {
+    const emailVisibleToggle = event.target.closest('[data-role="settings-email-visible"]');
+    if (emailVisibleToggle) {
       captureProviderProfileFields();
       captureProviderContactFields();
       saveState();
       queueProviderProfileSync();
       // Bez renderAll — wystarczy podmienić etykiety przy przełączniku.
-      const on = !!contactVisibleToggle.checked;
-      const isPhone = contactVisibleToggle.getAttribute("data-role") === "settings-phone-visible";
-      const wrap = contactVisibleToggle.closest(".settings-contact__toggle");
+      const on = !!emailVisibleToggle.checked;
+      const wrap = emailVisibleToggle.closest(".settings-contact__toggle");
       const hint = wrap && wrap.querySelector(".settings__hint");
       const sub = wrap && wrap.querySelector(".settings-contact__toggle-hint");
-      if (hint) {
-        hint.textContent = isPhone
-          ? on
-            ? "Telefon widoczny dla klientów"
-            : "Telefon ukryty"
-          : on
-            ? "E-mail widoczny dla klientów"
-            : "E-mail ukryty";
-      }
+      if (hint) hint.textContent = on ? "E-mail widoczny dla klientów" : "E-mail ukryty";
       if (sub) {
-        sub.textContent = isPhone
-          ? on
-            ? "Klienci mogą zadzwonić na ten numer"
-            : "Tylko Ty widzisz ten numer w ustawieniach"
-          : on
-            ? "Klienci mogą napisać na ten adres"
-            : "Tylko Ty widzisz ten adres w ustawieniach";
+        sub.textContent = on
+          ? "Klienci mogą napisać na ten adres"
+          : "Tylko Ty widzisz ten adres w ustawieniach";
       }
       return;
     }

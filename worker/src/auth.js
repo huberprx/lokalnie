@@ -169,7 +169,6 @@ export async function mapProvider(row, env) {
     email: row.email,
     emailVisible: !!row.email_visible,
     phone: await decryptPhone(row.phone, env),
-    phoneVisible: !!row.phone_visible,
     bookingMode: row.booking_mode,
     visibleInSearch: !!row.visible_in_search,
     multiSelect: !!row.multi_select,
