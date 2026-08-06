@@ -985,3 +985,107 @@ describe("Google Calendar synchronization", () => {
     expect(events.count).toBe(1);
   });
 });
+
+describe("public catalog and profile sync", () => {
+  function publicApi(path) {
+    return worker.fetch(new Request(`https://api.lokalnie.app${path}`), env);
+  }
+
+  it("lists only visible, active providers and serves slug with services", async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE provider_profiles
+         SET city='Warszawa', category='uroda', visible_in_search=1, deactivated=0
+         WHERE id='provider-1'`
+      ),
+      env.DB.prepare(
+        `INSERT INTO users (id, email, name, role_client, role_provider)
+         VALUES ('user-hidden', 'hidden@example.com', 'Hidden', 1, 1)`
+      ),
+      env.DB.prepare(
+        `INSERT INTO provider_profiles
+           (id, user_id, slug, name, email, city, category, visible_in_search, deactivated)
+         VALUES
+           ('provider-hidden', 'user-hidden', 'hidden-shop', 'Hidden Shop', 'hidden@example.com',
+            'Krakow', 'uroda', 0, 0)`
+      ),
+      env.DB.prepare(
+        `INSERT INTO provider_services
+           (id, provider_id, name, booking_mode, duration_min, sort_order)
+         VALUES ('svc-public-1', 'provider-1', 'Strzyzenie', 'auto', 30, 0)`
+      ),
+    ]);
+
+    const list = await publicApi("/providers?city=warszawa");
+    expect(list.status).toBe(200);
+    const listBody = await list.json();
+    expect(listBody.providers.map((p) => p.slug)).toEqual(["provider-one"]);
+    expect(listBody.providers[0].email).toBe("");
+
+    const bySlug = await publicApi("/providers/provider-one");
+    expect(bySlug.status).toBe(200);
+    const detail = await bySlug.json();
+    expect(detail.provider.slug).toBe("provider-one");
+    expect(detail.services).toHaveLength(1);
+    expect(detail.services[0].name).toBe("Strzyzenie");
+    expect(Array.isArray(detail.availability)).toBe(true);
+
+    const hiddenDirect = await publicApi("/providers/hidden-shop");
+    expect(hiddenDirect.status).toBe(200);
+    expect((await hiddenDirect.json()).provider.slug).toBe("hidden-shop");
+  });
+
+  it("accepts profile bookingMode queue/request and updates slug", async () => {
+    const patched = await api("/provider/me", {
+      method: "PATCH",
+      token: PROVIDER_TOKEN,
+      body: { name: "Provider One", bookingMode: "queue", slug: "provider-one-v2" },
+    });
+    expect(patched.status).toBe(200);
+    const body = await patched.json();
+    expect(body.provider.bookingMode).toBe("queue");
+    expect(body.provider.slug).toBe("provider-one-v2");
+
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO users (id, email, name, role_client, role_provider)
+         VALUES ('user-taken', 'taken@example.com', 'Taken', 1, 1)`
+      ),
+      env.DB.prepare(
+        `INSERT INTO provider_profiles (id, user_id, slug, name, email)
+         VALUES ('provider-taken', 'user-taken', 'slug-taken', 'Taken', 'taken@example.com')`
+      ),
+    ]);
+    const conflict = await api("/provider/me", {
+      method: "PATCH",
+      token: PROVIDER_TOKEN,
+      body: { name: "Provider One", slug: "slug-taken" },
+    });
+    expect(conflict.status).toBe(409);
+    expect((await conflict.json()).error).toBe("provider_slug_conflict");
+  });
+
+  it("stores avatar_key as media id, not R2 storage key", async () => {
+    const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+    const form = new FormData();
+    form.append("file", new Blob([bytes], { type: "image/jpeg" }), "a.jpg");
+    form.append("kind", "avatar");
+    const response = await worker.fetch(
+      new Request("https://api.lokalnie.app/media", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${CLIENT_TOKEN}` },
+        body: form,
+      }),
+      env
+    );
+    expect(response.status).toBe(201);
+    const media = (await response.json()).media;
+    expect(media.id).toMatch(/^media_/);
+
+    const user = await env.DB.prepare("SELECT avatar_key FROM users WHERE id=?")
+      .bind("user-client")
+      .first();
+    expect(user.avatar_key).toBe(media.id);
+    expect(String(user.avatar_key).includes("/")).toBe(false);
+  });
+});

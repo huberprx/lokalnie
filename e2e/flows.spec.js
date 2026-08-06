@@ -754,4 +754,40 @@ test.describe("Lokalnie — kluczowe przepływy", function () {
       availability: ["2026-10-10"],
     });
   });
+
+  test("katalog z API nie znika przy filtrze daty bez availability", async function ({ page }) {
+    await resetAndLogin(page, "client");
+    await page.evaluate(function () {
+      window.AppState.onboarding = null;
+      window.AppState.activeRole = "client";
+      window.AppState.screen.client = "search";
+      window.AppState.searchQuery = "";
+      window.AppState.searchCategory = "";
+      window.AppState.searchSubcategory = "";
+      window.AppState.searchFilterDates = ["2026-08-10"];
+      window.AppState.searchFilterPeriods = ["morning"];
+      window.AppState.catalogProviders = [
+        {
+          id: "provider-api-catalog",
+          apiId: "provider-api-catalog",
+          slug: "api-katalog-firma",
+          name: "API Katalog Firma",
+          category: "instalacje",
+          city: "Sarbia",
+          address: "48",
+          visibleInSearch: true,
+          services: [],
+          availability: [],
+          _fromApi: true,
+          _mine: false,
+          _detailsLoaded: false,
+        },
+      ];
+      window.App.saveState();
+      window.App.renderAll();
+    });
+    await expect(
+      page.locator("#app-fullscreen .provider-list").getByText("API Katalog Firma")
+    ).toBeVisible();
+  });
 });

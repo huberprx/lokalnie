@@ -155,7 +155,10 @@
     return u.toString();
   }
 
-  /** Mapowanie ID usługodawcy: mock frontu ↔ D1. */
+  /**
+   * Mostek demo: lokalny slug mocka ↔ ID w D1 (seed).
+   * Pozostali usługodawcy używają ID/slug z API bez mapowania.
+   */
   const APP_TO_API_PROVIDER = {
     "grzesiu-barber": "provider-demo-gb",
   };
@@ -168,12 +171,49 @@
     return API_TO_APP_PROVIDER[id] || id;
   }
 
+  function findKnownProvider(idOrSlug) {
+    if (!idOrSlug || !window.AppState) return null;
+    const key = String(idOrSlug);
+    const pools = [
+      window.AppState.providerProfiles,
+      window.AppState.catalogProviders,
+      window.LOKALNIE_DATA && window.LOKALNIE_DATA.PROVIDERS,
+    ];
+    for (let i = 0; i < pools.length; i++) {
+      const list = pools[i];
+      if (!Array.isArray(list)) continue;
+      const found = list.find(function (p) {
+        return (
+          p &&
+          (p.id === key ||
+            p.slug === key ||
+            p.apiId === key ||
+            toAppProviderId(p.id) === key ||
+            toAppProviderId(p.apiId) === key)
+        );
+      });
+      if (found) return found;
+    }
+    return null;
+  }
+
   function toApiProviderId(id) {
     if (!id) return id;
-    return APP_TO_API_PROVIDER[id] || id;
+    if (APP_TO_API_PROVIDER[id]) return APP_TO_API_PROVIDER[id];
+    const known = findKnownProvider(id);
+    if (known) {
+      if (known.apiId) return known.apiId;
+      if (known._fromApi && known.id) return known.id;
+      if (APP_TO_API_PROVIDER[known.slug]) return APP_TO_API_PROVIDER[known.slug];
+      if (APP_TO_API_PROVIDER[known.id]) return APP_TO_API_PROVIDER[known.id];
+    }
+    return id;
   }
 
   function mediaUrl(mediaId) {
+    if (!mediaId) return "";
+    if (String(mediaId).indexOf("http") === 0) return String(mediaId);
+    if (String(mediaId).charAt(0) === "/") return BASE + mediaId;
     return BASE + "/media/" + encodeURIComponent(mediaId);
   }
 
@@ -251,10 +291,7 @@
   function mapBookingToApp(b) {
     if (!b) return null;
     const providerId = toAppProviderId(b.providerId);
-    const providers = (window.LOKALNIE_DATA && window.LOKALNIE_DATA.PROVIDERS) || [];
-    const p = providers.find(function (x) {
-      return x.id === providerId || x.slug === providerId;
-    });
+    const p = findKnownProvider(providerId) || findKnownProvider(b.providerId);
     return {
       id: b.id,
       providerId: providerId,
@@ -282,21 +319,27 @@
   function mapRequestToApp(r) {
     if (!r) return null;
     const providerId = toAppProviderId(r.providerId);
-    const providers = (window.LOKALNIE_DATA && window.LOKALNIE_DATA.PROVIDERS) || [];
-    const p = providers.find(function (x) {
-      return x.id === providerId || x.slug === providerId;
-    });
+    const known = findKnownProvider(providerId) || findKnownProvider(r.providerId);
+    const days = Array.isArray(r.days) ? r.days : [];
+    // Puste days = prośba „dowolny termin” (request); niepuste = approval z preferencjami.
+    const requestMode =
+      r.requestMode === "approval" || r.requestMode === "request"
+        ? r.requestMode
+        : days.length
+          ? "approval"
+          : "request";
     return {
       id: r.id,
       providerId: providerId,
-      providerName: (p && p.name) || "",
+      providerName: (known && known.name) || r.providerName || "",
       clientName: r.clientName || "",
       clientPhone: r.clientPhone || "",
       clientEmail: r.clientEmail || "",
       clientAddress: "",
       serviceIds: Array.isArray(r.serviceIds) ? r.serviceIds : [],
       serviceNames: Array.isArray(r.serviceNames) ? r.serviceNames : [],
-      days: Array.isArray(r.days) ? r.days : [],
+      days: days,
+      requestMode: requestMode,
       proposals: Array.isArray(r.proposals) ? r.proposals : [],
       acceptedProposalId: r.acceptedProposalId || null,
       status: r.status || "pending",
@@ -320,13 +363,21 @@
     };
   }
 
-  function mapProviderToApp(provider) {
+  function mapProviderToApp(provider, opts) {
     if (!provider) return null;
-    const appId = toAppProviderId(provider.id) || provider.slug || provider.id;
+    opts = opts || {};
+    const apiId = provider.id;
+    // Demo: zachowaj slug mocka jako id, żeby UI/favorites nie rozjechały się z data.js.
+    const appId = toAppProviderId(apiId) || provider.slug || apiId;
     const name = provider.name || "Mój profil";
+    const avatarUrl = provider.avatarUrl
+      ? mediaUrl(provider.avatarUrl)
+      : provider.avatarKey
+        ? mediaUrl(provider.avatarKey)
+        : null;
     return {
       id: appId,
-      apiId: provider.id,
+      apiId: apiId,
       slug: provider.slug || appId,
       name: name,
       category: provider.category || "",
@@ -338,7 +389,7 @@
       emailVisible: !!provider.emailVisible,
       phone: provider.phone || "",
       bookingMode: provider.bookingMode || "auto",
-      visibleInSearch: !!provider.visibleInSearch,
+      visibleInSearch: provider.visibleInSearch !== false,
       multiSelect: provider.multiSelect !== false,
       locations: Array.isArray(provider.locations) ? provider.locations : [],
       socialLinks: Array.isArray(provider.socialLinks) ? provider.socialLinks : [],
@@ -347,7 +398,7 @@
           ? provider.bookingRules
           : {},
       deactivated: !!provider.deactivated,
-      avatarUrl: provider.avatarKey ? mediaUrl(provider.avatarKey) : null,
+      avatarUrl: avatarUrl,
       avatarInitials: String(name)
         .trim()
         .split(/\s+/)
@@ -358,10 +409,11 @@
         })
         .join("")
         .toUpperCase() || "MP",
-      services: [],
-      availability: [],
-      _mine: true,
+      services: Array.isArray(opts.services) ? opts.services : [],
+      availability: Array.isArray(opts.availability) ? opts.availability : [],
+      _mine: !!opts.mine,
       _fromApi: true,
+      _detailsLoaded: opts.detailsLoaded === true,
     };
   }
 
@@ -438,7 +490,8 @@
         }
       }
       const apiProviderId = me.provider && me.provider.id;
-      const appProviderId = toAppProviderId(apiProviderId) || (apiProviderId ? apiProviderId : "grzesiu-barber");
+      const appProviderId =
+        toAppProviderId(apiProviderId) || apiProviderId || null;
       let clients = [];
       let providerServices = [];
       const syncErrors = [];
@@ -462,10 +515,19 @@
       }
 
       if (apiProviderId) {
-        const serverProvider = mapProviderToApp(me.provider);
+        const serverProvider = mapProviderToApp(me.provider, {
+          mine: true,
+          detailsLoaded: true,
+        });
         const profiles = window.AppState.providerProfiles || [];
         let ownedProvider = profiles.find(function (profile) {
-          return profile && (profile.apiId === apiProviderId || profile.id === appProviderId);
+          return (
+            profile &&
+            (profile.apiId === apiProviderId ||
+              profile.id === apiProviderId ||
+              profile.id === appProviderId ||
+              (me.provider.slug && profile.slug === me.provider.slug))
+          );
         });
         if (!ownedProvider && profiles.length === 1) ownedProvider = profiles[0];
         if (ownedProvider && serverProvider) {
@@ -504,8 +566,8 @@
           if (!window.AppState.providerClients || typeof window.AppState.providerClients !== "object") {
             window.AppState.providerClients = {};
           }
-          window.AppState.providerClients[appProviderId] = clients;
-          if (apiProviderId !== appProviderId) {
+          if (appProviderId) window.AppState.providerClients[appProviderId] = clients;
+          if (apiProviderId && apiProviderId !== appProviderId) {
             window.AppState.providerClients[apiProviderId] = clients.slice();
           }
         } catch (err) {
@@ -598,7 +660,7 @@
         method: "PATCH",
         json: providerToApi(profile),
       });
-      return mapProviderToApp(res && res.provider);
+      return mapProviderToApp(res && res.provider, { mine: true });
     } catch (err) {
       console.warn("[LokalnieApi] updateProviderMe failed", err);
       return null;
@@ -611,7 +673,85 @@
       method: "POST",
       json: providerToApi(profile),
     });
-    return mapProviderToApp(res && res.provider);
+    return mapProviderToApp(res && res.provider, { mine: true });
+  }
+
+  async function listProviders(params) {
+    params = params || {};
+    const u = new URL(BASE + "/providers");
+    ["q", "city", "category", "subcategory", "limit", "offset"].forEach(function (key) {
+      if (params[key] != null && params[key] !== "") {
+        u.searchParams.set(key, String(params[key]));
+      }
+    });
+    const path = u.pathname + u.search;
+    const res = await request(path, { suppressUnauthorized: true });
+    const providers = (res.providers || [])
+      .map(function (p) {
+        return mapProviderToApp(p, { mine: false });
+      })
+      .filter(Boolean);
+    return {
+      providers: providers,
+      total: Number(res.total || providers.length),
+      limit: Number(res.limit || 0),
+      offset: Number(res.offset || 0),
+    };
+  }
+
+  async function fetchProviderBySlug(slug) {
+    if (!slug) return null;
+    const res = await request("/providers/" + encodeURIComponent(slug), {
+      suppressUnauthorized: true,
+    });
+    if (!res || !res.provider) return null;
+    const services = (res.services || []).map(mapServiceToApp).filter(Boolean);
+    const availability = Array.isArray(res.availability) ? res.availability : [];
+    return mapProviderToApp(res.provider, {
+      mine: false,
+      services: services,
+      availability: availability,
+      detailsLoaded: true,
+    });
+  }
+
+  async function loadCatalog(params) {
+    if (!window.AppState) return { ok: false, reason: "no_state" };
+    try {
+      const options = Object.assign({}, params || {});
+      const pageSize = Math.min(50, Math.max(1, Number(options.limit) || 50));
+      const allProviders = [];
+      let total = 0;
+      let offset = Number(options.offset) || 0;
+
+      while (true) {
+        const result = await listProviders(
+          Object.assign({}, options, { limit: pageSize, offset: offset })
+        );
+        const pageProviders = result.providers || [];
+        allProviders.push.apply(allProviders, pageProviders);
+        total = Math.max(total, result.total || 0);
+
+        if (
+          !pageProviders.length ||
+          allProviders.length >= total ||
+          pageProviders.length < pageSize
+        ) {
+          break;
+        }
+        offset += pageProviders.length;
+      }
+
+      window.AppState.catalogProviders = allProviders;
+      window.AppState._catalogSyncedAt = new Date().toISOString();
+      return { ok: true, count: allProviders.length, total: total || allProviders.length };
+    } catch (err) {
+      console.warn("[LokalnieApi] loadCatalog failed", err);
+      if (!Array.isArray(window.AppState.catalogProviders)) {
+        window.AppState.catalogProviders = [];
+      }
+      return { ok: false, error: String(err && err.message ? err.message : err) };
+    }
   }
 
   async function getProviderAvailability() {
@@ -685,27 +825,10 @@
 
   async function upsertClient(appProviderId, client) {
     if (!client || !client.name) return null;
-    try {
-      const isLocalId = !client.id || /^cli(-virt)?-/.test(String(client.id));
-      if (!isLocalId) {
-        const patched = await request("/provider/me/clients/" + encodeURIComponent(client.id), {
-          method: "PATCH",
-          json: {
-            name: client.name,
-            phone: client.phone || "",
-            email: client.email || "",
-            address: client.address || "",
-            notes: client.notes || "",
-          },
-        });
-        if (patched.client) {
-          client.id = patched.client.id;
-          client._fromApi = true;
-        }
-        return patched.client;
-      }
-      const created = await request("/provider/me/clients", {
-        method: "POST",
+    const isLocalId = !client.id || /^cli(-virt)?-/.test(String(client.id));
+    if (!isLocalId) {
+      const patched = await request("/provider/me/clients/" + encodeURIComponent(client.id), {
+        method: "PATCH",
         json: {
           name: client.name,
           phone: client.phone || "",
@@ -714,15 +837,27 @@
           notes: client.notes || "",
         },
       });
-      if (created.client) {
-        client.id = created.client.id;
+      if (patched.client) {
+        client.id = patched.client.id;
         client._fromApi = true;
       }
-      return created.client;
-    } catch (err) {
-      console.warn("[LokalnieApi] upsertClient failed", err);
-      return null;
+      return patched.client;
     }
+    const created = await request("/provider/me/clients", {
+      method: "POST",
+      json: {
+        name: client.name,
+        phone: client.phone || "",
+        email: client.email || "",
+        address: client.address || "",
+        notes: client.notes || "",
+      },
+    });
+    if (created.client) {
+      client.id = created.client.id;
+      client._fromApi = true;
+    }
+    return created.client;
   }
 
   async function createBookingFromApp(booking) {
@@ -1036,6 +1171,9 @@
     mapProviderToApp: mapProviderToApp,
     createProviderMe: createProviderMe,
     updateProviderMe: updateProviderMe,
+    listProviders: listProviders,
+    fetchProviderBySlug: fetchProviderBySlug,
+    loadCatalog: loadCatalog,
     getProviderAvailability: getProviderAvailability,
     updateProviderAvailability: updateProviderAvailability,
     upsertService: upsertService,

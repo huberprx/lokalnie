@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.222";
+  const APP_VERSION = "1.0.224";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -168,6 +168,7 @@
       }),
       notifications: [],
       calendarConnections: [],
+      catalogProviders: [],
       simView: { client: "mobile", provider: "mobile" },
       loggedIn: false,
       activeRole: null,
@@ -389,20 +390,50 @@
     if (!slug) return null;
     const owned = (window.AppState && window.AppState.providerProfiles) || [];
     const fromOwned = owned.find(function (p) {
-      return p && p.slug === slug;
+      return p && (p.slug === slug || p.id === slug);
     });
     if (fromOwned) return fromOwned;
-    return (data().PROVIDERS || []).find((p) => p.slug === slug) || null;
+    const catalog = (window.AppState && window.AppState.catalogProviders) || [];
+    const fromCatalog = catalog.find(function (p) {
+      return p && (p.slug === slug || p.id === slug);
+    });
+    if (fromCatalog) return fromCatalog;
+    if (isProductionHostname()) return null;
+    return (data().PROVIDERS || []).find((p) => p.slug === slug || p.id === slug) || null;
   }
 
   function getProviderById(id) {
     if (!id) return null;
     const owned = (window.AppState && window.AppState.providerProfiles) || [];
     const fromOwned = owned.find(function (p) {
-      return p && p.id === id;
+      return p && (p.id === id || p.apiId === id || p.slug === id);
     });
     if (fromOwned) return fromOwned;
-    return (data().PROVIDERS || []).find((p) => p.id === id) || null;
+    const catalog = (window.AppState && window.AppState.catalogProviders) || [];
+    const fromCatalog = catalog.find(function (p) {
+      return p && (p.id === id || p.apiId === id || p.slug === id);
+    });
+    if (fromCatalog) return fromCatalog;
+    if (isProductionHostname()) return null;
+    return (data().PROVIDERS || []).find((p) => p.id === id || p.slug === id) || null;
+  }
+
+  function mergeCatalogProvider(provider) {
+    if (!provider || !window.AppState) return;
+    if (!Array.isArray(window.AppState.catalogProviders)) {
+      window.AppState.catalogProviders = [];
+    }
+    const list = window.AppState.catalogProviders;
+    const idx = list.findIndex(function (p) {
+      return (
+        p &&
+        ((provider.apiId && p.apiId === provider.apiId) ||
+          (provider.id && p.id === provider.id) ||
+          (provider.slug && p.slug === provider.slug))
+      );
+    });
+    if (idx >= 0) list[idx] = Object.assign({}, list[idx], provider);
+    else list.push(provider);
   }
 
   function categoryLabel(catId) {
@@ -917,6 +948,8 @@
     const dates = window.AppState.searchFilterDates || [];
     const periods = window.AppState.searchFilterPeriods || [];
     if (!dates.length && !periods.length) return true;
+    // Lista z GET /providers nie zawiera dostępności — brak danych nie może ukrywać firmy.
+    if (p && p._fromApi && !p._mine && !p._detailsLoaded) return true;
 
     const avail = p.availability || [];
     const days = dates.length
@@ -939,14 +972,35 @@
     });
   }
 
-  /** Katalog: mocki + własne aktywne profile (widoczne i kompletne). */
+  /** Katalog: API + (poza prod) mocki + własne aktywne profile widoczne w wyszukiwaniu. */
   function catalogProviders() {
     const owned = (window.AppState && window.AppState.providerProfiles) || [];
-    // Własny profil zastępuje odpowiadający mu mock — także po dezaktywacji.
-    const base = (data().PROVIDERS || []).filter(function (p) {
-      return !owned.some(function (op) {
-        return op && p && (op.id === p.id || op.slug === p.slug);
-      });
+    const fromApi = (window.AppState && window.AppState.catalogProviders) || [];
+    const mocks = isProductionHostname() ? [] : data().PROVIDERS || [];
+
+    function sameProvider(a, b) {
+      return (
+        a &&
+        b &&
+        (a.id === b.id ||
+          a.slug === b.slug ||
+          (a.apiId && a.apiId === b.apiId) ||
+          (a.apiId && a.apiId === b.id) ||
+          (b.apiId && b.apiId === a.id))
+      );
+    }
+
+    const base = [];
+    fromApi.forEach(function (p) {
+      if (!p) return;
+      if (owned.some(function (op) { return sameProvider(op, p); })) return;
+      base.push(p);
+    });
+    mocks.forEach(function (p) {
+      if (!p) return;
+      if (owned.some(function (op) { return sameProvider(op, p); })) return;
+      if (base.some(function (bp) { return sameProvider(bp, p); })) return;
+      base.push(p);
     });
     owned.forEach(function (op) {
       if (!op || !op.visibleInSearch || !isProviderProfileActive(op)) return;
@@ -2917,7 +2971,10 @@
     ) {
       return service.bookingMode;
     }
-    return provider && provider.bookingMode === "approval" ? "approval" : "auto";
+    const providerMode = provider && provider.bookingMode;
+    return ["auto", "queue", "approval", "request"].indexOf(providerMode) !== -1
+      ? providerMode
+      : "auto";
   }
 
   /** Tryb na liście usług — uwzględnia niezatwierdzony draft edycji (podgląd przeniesienia między grupami). */
@@ -2937,7 +2994,11 @@
 
   function ensureServicesBookingMode(provider) {
     if (!provider || !Array.isArray(provider.services)) return;
-    const fallback = provider.bookingMode === "approval" ? "approval" : "auto";
+    const providerMode = provider.bookingMode;
+    const fallback =
+      ["auto", "queue", "approval", "request"].indexOf(providerMode) !== -1
+        ? providerMode
+        : "auto";
     provider.services.forEach(function (s) {
       if (!s || typeof s !== "object") return;
       if (
@@ -3346,6 +3407,9 @@
       // Uprawnienia admina zawsze z /me — nie persystuj cache operatorskiego.
       delete state.isAdmin;
       delete state.admin;
+      // Katalog zawsze z API — nie puchnij localStorage.
+      delete state.catalogProviders;
+      delete state._catalogSyncedAt;
       if (isProductionHostname()) {
         // Produkcja przechowuje wyłącznie cache UI; dane CRM pochodzą z API.
         delete state.providerClients;
@@ -3556,6 +3620,7 @@
               return p && typeof p === "object";
             }).slice(0, MAX_PROVIDER_PROFILES)
           : base.providerProfiles.slice(),
+        catalogProviders: [],
         providerRoleActive:
           typeof stored.providerRoleActive === "boolean" ? stored.providerRoleActive : base.providerRoleActive,
         // Admin zawsze z /me — nie przywracaj z localStorage.
@@ -10270,8 +10335,15 @@
     } else if (typeof client.address !== "string") {
       client.address = "";
     }
-    if (window.LokalnieApi && window.LokalnieApi.enabled) {
-      void window.LokalnieApi.upsertClient(providerId, client);
+    if (
+      window.LokalnieApi &&
+      window.LokalnieApi.enabled &&
+      shouldPersistApiMutation()
+    ) {
+      void window.LokalnieApi.upsertClient(providerId, client).catch(function (err) {
+        console.warn("[Lokalnie] upsertClient failed", err);
+        showToast(apiMutationErrorMessage(err, "Nie udało się zapisać klienta."));
+      });
     }
     return client;
   }
@@ -17597,13 +17669,8 @@
     });
   }
 
-  function openProvider(slug, opts) {
+  function openProviderResolved(p, slug, opts) {
     opts = opts || {};
-    // Nie blokuj otwarcia, jeśli animacja zamykania utknęła.
-    window.AppState.closingProvider = false;
-    const p = getProviderBySlug(slug);
-    if (!p) return;
-
     initDraftForProvider(p);
     const preferredIds = Array.isArray(opts.serviceIds) ? opts.serviceIds.filter(Boolean) : [];
     if (preferredIds.length) {
@@ -17623,7 +17690,8 @@
         });
       }
     }
-    window.AppState.params.client = { slug: slug };
+    const publicSlug = p.slug || slug;
+    window.AppState.params.client = { slug: publicSlug };
     window.AppState.activeRole = "client";
     window.AppState.searchOpenSlug = null;
     window.AppState.screen.client = "booking";
@@ -17632,8 +17700,39 @@
     renderAll();
     window.AppState.bookingPanelEnterSlug = null;
     if (!opts.skipUrlSync) {
-      syncPublicProviderUrl(slug, { embed: !!opts.embed, replace: !!opts.replaceUrl });
+      syncPublicProviderUrl(publicSlug, { embed: !!opts.embed, replace: !!opts.replaceUrl });
     }
+  }
+
+  function openProvider(slug, opts) {
+    opts = opts || {};
+    // Nie blokuj otwarcia, jeśli animacja zamykania utknęła.
+    window.AppState.closingProvider = false;
+    const existing = getProviderBySlug(slug);
+    if (existing && (existing._mine || existing._detailsLoaded || !existing._fromApi)) {
+      openProviderResolved(existing, slug, opts);
+      return Promise.resolve(existing);
+    }
+    if (!window.LokalnieApi || !window.LokalnieApi.fetchProviderBySlug) {
+      showToast("Nie znaleziono usługodawcy.");
+      return Promise.resolve(null);
+    }
+    return window.LokalnieApi
+      .fetchProviderBySlug(slug)
+      .then(function (p) {
+        if (!p) {
+          showToast("Nie znaleziono usługodawcy.");
+          return null;
+        }
+        mergeCatalogProvider(p);
+        openProviderResolved(p, slug, opts);
+        return p;
+      })
+      .catch(function (err) {
+        console.warn("[Lokalnie] fetchProviderBySlug failed", err);
+        showToast("Nie udało się wczytać profilu.");
+        return null;
+      });
   }
 
   function rebookVisit(bookingId) {
@@ -23180,7 +23279,34 @@
     bindPwaInstallPrompt();
     registerServiceWorker();
 
-    if (
+    if (window.LokalnieApi && window.LokalnieApi.enabled && window.LokalnieApi.loadCatalog) {
+      void window.LokalnieApi.loadCatalog().then(function (catalogResult) {
+        if (catalogResult && catalogResult.ok) {
+          saveState();
+          updateProviderLists();
+          renderAll();
+        }
+        if (window.AppState.loggedIn) {
+          const onProd =
+            window.LokalnieApi.isProductionHostname &&
+            window.LokalnieApi.isProductionHostname();
+          const hasToken =
+            window.LokalnieApi.getAuthToken && window.LokalnieApi.getAuthToken();
+          if (onProd || hasToken) {
+            void window.LokalnieApi.syncFromServer().then(function (result) {
+              if (!result) return;
+              if (result.ok || result.partial) {
+                saveState();
+                renderAll();
+              }
+              if (result.partial) {
+                showToast("Część danych nie została wczytana. Odśwież stronę.");
+              }
+            });
+          }
+        }
+      });
+    } else if (
       window.LokalnieApi &&
       window.LokalnieApi.enabled &&
       window.AppState.loggedIn &&

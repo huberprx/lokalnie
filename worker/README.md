@@ -57,6 +57,8 @@ i muszą być załadowane jawnie wyłącznie do lokalnej bazy.
 |---|---|---|
 | GET | `/me` | Profil (demo) |
 | PATCH | `/me` | Edycja profilu |
+| GET | `/providers` | Publiczny katalog (q, city, category, subcategory, limit, offset) |
+| GET | `/providers/:slug` | Publiczny profil + usługi + dostępność |
 | GET | `/calendar/google/connect` | Rozpoczęcie OAuth Google Calendar |
 | GET | `/auth/google/calendar/callback` | Powrót OAuth Google Calendar |
 | GET | `/calendar/connections` | Podłączone kalendarze |
@@ -94,11 +96,16 @@ unikalny; bez niego serwer generuje slug z nazwy i bezpiecznie rozwiązuje koliz
 Ponowienie żądania dla użytkownika mającego profil zwraca istniejący profil z
 `created: false` (HTTP 200). Nowy profil zwraca HTTP 201 i `created: true`.
 
-`PATCH /provider/me` obsługuje dotychczasowe pola profilu oraz `category`,
+`PATCH /provider/me` obsługuje dotychczasowe pola profilu oraz `slug`, `category`,
 `subcategory`, `locations`, `socialLinks`, `bookingRules` i `deactivated`.
+`bookingMode` profilu przyjmuje te same wartości co usługi:
+`auto | queue | approval | request`. Zmiana `slug` wymaga unikalności (409 przy kolizji).
 `locations` zawiera maksymalnie 20 pozycji `{ id, label, address, toneIndex }`,
 `socialLinks` maksymalnie 8 pozycji `{ id, kind, value }`, a `bookingRules` pola
 `futureDays`, `minLeadHours`, `cancelHours`, `proposeHoldHours` i `policy`.
+
+Upload avatara (`POST /media` z `kind=avatar|provider`) zapisuje w `avatar_key`
+identyfikator rekordu `media` (nie klucz R2). Odczyt: `GET /media/:id`.
 
 ### Dostępność
 

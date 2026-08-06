@@ -64,9 +64,7 @@ export function mapMedia(row) {
   if (!row) return null;
   return {
     id: row.id,
-    ownerUserId: row.owner_user_id,
     kind: row.kind,
-    storageKey: row.storage_key,
     contentType: row.content_type,
     byteSize: row.byte_size,
     url: `/media/${row.id}`,

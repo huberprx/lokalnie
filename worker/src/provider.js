@@ -1,7 +1,7 @@
 import { mapProvider, requireDemoUser } from "./auth.js";
 import { id, json, nowIso, parseJsonField, readJson } from "./http.js";
 import { encryptPhone, decryptPhone } from "./pii.js";
-import { isValidDateISO, normalizeText, validateSlot } from "./validate.js";
+import { BOOKING_MODES, isValidDateISO, normalizeText, validateSlot } from "./validate.js";
 
 const MAX_LOCATIONS = 20;
 const MAX_SOCIAL_LINKS = 8;
@@ -165,7 +165,7 @@ async function normalizeProfileFields(body, base, env) {
     locations.error ||
     socialLinks.error ||
     bookingRules.error ||
-    !["auto", "approval"].includes(bookingMode)
+    !BOOKING_MODES.has(bookingMode)
   ) {
     return { error: true };
   }
@@ -309,14 +309,31 @@ export async function patchProviderMe(request, env) {
   const result = await normalizeProfileFields(body, auth.provider, env);
   if (result.error) return json({ error: "invalid_provider_fields" }, 400);
   const fields = result.value;
+
+  let nextSlug = auth.provider.slug;
+  if (body.slug != null && String(body.slug).trim() !== "") {
+    const slugResult = normalizeRequestedSlug(body.slug);
+    if (slugResult.error) return json({ error: "invalid_provider_fields" }, 400);
+    if (slugResult.value && slugResult.value !== auth.provider.slug) {
+      const taken = await env.DB.prepare(
+        "SELECT id FROM provider_profiles WHERE slug=? AND id!=?"
+      )
+        .bind(slugResult.value, auth.provider.id)
+        .first();
+      if (taken) return json({ error: "provider_slug_conflict" }, 409);
+      nextSlug = slugResult.value;
+    }
+  }
+
   await env.DB.prepare(
     `UPDATE provider_profiles SET
-      name=?, category=?, subcategory=?, city=?, address=?, about=?, email=?,
+      slug=?, name=?, category=?, subcategory=?, city=?, address=?, about=?, email=?,
       email_visible=?, phone=?, booking_mode=?, visible_in_search=?, multi_select=?,
       locations_json=?, social_links_json=?, booking_rules_json=?, deactivated=?, updated_at=?
      WHERE id=? AND user_id=?`
   )
     .bind(
+      nextSlug,
       fields.name,
       fields.category,
       fields.subcategory,
@@ -365,7 +382,7 @@ function mapAvailabilityRows(rows) {
   return days;
 }
 
-async function readAvailability(env, providerId) {
+export async function readAvailability(env, providerId) {
   const rows = await env.DB.prepare(
     `SELECT date_iso, block_index, time_from, time_to, location_id, repeat
      FROM provider_availability

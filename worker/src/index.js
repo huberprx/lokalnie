@@ -30,6 +30,7 @@ import {
   patchProviderMe as updateProviderMeProfile,
   putProviderAvailability,
 } from "./provider.js";
+import { listPublicProviders, getPublicProviderBySlug } from "./catalog.js";
 import {
   adminStats,
   adminListUsers,
@@ -127,6 +128,7 @@ async function routeRequest(request, env) {
             calendarConnections: "GET /calendar/connections",
             authLogout: "POST /auth/logout",
             me: "GET|PATCH|DELETE /me",
+            providers: "GET /providers , GET /providers/:slug",
             provider: "GET|POST|PATCH /provider/me",
             availability: "GET|PUT /provider/me/availability",
             services: "GET|POST /provider/me/services, PATCH|DELETE /provider/me/services/:id",
@@ -182,6 +184,13 @@ async function routeRequest(request, env) {
         if (request.method === "GET") return getMe(request, env);
         if (request.method === "PATCH") return patchMe(request, env);
         if (request.method === "DELETE") return deleteMe(request, env);
+      }
+
+      if (path === "/providers" && request.method === "GET") {
+        return listPublicProviders(request, env, url);
+      }
+      if (parts[0] === "providers" && parts[1] && !parts[2] && request.method === "GET") {
+        return getPublicProviderBySlug(request, env, parts[1]);
       }
 
       if (path === "/provider/me") {
@@ -312,6 +321,9 @@ function rateLimitConfig(path, method) {
   }
   if (path === "/media" && method === "POST") return { route: "media-upload", limit: 5 };
   if (path === "/auth/logout") return { route: "auth-logout", limit: 10 };
+  if (path === "/providers" || path.startsWith("/providers/")) {
+    return { route: "providers-public", limit: 60 };
+  }
   if (isAdminPath(path) && (method === "POST" || method === "PATCH")) {
     return { route: "admin-mutate", limit: 20 };
   }
@@ -1399,14 +1411,15 @@ async function uploadMedia(request, env) {
     .bind(mediaId, auth.user.id, kind, storageKey, contentType, bytes.byteLength, isPublic, ts)
     .run();
 
+  // avatar_key = media.id (GET /media/:id), nie storage_key R2.
   if (kind === "avatar") {
     await env.DB.prepare("UPDATE users SET avatar_key=?, updated_at=? WHERE id=?")
-      .bind(storageKey, ts, auth.user.id)
+      .bind(mediaId, ts, auth.user.id)
       .run();
   }
   if (kind === "provider" && auth.provider) {
     await env.DB.prepare("UPDATE provider_profiles SET avatar_key=?, updated_at=? WHERE id=?")
-      .bind(storageKey, ts, auth.provider.id)
+      .bind(mediaId, ts, auth.provider.id)
       .run();
   }
 

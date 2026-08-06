@@ -37,6 +37,12 @@ async function installE2eGuards(page) {
         api.syncFromServer = function () {
           return Promise.resolve({ ok: false, skipped: true, reason: "e2e" });
         };
+        api.loadCatalog = function () {
+          return Promise.resolve({ ok: false, skipped: true, reason: "e2e" });
+        };
+        api.fetchProviderBySlug = function () {
+          return Promise.resolve(null);
+        };
       },
     });
   });

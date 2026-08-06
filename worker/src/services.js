@@ -1,9 +1,7 @@
 import { id, json, noContent, nowIso, parseJsonField, readJson } from "./http.js";
 import { requireDemoUser } from "./auth.js";
 import { withIdempotency } from "./idempotency.js";
-import { normalizeStringArray, normalizeText } from "./validate.js";
-
-const BOOKING_MODES = new Set(["auto", "queue", "approval", "request"]);
+import { BOOKING_MODES, normalizeStringArray, normalizeText } from "./validate.js";
 const MAX_SERVICES = 200;
 const MAX_VARIANTS = 20;
 const MAX_PHOTOS = 6;
