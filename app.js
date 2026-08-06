@@ -1925,7 +1925,7 @@
   function callProvider(slug) {
     const p = getProviderBySlug(slug);
     if (!p) return;
-    const phone = p.phone ? String(p.phone).replace(/\s/g, "") : "";
+    const phone = providerPublicPhone(p).replace(/\s/g, "");
     if (phone) {
       window.location.href = "tel:" + phone;
       return;
@@ -2191,7 +2191,8 @@
         </a>`
       : "";
 
-    const phone = String(p.phone || "").replace(/\s/g, "");
+    const publicPhone = providerPublicPhone(p);
+    const phone = publicPhone.replace(/\s/g, "");
     const callItem = phone
       ? `<a href="tel:${escapeHtml(phone)}" class="${itemClass}" role="${role}">
           <span class="${iconClass} ${iconClass}--call" aria-hidden="true"></span>
@@ -2241,7 +2242,8 @@
   function renderProviderContactTiles(p, opts) {
     opts = opts || {};
     ensureProviderContact(p);
-    const phone = String(p.phone || "").replace(/\s/g, "");
+    const publicPhone = providerPublicPhone(p);
+    const phone = publicPhone.replace(/\s/g, "");
     const navAddr = providerNavAddress(p);
     const tiles = [];
 
@@ -2250,7 +2252,7 @@
         <span class="provider-tile__icon provider-tile__icon--profile" aria-hidden="true"></span><span class="provider-tile__label">Profil</span></button>`);
       tiles.push(
         phone
-          ? `<a class="provider-tile" href="tel:${escapeHtml(phone)}" title="Zadzwoń: ${escapeHtml(String(p.phone || ""))}">
+          ? `<a class="provider-tile" href="tel:${escapeHtml(phone)}" title="Zadzwoń: ${escapeHtml(publicPhone)}">
         <span class="provider-tile__icon provider-tile__icon--call" aria-hidden="true"></span><span class="provider-tile__label">Zadzwoń</span></a>`
           : `<span class="provider-tile provider-tile--disabled" aria-disabled="true">
         <span class="provider-tile__icon provider-tile__icon--call" aria-hidden="true"></span><span class="provider-tile__label">Zadzwoń</span></span>`
@@ -2570,7 +2572,8 @@
 
   function renderProviderInfoPopover(p) {
     ensureProviderContact(p);
-    const phone = String(p.phone || "").replace(/\s/g, "");
+    const publicPhone = providerPublicPhone(p);
+    const phone = publicPhone.replace(/\s/g, "");
     const email = providerPublicEmail(p);
     const locs = (Array.isArray(p.locations) ? p.locations : []).filter(function (l) {
       return l && (l.address || l.label);
@@ -2615,7 +2618,7 @@
     const phoneSection = phone
       ? `<div class="provider-info-pop__section">
         <span class="provider-info-pop__ic provider-info-pop__ic--phone" aria-hidden="true"></span>
-        <a class="provider-info-pop__line provider-info-pop__line--link" href="tel:${escapeHtml(phone)}">${escapeHtml(String(p.phone))}</a>
+        <a class="provider-info-pop__line provider-info-pop__line--link" href="tel:${escapeHtml(phone)}">${escapeHtml(publicPhone)}</a>
       </div>`
       : "";
 
@@ -3266,6 +3269,7 @@
     if (!provider) return null;
     if (typeof provider.phone !== "string") provider.phone = provider.phone ? String(provider.phone) : "";
     if (typeof provider.email !== "string") provider.email = provider.email ? String(provider.email) : "";
+    if (typeof provider.phoneVisible !== "boolean") provider.phoneVisible = !!provider.phone;
     if (typeof provider.emailVisible !== "boolean") provider.emailVisible = !!provider.email;
     ensureProviderSocialLinks(provider);
     return provider;
@@ -3334,6 +3338,13 @@
     ensureProviderContact(provider);
     if (!provider.emailVisible) return "";
     return String(provider.email || "").trim();
+  }
+
+  function providerPublicPhone(provider) {
+    if (!provider) return "";
+    ensureProviderContact(provider);
+    if (!provider.phoneVisible) return "";
+    return String(provider.phone || "").trim();
   }
 
   function providerSocialLinks(provider) {
@@ -6712,7 +6723,7 @@
   function renderProfileContact(p) {
     ensureProviderContact(p);
     ensureProviderBookingRules(p);
-    const phone = String(p.phone || "").trim();
+    const phone = providerPublicPhone(p);
     const phoneHref = phone.replace(/\s/g, "");
     const email = providerPublicEmail(p);
     const socials = providerSocialLinks(p);
@@ -7129,6 +7140,7 @@
       address: (me.provider && me.provider.address) || "",
       about: (me.provider && me.provider.about) || "",
       phone: (me.provider && me.provider.phone) || "",
+      phoneVisible: !!(me.provider && me.provider.phoneVisible),
       email: (me.provider && me.provider.email) || "",
       emailVisible: !!(me.provider && me.provider.emailVisible),
       bookingMode: (me.provider && me.provider.bookingMode) || "auto",
@@ -16071,9 +16083,11 @@
     if (!p) return;
     ensureProviderContact(p);
     const phoneEl = document.querySelector('[data-role="settings-phone"]');
+    const phoneVisEl = document.querySelector('[data-role="settings-phone-visible"]');
     const emailEl = document.querySelector('[data-role="settings-email"]');
     const emailVisEl = document.querySelector('[data-role="settings-email-visible"]');
     if (phoneEl) p.phone = String(phoneEl.value || "").trim();
+    if (phoneVisEl) p.phoneVisible = !!phoneVisEl.checked;
     if (emailEl) p.email = String(emailEl.value || "").trim();
     if (emailVisEl) p.emailVisible = !!emailVisEl.checked;
     captureProviderSocialFields();
@@ -16244,6 +16258,7 @@
 
   function renderSettingsContact(p) {
     ensureProviderContact(p);
+    const phoneOn = !!p.phoneVisible;
     const emailOn = !!p.emailVisible;
     return `
       <div class="settings__row settings__row--contact" data-field="contact">
@@ -16255,6 +16270,16 @@
           value: p.phone || "",
           attrs: 'autocomplete="tel" inputmode="tel"',
         })}
+        <div class="settings-contact__toggle">
+          <div class="settings__toggle-text">
+            <span class="settings__hint">${phoneOn ? "Telefon widoczny dla klientów" : "Telefon ukryty"}</span>
+            <span class="settings-contact__toggle-hint">${phoneOn ? "Klienci mogą zadzwonić na ten numer" : "Tylko Ty widzisz ten numer w ustawieniach"}</span>
+          </div>
+          <label class="settings__toggle">
+            <input type="checkbox" class="avail-edit__switch" data-role="settings-phone-visible"
+              ${phoneOn ? "checked" : ""} aria-label="Widoczność numeru telefonu" />
+          </label>
+        </div>
         ${renderSettingsFloatField({
           label: "E-mail",
           role: "settings-email",
@@ -19065,6 +19090,7 @@
       address: "",
       about: "",
       phone: String(cp.phone || ""),
+      phoneVisible: false,
       email: String(cp.email || ""),
       emailVisible: false,
       services: [],
@@ -20709,21 +20735,37 @@
       return;
     }
 
-    const emailVisibleToggle = event.target.closest('[data-role="settings-email-visible"]');
-    if (emailVisibleToggle) {
+    const contactVisibleToggle = event.target.closest(
+      '[data-role="settings-phone-visible"], [data-role="settings-email-visible"]'
+    );
+    if (contactVisibleToggle) {
       captureProviderProfileFields();
       captureProviderContactFields();
       saveState();
+      queueProviderProfileSync();
       // Bez renderAll — wystarczy podmienić etykiety przy przełączniku.
-      const on = !!emailVisibleToggle.checked;
-      const wrap = emailVisibleToggle.closest(".settings-contact__toggle");
+      const on = !!contactVisibleToggle.checked;
+      const isPhone = contactVisibleToggle.getAttribute("data-role") === "settings-phone-visible";
+      const wrap = contactVisibleToggle.closest(".settings-contact__toggle");
       const hint = wrap && wrap.querySelector(".settings__hint");
       const sub = wrap && wrap.querySelector(".settings-contact__toggle-hint");
-      if (hint) hint.textContent = on ? "E-mail widoczny dla klientów" : "E-mail ukryty";
+      if (hint) {
+        hint.textContent = isPhone
+          ? on
+            ? "Telefon widoczny dla klientów"
+            : "Telefon ukryty"
+          : on
+            ? "E-mail widoczny dla klientów"
+            : "E-mail ukryty";
+      }
       if (sub) {
-        sub.textContent = on
-          ? "Klienci mogą napisać na ten adres"
-          : "Tylko Ty widzisz ten adres w ustawieniach";
+        sub.textContent = isPhone
+          ? on
+            ? "Klienci mogą zadzwonić na ten numer"
+            : "Tylko Ty widzisz ten numer w ustawieniach"
+          : on
+            ? "Klienci mogą napisać na ten adres"
+            : "Tylko Ty widzisz ten adres w ustawieniach";
       }
       return;
     }

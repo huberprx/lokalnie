@@ -112,6 +112,16 @@ it("lists only complete and published provider profiles in the public catalog", 
   });
   expect(body.providers[0]).not.toHaveProperty("phone");
   expect(body.providers[0]).not.toHaveProperty("email");
+
+  await env.DB.prepare(
+    "UPDATE provider_profiles SET phone_visible=1, email_visible=1 WHERE id='provider-1'"
+  ).run();
+  const visibleContactsResponse = await api("/providers");
+  const visibleContacts = await visibleContactsResponse.json();
+  expect(visibleContacts.providers[0]).toMatchObject({
+    phone: "500100200",
+    email: "provider@example.com",
+  });
 });
 
 async function seedBooking({

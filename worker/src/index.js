@@ -332,8 +332,8 @@ function providerSlug(value, fallback) {
   return slug || fallback;
 }
 
-function mapPublicProvider(row) {
-  return {
+async function mapPublicProvider(row, env) {
+  const provider = {
     id: row.id,
     slug: row.slug,
     name: row.name,
@@ -350,6 +350,9 @@ function mapPublicProvider(row) {
     locations: JSON.parse(row.locations_json || "[]"),
     bookingRules: JSON.parse(row.booking_rules_json || "{}"),
   };
+  if (row.phone_visible) provider.phone = await decryptPhone(row.phone, env);
+  if (row.email_visible) provider.email = row.email;
+  return provider;
 }
 
 async function listPublicProviders(env) {
@@ -359,20 +362,21 @@ async function listPublicProviders(env) {
      ORDER BY updated_at DESC, name COLLATE NOCASE
      LIMIT 100`
   ).all();
-  const providers = (rows.results || [])
-    .filter((row) => {
-      try {
-        return providerPublishable({
-          ...row,
-          phone: row.phone ? "000000000" : "",
-          services: JSON.parse(row.services_json || "[]"),
-          availability: JSON.parse(row.availability_json || "[]"),
-        });
-      } catch {
-        return false;
-      }
-    })
-    .map(mapPublicProvider);
+  const providers = [];
+  for (const row of rows.results || []) {
+    try {
+      const phone = await decryptPhone(row.phone, env);
+      const publishable = providerPublishable({
+        ...row,
+        phone,
+        services: JSON.parse(row.services_json || "[]"),
+        availability: JSON.parse(row.availability_json || "[]"),
+      });
+      if (publishable) providers.push(await mapPublicProvider(row, env));
+    } catch {
+      // Uszkodzony rekord katalogu pomijamy bez blokowania pozostałych firm.
+    }
+  }
   return json({ providers });
 }
 
@@ -498,6 +502,7 @@ async function patchProviderMe(request, env) {
     id: id("provider"),
     email: auth.user.email,
     email_visible: 0,
+    phone_visible: 0,
     booking_mode: "auto",
     visible_in_search: 0,
     multi_select: 1,
@@ -537,6 +542,7 @@ async function patchProviderMe(request, env) {
     about: textFields.about.value,
     email: textFields.email.value,
     email_visible: body.emailVisible != null ? (body.emailVisible ? 1 : 0) : p.email_visible,
+    phone_visible: body.phoneVisible != null ? (body.phoneVisible ? 1 : 0) : p.phone_visible,
     phone: await encryptPhone(textFields.phone.value, env),
     booking_mode: body.bookingMode === "approval" || body.bookingMode === "auto" ? body.bookingMode : p.booking_mode,
     multi_select: body.multiSelect != null ? (body.multiSelect ? 1 : 0) : p.multi_select,
@@ -562,24 +568,24 @@ async function patchProviderMe(request, env) {
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO provider_profiles
-         (id, user_id, slug, name, category, subcategory, city, address, about, email, email_visible, phone,
+         (id, user_id, slug, name, category, subcategory, city, address, about, email, email_visible, phone, phone_visible,
           booking_mode, visible_in_search, multi_select, services_json, availability_json, locations_json,
           booking_rules_json, deactivated, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(p.id, auth.user.id, slug, fields.name, fields.category, fields.subcategory, fields.city, fields.address,
-        fields.about, fields.email, fields.email_visible, fields.phone, fields.booking_mode, fields.visible_in_search,
+        fields.about, fields.email, fields.email_visible, fields.phone, fields.phone_visible, fields.booking_mode, fields.visible_in_search,
         fields.multi_select, JSON.stringify(fields.services.value), JSON.stringify(fields.availability.value),
         JSON.stringify(fields.locations.value), JSON.stringify(fields.bookingRules.value), fields.deactivated, nowIso()),
       env.DB.prepare("UPDATE users SET role_provider = 1, updated_at = ? WHERE id = ?").bind(nowIso(), auth.user.id),
     ]);
   } else {
     await env.DB.prepare(
-      `UPDATE provider_profiles SET name=?, category=?, subcategory=?, city=?, address=?, about=?, email=?, email_visible=?,
+      `UPDATE provider_profiles SET name=?, category=?, subcategory=?, city=?, address=?, about=?, email=?, email_visible=?, phone_visible=?,
        phone=?, booking_mode=?, visible_in_search=?, multi_select=?, services_json=?, availability_json=?, locations_json=?,
        booking_rules_json=?, deactivated=?, updated_at=? WHERE id=?`
     )
       .bind(fields.name, fields.category, fields.subcategory, fields.city, fields.address, fields.about, fields.email,
-        fields.email_visible, fields.phone, fields.booking_mode, fields.visible_in_search, fields.multi_select,
+        fields.email_visible, fields.phone_visible, fields.phone, fields.booking_mode, fields.visible_in_search, fields.multi_select,
         JSON.stringify(fields.services.value), JSON.stringify(fields.availability.value), JSON.stringify(fields.locations.value),
         JSON.stringify(fields.bookingRules.value), fields.deactivated, nowIso(), p.id)
       .run();

@@ -452,6 +452,7 @@
           email: profile.email || "",
           phone: profile.phone || "",
           emailVisible: !!profile.emailVisible,
+          phoneVisible: !!profile.phoneVisible,
           visibleInSearch: !!profile.visibleInSearch,
           multiSelect: !!profile.multiSelect,
           services: profile.services || [],
