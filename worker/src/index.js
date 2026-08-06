@@ -93,6 +93,7 @@ async function routeRequest(request, env) {
             calendarConnections: "GET /calendar/connections",
             authLogout: "POST /auth/logout",
             me: "GET|PATCH|DELETE /me",
+            providers: "GET /providers",
             provider: "GET|PATCH /provider/me",
             clients: "GET|POST /provider/me/clients",
             bookings: "GET|POST /bookings",
@@ -147,6 +148,8 @@ async function routeRequest(request, env) {
         if (request.method === "PATCH") return patchMe(request, env);
         if (request.method === "DELETE") return deleteMe(request, env);
       }
+
+      if (path === "/providers" && request.method === "GET") return listPublicProviders(env);
 
       if (path === "/provider/me") {
         if (request.method === "GET") return getProviderMe(request, env);
@@ -295,6 +298,88 @@ async function getMe(request, env) {
   });
 }
 
+function normalizeJsonValue(value, fallback, maxBytes = 48 * 1024) {
+  if (value == null) return { value: fallback };
+  if (typeof value !== "object") return { error: true };
+  const serialized = JSON.stringify(value);
+  if (serialized.length > maxBytes) return { error: true };
+  return { value };
+}
+
+function providerPublishable(provider) {
+  const phoneDigits = String(provider.phone || "").replace(/\D/g, "");
+  return (
+    !!String(provider.name || "").trim() &&
+    !!String(provider.category || "").trim() &&
+    !!String(provider.city || "").trim() &&
+    phoneDigits.length >= 9 &&
+    Array.isArray(provider.services) &&
+    provider.services.length > 0 &&
+    Array.isArray(provider.availability) &&
+    provider.availability.length > 0 &&
+    !provider.deactivated
+  );
+}
+
+function providerSlug(value, fallback) {
+  const slug = String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72);
+  return slug || fallback;
+}
+
+async function mapPublicProvider(row, env) {
+  const provider = {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    category: row.category,
+    subcategory: row.subcategory,
+    city: row.city,
+    address: row.address,
+    about: row.about,
+    bookingMode: row.booking_mode,
+    multiSelect: !!row.multi_select,
+    avatarKey: row.avatar_key,
+    services: JSON.parse(row.services_json || "[]"),
+    availability: JSON.parse(row.availability_json || "[]"),
+    locations: JSON.parse(row.locations_json || "[]"),
+    bookingRules: JSON.parse(row.booking_rules_json || "{}"),
+  };
+  provider.phone = await decryptPhone(row.phone, env);
+  if (row.email_visible) provider.email = row.email;
+  return provider;
+}
+
+async function listPublicProviders(env) {
+  const rows = await env.DB.prepare(
+    `SELECT * FROM provider_profiles
+     WHERE visible_in_search = 1 AND deactivated = 0
+     ORDER BY updated_at DESC, name COLLATE NOCASE
+     LIMIT 100`
+  ).all();
+  const providers = [];
+  for (const row of rows.results || []) {
+    try {
+      const phone = await decryptPhone(row.phone, env);
+      const publishable = providerPublishable({
+        ...row,
+        phone,
+        services: JSON.parse(row.services_json || "[]"),
+        availability: JSON.parse(row.availability_json || "[]"),
+      });
+      if (publishable) providers.push(await mapPublicProvider(row, env));
+    } catch {
+      // Uszkodzony rekord katalogu pomijamy bez blokowania pozostałych firm.
+    }
+  }
+  return json({ providers });
+}
+
 async function patchMe(request, env) {
   const auth = await requireDemoUser(request, env);
   if (auth.error) return auth.error;
@@ -409,14 +494,28 @@ async function deleteMe(request, env) {
 async function patchProviderMe(request, env) {
   const auth = await requireDemoUser(request, env);
   if (auth.error) return auth.error;
-  if (!auth.provider) return json({ error: "provider_not_found" }, 404);
   const body = await readJson(request);
   if (!body) return json({ error: "invalid_json" }, 400);
 
-  const p = auth.provider;
+  const creating = !auth.provider;
+  const p = auth.provider || {
+    id: id("provider"),
+    email: auth.user.email,
+    email_visible: 0,
+    booking_mode: "auto",
+    visible_in_search: 0,
+    multi_select: 1,
+    services_json: "[]",
+    availability_json: "[]",
+    locations_json: "[]",
+    booking_rules_json: "{}",
+    deactivated: 0,
+  };
   const existingPhone = await decryptPhone(p.phone, env);
   const textFields = {
     name: normalizeText(body.name ?? p.name, 120, { required: true }),
+    category: normalizeText(body.category ?? p.category, 80),
+    subcategory: normalizeText(body.subcategory ?? p.subcategory, 80),
     city: normalizeText(body.city ?? p.city, 120),
     address: normalizeText(body.address ?? p.address, 240),
     about: normalizeText(body.about ?? p.about, 2000),
@@ -426,8 +525,17 @@ async function patchProviderMe(request, env) {
   if (Object.values(textFields).some((field) => field.error)) {
     return json({ error: "invalid_provider_fields" }, 400);
   }
+  const services = normalizeJsonValue(body.services ?? JSON.parse(p.services_json || "[]"), []);
+  const availability = normalizeJsonValue(body.availability ?? JSON.parse(p.availability_json || "[]"), []);
+  const locations = normalizeJsonValue(body.locations ?? JSON.parse(p.locations_json || "[]"), []);
+  const bookingRules = normalizeJsonValue(body.bookingRules ?? JSON.parse(p.booking_rules_json || "{}"), {});
+  if (services.error || availability.error || locations.error || bookingRules.error) {
+    return json({ error: "invalid_provider_catalog_data" }, 400);
+  }
   const fields = {
     name: textFields.name.value,
+    category: textFields.category.value,
+    subcategory: textFields.subcategory.value,
     city: textFields.city.value,
     address: textFields.address.value,
     about: textFields.about.value,
@@ -435,28 +543,51 @@ async function patchProviderMe(request, env) {
     email_visible: body.emailVisible != null ? (body.emailVisible ? 1 : 0) : p.email_visible,
     phone: await encryptPhone(textFields.phone.value, env),
     booking_mode: body.bookingMode === "approval" || body.bookingMode === "auto" ? body.bookingMode : p.booking_mode,
-    visible_in_search: body.visibleInSearch != null ? (body.visibleInSearch ? 1 : 0) : p.visible_in_search,
     multi_select: body.multiSelect != null ? (body.multiSelect ? 1 : 0) : p.multi_select,
+    services,
+    availability,
+    locations,
+    bookingRules,
+    deactivated: body.deactivated != null ? (body.deactivated ? 1 : 0) : p.deactivated,
   };
+  const requestedVisibility = body.visibleInSearch != null ? !!body.visibleInSearch : !!p.visible_in_search;
+  fields.visible_in_search = requestedVisibility && providerPublishable({
+    ...fields,
+    phone: textFields.phone.value,
+    services: fields.services.value,
+    availability: fields.availability.value,
+    deactivated: fields.deactivated,
+  })
+    ? 1
+    : 0;
 
-  await env.DB.prepare(
-    `UPDATE provider_profiles SET name=?, city=?, address=?, about=?, email=?, email_visible=?, phone=?, booking_mode=?, visible_in_search=?, multi_select=?, updated_at=? WHERE id=?`
-  )
-    .bind(
-      fields.name,
-      fields.city,
-      fields.address,
-      fields.about,
-      fields.email,
-      fields.email_visible,
-      fields.phone,
-      fields.booking_mode,
-      fields.visible_in_search,
-      fields.multi_select,
-      nowIso(),
-      p.id
+  if (creating) {
+    const slug = providerSlug(body.slug, `provider-${p.id.slice(-8)}`);
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO provider_profiles
+         (id, user_id, slug, name, category, subcategory, city, address, about, email, email_visible, phone,
+          booking_mode, visible_in_search, multi_select, services_json, availability_json, locations_json,
+          booking_rules_json, deactivated, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(p.id, auth.user.id, slug, fields.name, fields.category, fields.subcategory, fields.city, fields.address,
+        fields.about, fields.email, fields.email_visible, fields.phone, fields.booking_mode, fields.visible_in_search,
+        fields.multi_select, JSON.stringify(fields.services.value), JSON.stringify(fields.availability.value),
+        JSON.stringify(fields.locations.value), JSON.stringify(fields.bookingRules.value), fields.deactivated, nowIso()),
+      env.DB.prepare("UPDATE users SET role_provider = 1, updated_at = ? WHERE id = ?").bind(nowIso(), auth.user.id),
+    ]);
+  } else {
+    await env.DB.prepare(
+      `UPDATE provider_profiles SET name=?, category=?, subcategory=?, city=?, address=?, about=?, email=?, email_visible=?,
+       phone=?, booking_mode=?, visible_in_search=?, multi_select=?, services_json=?, availability_json=?, locations_json=?,
+       booking_rules_json=?, deactivated=?, updated_at=? WHERE id=?`
     )
-    .run();
+      .bind(fields.name, fields.category, fields.subcategory, fields.city, fields.address, fields.about, fields.email,
+        fields.email_visible, fields.phone, fields.booking_mode, fields.visible_in_search, fields.multi_select,
+        JSON.stringify(fields.services.value), JSON.stringify(fields.availability.value), JSON.stringify(fields.locations.value),
+        JSON.stringify(fields.bookingRules.value), fields.deactivated, nowIso(), p.id)
+      .run();
+  }
 
   const provider = await env.DB.prepare("SELECT * FROM provider_profiles WHERE id=?").bind(p.id).first();
   return json({ provider: await mapProvider(provider, env) });

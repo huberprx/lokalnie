@@ -77,6 +77,53 @@ function api(path, { method = "GET", token = CLIENT_TOKEN, body, key } = {}) {
   );
 }
 
+it("lists only complete and published provider profiles in the public catalog", async () => {
+  await env.DB.prepare(
+    `UPDATE provider_profiles
+     SET category=?, city=?, phone=?, visible_in_search=1, services_json=?, availability_json=?
+     WHERE id=?`
+  )
+    .bind(
+      "beauty",
+      "Warszawa",
+      "500100200",
+      JSON.stringify([{ id: "service-1", name: "Strzyżenie", durationMin: 30 }]),
+      JSON.stringify([{ dateISO: "2026-08-07", blocks: [{ from: "09:00", to: "12:00" }] }]),
+      "provider-1"
+    )
+    .run();
+  await env.DB.prepare(
+    `INSERT INTO provider_profiles
+     (id, user_id, slug, name, category, city, phone, visible_in_search, services_json, availability_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, '[]', '[]')`
+  )
+    .bind("provider-hidden", "user-other", "not-ready", "Not ready", "beauty", "Warszawa", "500100201")
+    .run();
+
+  const response = await api("/providers");
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body.providers).toHaveLength(1);
+  expect(body.providers[0]).toMatchObject({
+    id: "provider-1",
+    name: "Provider One",
+    category: "beauty",
+    services: [{ id: "service-1", name: "Strzyżenie", durationMin: 30 }],
+  });
+  expect(body.providers[0].phone).toBe("500100200");
+  expect(body.providers[0]).not.toHaveProperty("email");
+
+  await env.DB.prepare(
+    "UPDATE provider_profiles SET email_visible=1 WHERE id='provider-1'"
+  ).run();
+  const visibleContactsResponse = await api("/providers");
+  const visibleContacts = await visibleContactsResponse.json();
+  expect(visibleContacts.providers[0]).toMatchObject({
+    phone: "500100200",
+    email: "provider@example.com",
+  });
+});
+
 async function seedBooking({
   id,
   status = "confirmed",

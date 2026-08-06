@@ -443,6 +443,9 @@
         method: "PATCH",
         json: {
           name: profile.name || "",
+          slug: profile.slug || "",
+          category: profile.category || "",
+          subcategory: profile.subcategory || "",
           city: profile.city || "",
           address: profile.address || "",
           about: profile.about || "",
@@ -451,12 +454,28 @@
           emailVisible: !!profile.emailVisible,
           visibleInSearch: !!profile.visibleInSearch,
           multiSelect: !!profile.multiSelect,
+          services: profile.services || [],
+          availability: profile.availability || [],
+          locations: profile.locations || [],
+          bookingRules: profile.bookingRules || {},
+          deactivated: !!profile.deactivated,
         },
       });
       return (res && res.provider) || null;
     } catch (err) {
       console.warn("[LokalnieApi] updateProviderMe failed", err);
       return null;
+    }
+  }
+
+  /** Publiczny katalog: nie wymaga sesji i nie zwraca danych kontaktowych usługodawcy. */
+  async function listPublicProviders() {
+    try {
+      const res = await request("/providers");
+      return Array.isArray(res && res.providers) ? res.providers : [];
+    } catch (err) {
+      console.warn("[LokalnieApi] public catalog load failed", err);
+      return [];
     }
   }
 
@@ -796,6 +815,7 @@
     mediaUrl: mediaUrl,
     request: request,
     syncFromServer: syncFromServer,
+    listPublicProviders: listPublicProviders,
     updateMe: updateMe,
     updateProviderMe: updateProviderMe,
     upsertClient: upsertClient,

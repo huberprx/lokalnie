@@ -249,6 +249,8 @@
       activeProviderId: null,
       /** Własne profile usługodawcy (max MAX_PROVIDER_PROFILES). */
       providerProfiles: [],
+      /** Opublikowane profile pobrane z publicznego katalogu API. */
+      remoteProviders: [],
       /** Rola provider z konta — gdy jest ≥1 własny profil. */
       providerRoleActive: false,
       /** Flaga z /me — nigdy nie ufaj lokalnemu storage bez rewalidacji API. */
@@ -392,6 +394,10 @@
       return p && p.slug === slug;
     });
     if (fromOwned) return fromOwned;
+    const fromRemote = ((window.AppState && window.AppState.remoteProviders) || []).find(function (p) {
+      return p && p.slug === slug;
+    });
+    if (fromRemote) return fromRemote;
     return (data().PROVIDERS || []).find((p) => p.slug === slug) || null;
   }
 
@@ -402,6 +408,10 @@
       return p && p.id === id;
     });
     if (fromOwned) return fromOwned;
+    const fromRemote = ((window.AppState && window.AppState.remoteProviders) || []).find(function (p) {
+      return p && p.id === id;
+    });
+    if (fromRemote) return fromRemote;
     return (data().PROVIDERS || []).find((p) => p.id === id) || null;
   }
 
@@ -939,20 +949,43 @@
     });
   }
 
-  /** Katalog: mocki + własne aktywne profile (widoczne i kompletne). */
+  /** Katalog: mocki + opublikowane profile API + własne aktywne profile. */
   function catalogProviders() {
     const owned = (window.AppState && window.AppState.providerProfiles) || [];
-    // Własny profil zastępuje odpowiadający mu mock — także po dezaktywacji.
-    const base = (data().PROVIDERS || []).filter(function (p) {
-      return !owned.some(function (op) {
-        return op && p && (op.id === p.id || op.slug === p.slug);
+    const remote = (window.AppState && window.AppState.remoteProviders) || [];
+    const merged = [];
+    const put = function (provider) {
+      if (!provider || !provider.id || !provider.slug) return;
+      const index = merged.findIndex(function (existing) {
+        return existing.id === provider.id || existing.slug === provider.slug;
       });
-    });
+      if (index >= 0) merged[index] = provider;
+      else merged.push(provider);
+    };
+    (data().PROVIDERS || []).forEach(put);
+    remote.forEach(put);
     owned.forEach(function (op) {
       if (!op || !op.visibleInSearch || !isProviderProfileActive(op)) return;
-      base.push(op);
+      put(op);
     });
-    return base;
+    return merged;
+  }
+
+  function applyPublicCatalog(providers) {
+    if (!window.AppState) return;
+    window.AppState.remoteProviders = (Array.isArray(providers) ? providers : [])
+      .filter(function (provider) {
+        return provider && provider.id && provider.slug && provider.name;
+      })
+      .map(function (provider) {
+        const copy = Object.assign({}, provider);
+        if (copy.avatarKey && window.LokalnieApi && window.LokalnieApi.mediaUrl) {
+          copy.avatarUrl = window.LokalnieApi.mediaUrl(copy.avatarKey);
+        }
+        copy.avatarInitials = copy.avatarInitials || accountInitials(copy.name) || "US";
+        copy.visibleInSearch = true;
+        return copy;
+      });
   }
 
   function filterProviders() {
@@ -1892,7 +1925,7 @@
   function callProvider(slug) {
     const p = getProviderBySlug(slug);
     if (!p) return;
-    const phone = p.phone ? String(p.phone).replace(/\s/g, "") : "";
+    const phone = providerPublicPhone(p).replace(/\s/g, "");
     if (phone) {
       window.location.href = "tel:" + phone;
       return;
@@ -2158,7 +2191,8 @@
         </a>`
       : "";
 
-    const phone = String(p.phone || "").replace(/\s/g, "");
+    const publicPhone = providerPublicPhone(p);
+    const phone = publicPhone.replace(/\s/g, "");
     const callItem = phone
       ? `<a href="tel:${escapeHtml(phone)}" class="${itemClass}" role="${role}">
           <span class="${iconClass} ${iconClass}--call" aria-hidden="true"></span>
@@ -2208,7 +2242,8 @@
   function renderProviderContactTiles(p, opts) {
     opts = opts || {};
     ensureProviderContact(p);
-    const phone = String(p.phone || "").replace(/\s/g, "");
+    const publicPhone = providerPublicPhone(p);
+    const phone = publicPhone.replace(/\s/g, "");
     const navAddr = providerNavAddress(p);
     const tiles = [];
 
@@ -2217,7 +2252,7 @@
         <span class="provider-tile__icon provider-tile__icon--profile" aria-hidden="true"></span><span class="provider-tile__label">Profil</span></button>`);
       tiles.push(
         phone
-          ? `<a class="provider-tile" href="tel:${escapeHtml(phone)}" title="Zadzwoń: ${escapeHtml(String(p.phone || ""))}">
+          ? `<a class="provider-tile" href="tel:${escapeHtml(phone)}" title="Zadzwoń: ${escapeHtml(publicPhone)}">
         <span class="provider-tile__icon provider-tile__icon--call" aria-hidden="true"></span><span class="provider-tile__label">Zadzwoń</span></a>`
           : `<span class="provider-tile provider-tile--disabled" aria-disabled="true">
         <span class="provider-tile__icon provider-tile__icon--call" aria-hidden="true"></span><span class="provider-tile__label">Zadzwoń</span></span>`
@@ -2537,7 +2572,8 @@
 
   function renderProviderInfoPopover(p) {
     ensureProviderContact(p);
-    const phone = String(p.phone || "").replace(/\s/g, "");
+    const publicPhone = providerPublicPhone(p);
+    const phone = publicPhone.replace(/\s/g, "");
     const email = providerPublicEmail(p);
     const locs = (Array.isArray(p.locations) ? p.locations : []).filter(function (l) {
       return l && (l.address || l.label);
@@ -2582,7 +2618,7 @@
     const phoneSection = phone
       ? `<div class="provider-info-pop__section">
         <span class="provider-info-pop__ic provider-info-pop__ic--phone" aria-hidden="true"></span>
-        <a class="provider-info-pop__line provider-info-pop__line--link" href="tel:${escapeHtml(phone)}">${escapeHtml(String(p.phone))}</a>
+        <a class="provider-info-pop__line provider-info-pop__line--link" href="tel:${escapeHtml(phone)}">${escapeHtml(publicPhone)}</a>
       </div>`
       : "";
 
@@ -3301,6 +3337,12 @@
     ensureProviderContact(provider);
     if (!provider.emailVisible) return "";
     return String(provider.email || "").trim();
+  }
+
+  function providerPublicPhone(provider) {
+    if (!provider) return "";
+    ensureProviderContact(provider);
+    return String(provider.phone || "").trim();
   }
 
   function providerSocialLinks(provider) {
@@ -6679,7 +6721,7 @@
   function renderProfileContact(p) {
     ensureProviderContact(p);
     ensureProviderBookingRules(p);
-    const phone = String(p.phone || "").trim();
+    const phone = providerPublicPhone(p);
     const phoneHref = phone.replace(/\s/g, "");
     const email = providerPublicEmail(p);
     const socials = providerSocialLinks(p);
@@ -7095,6 +7137,17 @@
       city: (me.provider && me.provider.city) || "",
       address: (me.provider && me.provider.address) || "",
       about: (me.provider && me.provider.about) || "",
+      phone: (me.provider && me.provider.phone) || "",
+      email: (me.provider && me.provider.email) || "",
+      emailVisible: !!(me.provider && me.provider.emailVisible),
+      bookingMode: (me.provider && me.provider.bookingMode) || "auto",
+      visibleInSearch: !!(me.provider && me.provider.visibleInSearch),
+      multiSelect: me.provider ? !!me.provider.multiSelect : true,
+      services: (me.provider && me.provider.services) || [],
+      availability: (me.provider && me.provider.availability) || [],
+      locations: (me.provider && me.provider.locations) || [],
+      bookingRules: (me.provider && me.provider.bookingRules) || {},
+      deactivated: !!(me.provider && me.provider.deactivated),
       avatarUrl: null,
       avatarInitials: accountInitials(name) || "MP",
       _fromApi: true,
@@ -16490,7 +16543,14 @@
       providerProfileSyncTimer = null;
       const p = myProvider();
       if (!p) return;
-      void api.updateProviderMe(p);
+      void api.updateProviderMe(p).then(function (saved) {
+        if (!saved) return;
+        p.apiId = saved.id;
+        p.slug = saved.slug || p.slug;
+        p.visibleInSearch = !!saved.visibleInSearch;
+        p._fromApi = true;
+        saveState();
+      });
     }, 400);
   }
 
@@ -16535,11 +16595,12 @@
           </header>
           <div class="settings">
             ${renderProviderCompletenessBanner(p)}
+            ${renderSettingsGroup("Widoczność w katalogu", visibilityRow)}
             ${renderSettingsGroup("Dane firmy", renderSettingsProfile(p))}
             ${renderSettingsGroup("Kontakt", renderSettingsContact(p))}
             ${renderSettingsGroup("Social media", renderSettingsSocial(p))}
             ${renderSettingsGroup("Lokalizacje (miejsce wykonywania usług)", renderSettingsLocations(p))}
-            ${renderSettingsGroup("Rezerwacje online", visibilityRow + renderSettingsBookingRules(p))}
+            ${renderSettingsGroup("Rezerwacje online", renderSettingsBookingRules(p))}
             ${renderSettingsGroup("Kalendarz firmowy", renderGoogleCalendarSettings("provider"))}
             ${renderSettingsGroup("Zarządzanie profilem", renderProviderProfileManagement(p))}
           </div>
@@ -20662,6 +20723,7 @@
       captureProviderProfileFields();
       captureProviderContactFields();
       saveState();
+      queueProviderProfileSync();
       // Bez renderAll — wystarczy podmienić etykiety przy przełączniku.
       const on = !!emailVisibleToggle.checked;
       const wrap = emailVisibleToggle.closest(".settings-contact__toggle");
@@ -22661,6 +22723,13 @@
     handleAppRoute();
     bindPwaInstallPrompt();
     registerServiceWorker();
+
+    if (window.LokalnieApi && typeof window.LokalnieApi.listPublicProviders === "function") {
+      void window.LokalnieApi.listPublicProviders().then(function (providers) {
+        applyPublicCatalog(providers);
+        renderAll();
+      });
+    }
 
     if (
       window.LokalnieApi &&
