@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.206";
+  const APP_VERSION = "1.0.215";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -1317,6 +1317,7 @@
             restoreScrollTop(nextSvc, svcScroll);
             restoreScrollTop(nextParts, partsScroll);
             restoreScrollTop(nextTimes, timesScroll);
+            updateBookingBottomNav(bookingScreen, ctx.draft);
             updated = true;
           }
         }
@@ -1677,11 +1678,14 @@
     }
 
     return `
-      <div class="selection-summary selection-summary--inline selection-summary--info${hasSelection ? "" : " selection-summary--empty"}">
+      <div class="selection-summary selection-summary--inline${hasSelection ? "" : " selection-summary--empty"}">
         <div class="selection-summary__info">
           <span class="selection-summary__duration">${escapeHtml(durationText)}</span>
           <span class="selection-summary__price">${escapeHtml(priceText)}</span>
         </div>
+        <button type="button" class="btn btn--primary selection-summary__cta" data-action="confirm-booking"${
+          ctx.canConfirm && !p.deactivated ? "" : " disabled"
+        }>Rezerwuj</button>
       </div>`;
   }
 
@@ -4291,6 +4295,46 @@
     });
   }
 
+  /** Lokalizacja do podsumowania: { label, address, locationId } z wybranego slotu albo wspólna dla dnia. */
+  function bookingDraftLocationInfo(p, draft) {
+    if (!p || !draft || !draft.dateISO) return null;
+    const duration = draftTotals(p).duration || 15;
+    const slotOpts = slotOptsForServiceIds(p, draft.serviceIds || []);
+    const slots = computeSlots(p, draft.dateISO, duration, slotOpts);
+    function infoFromSlot(slot) {
+      if (!slot) return null;
+      const locId = slot.locationId || null;
+      const loc =
+        locId && Array.isArray(p.locations)
+          ? p.locations.find(function (l) {
+              return l && l.id === locId;
+            })
+          : null;
+      const label = String((loc && loc.label) || slot.locationLabel || "").trim();
+      const address = String((loc && loc.address) || (!locId && p.address) || "").trim();
+      if (!label && !address) return null;
+      return { label: label, address: address, locationId: locId };
+    }
+    if (draft.slotId) {
+      const slot = slots.find(function (s) {
+        return s.id === draft.slotId;
+      });
+      const fromSlot = infoFromSlot(slot);
+      if (fromSlot) return fromSlot;
+    }
+    const infos = [];
+    const seen = Object.create(null);
+    slots.forEach(function (s) {
+      const info = infoFromSlot(s);
+      if (!info) return;
+      const key = (info.locationId || "") + "\0" + info.label + "\0" + info.address;
+      if (seen[key]) return;
+      seen[key] = true;
+      infos.push(info);
+    });
+    return infos.length === 1 ? infos[0] : null;
+  }
+
   function renderBookingConfirmSummary(p, totals, draft) {
     const empty = !totals || !totals.count;
     const priceText = empty ? "—" : totals.hasNullPrice ? "wycena indyw." : formatPrice(totals.price);
@@ -4302,6 +4346,54 @@
           <span class="bottom-nav__summary-dur">${escapeHtml(durText)}</span>
           <span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>
         </div>
+      </div>`;
+  }
+
+  /** Data i godzina w stopce — data po wyborze dnia, godzina po wyborze slotu. */
+  function renderBookingConfirmWhen(p, draft) {
+    if (!draft || !draft.dateISO) return "";
+    const dateText = formatDayWithDow(draft.dateISO);
+    let timeText = "";
+    if (draft.slotId && p) {
+      const duration = draftTotals(p).duration || 15;
+      const slotOpts = slotOptsForServiceIds(p, draft.serviceIds || []);
+      const slots = computeSlots(p, draft.dateISO, duration, slotOpts);
+      const slot = slots.find(function (s) {
+        return s.id === draft.slotId;
+      });
+      if (slot && slot.from) {
+        timeText = slot.to ? String(slot.from) + "–" + String(slot.to) : String(slot.from);
+      }
+    }
+    return `
+      <div class="booking-confirm-bar__seg booking-confirm-bar__when${timeText ? "" : " booking-confirm-bar__when--date-only"}" aria-label="Wybrany termin">
+        <span class="booking-confirm-bar__when-date">${escapeHtml(dateText)}</span>
+        ${
+          timeText
+            ? `<span class="booking-confirm-bar__when-time">${escapeHtml(timeText)}</span>`
+            : `<span class="booking-confirm-bar__when-time booking-confirm-bar__when-time--empty">—</span>`
+        }
+      </div>`;
+  }
+
+  /** Miejsce + adres — jedna sekcja: kropka + nazwa, pod spodem adres. */
+  function renderBookingConfirmPlace(p, draft, totals) {
+    if (!totals || !totals.count) return "";
+    const info = bookingDraftLocationInfo(p, draft);
+    if (!info || (!info.label && !info.address)) return "";
+    const tone = info.locationId ? locationToneClass(p, info.locationId) : "";
+    const name = info.label || "Miejsce";
+    const aria = [name, info.address].filter(Boolean).join(", ");
+    return `
+      <div class="booking-confirm-bar__seg booking-confirm-bar__place${tone ? " " + tone : ""}" aria-label="${escapeHtml(aria)}">
+        <span class="booking-confirm-bar__place-name">
+          <span class="booking-confirm-bar__place-dot" aria-hidden="true"></span>${escapeHtml(name)}
+        </span>
+        ${
+          info.address
+            ? `<span class="booking-confirm-bar__place-addr" title="${escapeHtml(info.address)}">${escapeHtml(info.address)}</span>`
+            : ""
+        }
       </div>`;
   }
 
@@ -4330,16 +4422,31 @@
     const p = draft.slug ? getProviderBySlug(draft.slug) : null;
     const totals = p ? draftTotals(p) : { count: 0, duration: 0, price: 0 };
     const cta = bookingConfirmCTA(p, draft, totals);
+    const mode = p ? draftBookingMode(p) : "auto";
+    const whenHtml = isOfferRequestMode(mode) ? "" : renderBookingConfirmWhen(p, draft);
+    const placeHtml = isOfferRequestMode(mode) ? "" : renderBookingConfirmPlace(p, draft, totals);
     const clearBtn = hasServices
       ? `<button type="button" class="bottom-nav__clear" data-action="cancel-booking-selection" aria-label="Anuluj wybór usług">
           <span class="bottom-nav__icon bottom-nav__icon--close" aria-hidden="true"></span>
         </button>`
       : "";
-    return `
-      <div class="booking-confirm-bar" data-role="booking-confirm-bar">
-        ${renderBookingConfirmSummary(p, totals, draft)}
+    const actionsHtml = `
+      <div class="booking-confirm-bar__actions">
         <button type="button" class="bottom-nav__book" data-action="${cta.action}"${cta.slugAttr}${cta.enabled ? "" : " disabled"}>${cta.label}</button>
         ${clearBtn}
+      </div>`;
+    const infoHtml =
+      whenHtml || placeHtml
+        ? `<div class="booking-confirm-bar__info">
+        ${renderBookingConfirmSummary(p, totals, draft)}
+        ${whenHtml || `<div class="booking-confirm-bar__seg booking-confirm-bar__when booking-confirm-bar__when--empty" aria-hidden="true"></div>`}
+        ${placeHtml || `<div class="booking-confirm-bar__seg booking-confirm-bar__place booking-confirm-bar__place--empty" aria-hidden="true"></div>`}
+        ${actionsHtml}
+      </div>`
+        : `${renderBookingConfirmSummary(p, totals, draft)}${actionsHtml}`;
+    return `
+      <div class="booking-confirm-bar${whenHtml || placeHtml ? " booking-confirm-bar--split" : ""}" data-role="booking-confirm-bar">
+        ${infoHtml}
       </div>`;
   }
 
@@ -6368,8 +6475,8 @@
       .map(function (s) {
         const range = `${escapeHtml(s.from)}→${escapeHtml(s.to)}`;
         const placeHtml = renderTimeSlotPlace(provider, s);
+        const selected = draft && draft.slotId === s.id;
         if (mobile) {
-          const selected = draft && draft.slotId === s.id;
           return `
         <button type="button" class="time-row time-row--chip${selected ? " time-row--selected" : ""}" data-action="pick-slot" data-slot="${escapeHtml(s.id)}"
           aria-label="Wybierz ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${selected ? "true" : "false"}">
@@ -6380,13 +6487,16 @@
         </button>`;
         }
         return `
-        <div class="time-row">
-          <div class="time-row__info">
+        <button type="button" class="time-row${selected ? " time-row--selected" : ""}" data-action="pick-slot" data-slot="${escapeHtml(s.id)}"
+          aria-label="Wybierz ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${selected ? "true" : "false"}">
+          <span class="time-row__info">
             <span class="time-row__range">${range}</span>
             ${placeHtml}
-          </div>
-          <button type="button" class="btn btn--primary btn--sm time-row__btn" data-action="book-slot" data-slot="${escapeHtml(s.id)}">Rezerwuj</button>
-        </div>`;
+          </span>
+          <span class="time-row__check${selected ? " time-row__check--on" : ""}" aria-hidden="true">
+            <span class="time-row__check-visual"></span>
+          </span>
+        </button>`;
       })
       .join("");
   }
@@ -18434,20 +18544,21 @@
     if (role === "provider") {
       const screen = window.AppState.screen.provider;
       return [
-        { label: "Pulpit", action: "provider-tab", tab: "dashboard", screen: "dashboard", active: !menuOpen && screen === "dashboard" },
-        { label: "Kalendarz", action: "provider-tab", tab: "calendar", screen: "calendar", active: !menuOpen && screen === "calendar" },
-        { label: "Usługi", action: "provider-tab", tab: "services", screen: "services", active: !menuOpen && screen === "services" },
-        { label: "Dostępność", action: "provider-tab", tab: "availability", screen: "availability", active: !menuOpen && screen === "availability" },
+        { label: "Pulpit", icon: "home", action: "provider-tab", tab: "dashboard", screen: "dashboard", active: !menuOpen && screen === "dashboard" },
+        { label: "Kalendarz", icon: "calendar", action: "provider-tab", tab: "calendar", screen: "calendar", active: !menuOpen && screen === "calendar" },
+        { label: "Usługi", icon: "services", action: "provider-tab", tab: "services", screen: "services", active: !menuOpen && screen === "services" },
+        { label: "Dostępność", icon: "slots", action: "provider-tab", tab: "availability", screen: "availability", active: !menuOpen && screen === "availability" },
       ];
     }
     const screen = window.AppState.screen.client;
     const onMarket = screen === "search" || screen === "booking" || screen === "profile";
     const pendingCount = clientPendingAttentionCount();
     return [
-      { label: "Szukaj", action: "go-screen", screen: "search", active: !menuOpen && onMarket },
-      { label: "Ulubione", action: "go-screen", screen: "favorites", active: !menuOpen && screen === "favorites" },
+      { label: "Szukaj", icon: "search", action: "go-screen", screen: "search", active: !menuOpen && onMarket },
+      { label: "Ulubione", icon: "heart", action: "go-screen", screen: "favorites", active: !menuOpen && screen === "favorites" },
       {
         label: "Kalendarz",
+        icon: "calendar",
         action: "go-screen",
         screen: "myCalendar",
         active: !menuOpen && screen === "myCalendar",
@@ -18472,10 +18583,13 @@
           it.count > 0
             ? `${it.label}, ${it.count} oczekując${it.count === 1 ? "e" : "ych"}`
             : it.label;
+        const icon = it.icon
+          ? `<span class="site-nav__icon bottom-nav__icon bottom-nav__icon--${escapeHtml(it.icon)}" aria-hidden="true"></span>`
+          : "";
         return `<button type="button" class="site-nav__link${it.active ? " site-nav__link--active" : ""}"
           data-action="${it.action}" ${attrs.join(" ")} aria-label="${escapeHtml(aria)}"${
             it.active ? ' aria-current="page"' : ""
-          }><span class="site-nav__link-label">${escapeHtml(it.label)}</span>${badge}</button>`;
+          }>${icon}<span class="site-nav__link-label">${escapeHtml(it.label)}</span>${badge}</button>`;
       })
       .join("");
   }
