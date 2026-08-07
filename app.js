@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.228";
+  const APP_VERSION = "1.0.229";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -1692,6 +1692,14 @@
       providerInfoOpen: false,
       requestDays: [],
     };
+  }
+
+  function hasDraftForProvider(slug) {
+    return !!(
+      window.AppState.draft &&
+      typeof window.AppState.draft === "object" &&
+      window.AppState.draft.slug === slug
+    );
   }
 
   /** Pełny opis oferty (description; stary subtitle tylko jako fallback). */
@@ -4440,23 +4448,23 @@
       if (!installing) return;
       installing.addEventListener("statechange", function () {
         if (installing.state === "installed" && navigator.serviceWorker.controller) {
-          applyPwaUpdateNow(installing);
+          notifyPwaUpdateAvailable(installing);
         }
       });
     });
   }
 
-  /** Przy starcie: wykryj update i od razu wgraj (PWA inaczej potrafi trzymać stary UI). */
+  /** Przy starcie wykryj update, ale nie przerywaj aktywnej rezerwacji przeładowaniem. */
   function checkPwaUpdateOnLaunch(reg) {
     if (!reg) return;
     if (reg.waiting) {
-      applyPwaUpdateNow(reg.waiting);
+      notifyPwaUpdateAvailable(reg.waiting);
       return;
     }
     reg
       .update()
       .then(function () {
-        if (reg.waiting) applyPwaUpdateNow(reg.waiting);
+        if (reg.waiting) notifyPwaUpdateAvailable(reg.waiting);
       })
       .catch(function () {});
   }
@@ -4470,17 +4478,15 @@
         checkPwaUpdateOnLaunch(reg);
         setInterval(function () {
           reg.update().then(function () {
-            if (reg.waiting) applyPwaUpdateNow(reg.waiting);
+            if (reg.waiting) notifyPwaUpdateAvailable(reg.waiting);
           }).catch(function () {});
         }, 60 * 60 * 1000);
       })
       .catch(function () {});
 
-    var refreshing = false;
     navigator.serviceWorker.addEventListener("controllerchange", function () {
-      if (refreshing) return;
-      refreshing = true;
-      window.location.reload();
+      // Aktualizacja workera nie może samoczynnie resetować ekranu rezerwacji.
+      // Nowy kod zostanie użyty przy zwykłym odświeżeniu przez użytkownika.
     });
   }
 
@@ -7187,10 +7193,24 @@
 
   function renderBooking(slug) {
     const p = getProviderBySlug(slug);
-    if (!p) return renderSearch();
+    if (!p) {
+      return `
+        <div class="app-screen app-screen--client app-screen--booking">
+          <div class="app-scroll">
+            <p class="empty-note">Ładowanie oferty…</p>
+          </div>
+        </div>`;
+    }
 
     const ctx = buildBookingContext(p);
-    if (!ctx) return renderSearch();
+    if (!ctx) {
+      return `
+        <div class="app-screen app-screen--client app-screen--booking">
+          <div class="app-scroll">
+            <p class="empty-note">Ładowanie oferty…</p>
+          </div>
+        </div>`;
+    }
     const mode = draftBookingMode(p);
     // Nagłówek poza .booking-mobile — na desktopie ten blok jest ukrywany,
     // a bez karty usługodawcy ekran rezerwacji wygląda na „pusty”.
@@ -17929,7 +17949,9 @@
 
   function openProviderResolved(p, slug, opts) {
     opts = opts || {};
-    initDraftForProvider(p);
+    if (!opts.preserveDraft || !hasDraftForProvider(p.slug)) {
+      initDraftForProvider(p);
+    }
     const preferredIds = Array.isArray(opts.serviceIds) ? opts.serviceIds.filter(Boolean) : [];
     if (preferredIds.length) {
       const validIds = preferredIds.filter(function (id) {
@@ -19367,17 +19389,28 @@
       window.AppState.loggedIn = true;
       window.AppState.activeRole = "client";
       window.AppState.screen.client = "booking";
+      window.AppState.params.client = { slug: route.slug };
+      if (!hasDraftForProvider(route.slug)) window.AppState.draft = { slug: route.slug };
       saveState();
       updateAppHeader("client");
       showPage("app");
-      openProvider(route.slug, { force: true, embed: true, skipUrlSync: true });
+      renderAll();
+      openProvider(route.slug, { force: true, embed: true, preserveDraft: true, skipUrlSync: true });
       syncPublicProviderUrl(route.slug, { embed: true, replace: true });
       return true;
     }
     if (route.kind === "provider") {
       setEmbedMode(false);
-      goMarketplace();
-      openProvider(route.slug, { skipUrlSync: true });
+      window.AppState.activeRole = "client";
+      window.AppState.appMenuOpen = false;
+      window.AppState.screen.client = "booking";
+      window.AppState.params.client = { slug: route.slug };
+      if (!hasDraftForProvider(route.slug)) window.AppState.draft = { slug: route.slug };
+      saveState();
+      updateAppHeader("client");
+      showPage("app");
+      renderAll();
+      openProvider(route.slug, { preserveDraft: true, skipUrlSync: true });
       syncPublicProviderUrl(route.slug, { replace: true });
       return true;
     }
@@ -23540,6 +23573,10 @@
     }
     // Callback Google OAuth: #auth_error=... albo (poza prod) #access_token=...
     const justAuthed = consumeAuthHash();
+    // Trasa usługodawcy ma pierwszeństwo już przed pierwszym renderem. Dzięki temu
+    // zwykłe odświeżenie /slug nie pokazuje na moment marketplace ani innej zakładki.
+    const initialRoute = justAuthed ? null : parseAppRouteFromLocation();
+    if (initialRoute) applyAppRoute(initialRoute);
     try {
       if (justAuthed) {
         /* finishGoogleLogin już pokazał app */
@@ -23566,7 +23603,7 @@
       saveState();
       renderAll();
     }, 60000);
-    handleAppRoute();
+    if (!initialRoute) handleAppRoute();
     bindPwaInstallPrompt();
     registerServiceWorker();
 

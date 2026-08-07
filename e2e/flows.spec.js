@@ -10,6 +10,35 @@ const {
 } = require("./helpers");
 
 test.describe("Lokalnie — kluczowe przepływy", function () {
+  test("odświeżenie profilu usługodawcy pozostaje na tym samym ekranie rezerwacji", async function ({ page }) {
+    await resetAndLogin(page, "client");
+
+    await page.goto("/grzesiu-barber", { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(function () {
+      return (
+        window.AppState &&
+        window.AppState.screen.client === "booking" &&
+        window.AppState.params.client &&
+        window.AppState.params.client.slug === "grzesiu-barber" &&
+        !!document.querySelector(".app-screen--booking .booking__provider-card")
+      );
+    });
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForFunction(function () {
+      return (
+        window.AppState &&
+        window.AppState.screen.client === "booking" &&
+        window.AppState.params.client &&
+        window.AppState.params.client.slug === "grzesiu-barber" &&
+        !!document.querySelector(".app-screen--booking .booking__provider-card")
+      );
+    });
+
+    await expect(page).toHaveURL(/\/grzesiu-barber$/);
+    await expect(page.locator(".app-screen--booking .booking__provider-card")).toContainText("Grzesiu Barber");
+  });
+
   test("prośba → propozycje → rezerwacja (klient + usługodawca)", async function ({ page }) {
     await resetAndLogin(page, "provider");
     await goProviderCalendar(page);
