@@ -349,7 +349,7 @@
     el.textContent = typeof priceTextOrNull === "string" ? priceTextOrNull : formatPrice(priceTextOrNull);
   }
 
-  /** Opis oferty z kolorowym przypisem wyceny indywidualnej. */
+  /** Opis oferty z kolorowym przypisem wyceny indywidualnej (przypis na początku — widoczny przy clamp). */
   function withIndividualPriceNoteHtml(text, price) {
     if (price != null) {
       const base = String(text || "").trim();
@@ -362,7 +362,7 @@
       .replace(/\s*·\s*\*?\s*wycena indyw\.?/gi, "")
       .trim();
     const note = individualPriceNoteHtml(false);
-    return cleaned ? escapeHtml(cleaned) + " · " + note : note;
+    return cleaned ? note + " · " + escapeHtml(cleaned) : note;
   }
 
   function formatDuration(min) {

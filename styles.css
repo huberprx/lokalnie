@@ -6513,12 +6513,12 @@ body.service-photo-preview-open {
 }
 
 .service-row__name .price-note__mark {
-  margin-left: 0.12em;
+  margin-left: 0.14em;
   font-weight: 700;
   color: var(--price-note);
   vertical-align: super;
-  font-size: 0.72em;
-  line-height: 0;
+  font-size: 0.78em;
+  line-height: 1;
 }
 
 .price-note {
