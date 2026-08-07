@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.228";
+  const APP_VERSION = "1.0.229";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -310,15 +310,59 @@
     return price == null ? "" : `${price} zł`;
   }
 
+  var INDIVIDUAL_PRICE_MARK = "*";
   var INDIVIDUAL_PRICE_NOTE = "Wycena indywidualna";
+  var INDIVIDUAL_PRICE_SHORT = "wycena indyw.";
 
-  /** Dopisz informację o wycenie indywidualnej do opisu oferty. */
-  function withIndividualPriceNote(text, price) {
-    if (price != null) return String(text || "").trim();
-    const base = String(text || "").trim();
-    if (!base) return INDIVIDUAL_PRICE_NOTE;
-    if (/wycena\s+indyw/i.test(base)) return base;
-    return base + " · " + INDIVIDUAL_PRICE_NOTE;
+  /** Gwiazdka-odwołanie przy nazwie oferty (jak przypis w tekście). */
+  function individualPriceRefMarkHtml(price) {
+    if (price != null) return "";
+    return (
+      `<span class="price-note__mark" title="${escapeHtml(INDIVIDUAL_PRICE_NOTE)}" ` +
+      `aria-label="${escapeHtml(INDIVIDUAL_PRICE_NOTE)}">${INDIVIDUAL_PRICE_MARK}</span>`
+    );
+  }
+
+  /** Treść przypisu: * + etykieta wyceny indywidualnej (ten sam kolor). */
+  function individualPriceNoteHtml(short) {
+    const label = short ? INDIVIDUAL_PRICE_SHORT : INDIVIDUAL_PRICE_NOTE;
+    return (
+      `<span class="price-note">` +
+      `<span class="price-note__mark" aria-hidden="true">${INDIVIDUAL_PRICE_MARK}</span>` +
+      `<span class="price-note__text">${escapeHtml(label)}</span>` +
+      `</span>`
+    );
+  }
+
+  /** Ustaw cenę w elemencie podsumowania (plain lub HTML przypisu). */
+  function setSummaryPriceContent(el, priceTextOrNull, opts) {
+    if (!el) return;
+    opts = opts || {};
+    if (opts.empty || opts.onlyDuration) {
+      el.textContent = "—";
+      return;
+    }
+    if (opts.hasNullPrice || priceTextOrNull == null) {
+      el.innerHTML = individualPriceNoteHtml(true);
+      return;
+    }
+    el.textContent = typeof priceTextOrNull === "string" ? priceTextOrNull : formatPrice(priceTextOrNull);
+  }
+
+  /** Opis oferty z kolorowym przypisem wyceny indywidualnej. */
+  function withIndividualPriceNoteHtml(text, price) {
+    if (price != null) {
+      const base = String(text || "").trim();
+      return base ? escapeHtml(base) : "";
+    }
+    const raw = String(text || "").trim();
+    const cleaned = raw
+      .replace(/\s*·\s*\*?\s*Wycena indywidualna/gi, "")
+      .replace(/\*?\s*Wycena indywidualna/gi, "")
+      .replace(/\s*·\s*\*?\s*wycena indyw\.?/gi, "")
+      .trim();
+    const note = individualPriceNoteHtml(false);
+    return cleaned ? escapeHtml(cleaned) + " · " + note : note;
   }
 
   function formatDuration(min) {
@@ -1922,18 +1966,18 @@
     const totals = ctx.totals;
     const hasSelection = !!totals.count;
     const durationText = hasSelection ? formatDuration(totals.duration) : "—";
-    const priceText = !hasSelection
+    const priceHtml = !hasSelection
       ? "—"
       : totals.hasNullPrice
-        ? "wycena indyw."
-        : totals.price + " zł";
+        ? individualPriceNoteHtml(true)
+        : escapeHtml(totals.price + " zł");
 
     if (isOfferRequestMode(mode)) {
       return `
         <div class="selection-summary selection-summary--inline${hasSelection ? "" : " selection-summary--empty"}">
           <div class="selection-summary__info">
             <span class="selection-summary__duration">${escapeHtml(durationText)}</span>
-            <span class="selection-summary__price">${escapeHtml(priceText)}</span>
+            <span class="selection-summary__price">${priceHtml}</span>
           </div>
           <button type="button" class="btn btn--primary selection-summary__cta" data-action="send-request" data-slug="${escapeHtml(p.slug)}"${
             ctx.canSendRequest && !p.deactivated ? "" : " disabled"
@@ -1945,7 +1989,7 @@
       <div class="selection-summary selection-summary--inline${hasSelection ? "" : " selection-summary--empty"}">
         <div class="selection-summary__info">
           <span class="selection-summary__duration">${escapeHtml(durationText)}</span>
-          <span class="selection-summary__price">${escapeHtml(priceText)}</span>
+          <span class="selection-summary__price">${priceHtml}</span>
         </div>
         <button type="button" class="btn btn--primary selection-summary__cta" data-action="confirm-booking"${
           ctx.canConfirm && !p.deactivated ? "" : " disabled"
@@ -4742,14 +4786,18 @@
 
   function renderBookingConfirmSummary(p, totals, draft) {
     const empty = !totals || !totals.count;
-    const priceText = empty ? "—" : totals.hasNullPrice ? "wycena indyw." : formatPrice(totals.price);
+    const priceHtml = empty
+      ? "—"
+      : totals.hasNullPrice
+        ? individualPriceNoteHtml(true)
+        : escapeHtml(formatPrice(totals.price));
     const durText = empty ? "—" : formatDuration(totals.duration);
     return `
       <div class="bottom-nav__summary${empty ? " bottom-nav__summary--empty" : ""}">
         <span class="bottom-nav__summary-label">Suma:</span>
         <div class="bottom-nav__summary-meta">
           <span class="bottom-nav__summary-dur">${escapeHtml(durText)}</span>
-          <span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>
+          <span class="bottom-nav__summary-price">${priceHtml}</span>
         </div>
       </div>`;
   }
@@ -6693,8 +6741,9 @@
     const variantId = on ? selectedVariantIdForService(draft, s) : defaultServiceVariantId(s);
     const resolved = resolveServiceVariant(s, variantId);
     const rowPrice = formatRowPrice(resolved.price);
-    const detailWithNote = withIndividualPriceNote(detail, resolved.price);
-    const summaryWithNote = withIndividualPriceNote(summary, resolved.price);
+    const detailWithNoteHtml = withIndividualPriceNoteHtml(detail, resolved.price);
+    const summaryWithNoteHtml = withIndividualPriceNoteHtml(summary, resolved.price);
+    const nameMarkHtml = individualPriceRefMarkHtml(resolved.price);
     const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
     const expandLabel = (expanded ? "Zwiń" : "Rozwiń") + " szczegóły: " + s.name;
     const thumbHtml = thumb
@@ -6709,14 +6758,14 @@
           ${thumbHtml}
           <button type="button" class="service-row__static-main service-row__static-main--btn"${hasDesc ? ` data-action="toggle-service-desc" data-service-id="${escapeHtml(s.id)}" aria-expanded="${expanded ? "true" : "false"}"` : " disabled aria-disabled=\"true\""} aria-label="${escapeHtml(hasDesc ? expandLabel : s.name)}" title="${escapeHtml(hasDesc ? expandLabel : s.name)}">
             <span class="service-row__body">
-              <span class="service-row__name">${escapeHtml(s.name)}</span>
+              <span class="service-row__name">${escapeHtml(s.name)}${nameMarkHtml}</span>
               ${
                 detail
                   ? `<span class="service-row__sub-clip" data-role="service-desc-clip">
-                      <span class="service-row__sub">${escapeHtml(detailWithNote)}</span>
+                      <span class="service-row__sub">${detailWithNoteHtml}</span>
                     </span>`
-                  : summaryWithNote
-                    ? `<span class="service-row__sub">${escapeHtml(summaryWithNote)}</span>`
+                  : summaryWithNoteHtml
+                    ? `<span class="service-row__sub">${summaryWithNoteHtml}</span>`
                     : ""
               }
             </span>
@@ -7175,7 +7224,7 @@
             ? `<div class="selection-summary">
                  <div class="selection-summary__info">
                    <span class="selection-summary__duration">${escapeHtml(formatDuration(totals.duration))}</span>
-                   <span class="selection-summary__price">${totals.hasNullPrice ? "wycena indyw." : escapeHtml(totals.price + " zł")}</span>
+                   <span class="selection-summary__price">${totals.hasNullPrice ? individualPriceNoteHtml(true) : escapeHtml(totals.price + " zł")}</span>
                  </div>
                  <button type="button" class="btn btn--primary selection-summary__cta" data-action="${ctaAction}" data-slug="${escapeHtml(p.slug)}">${ctaLabel}</button>
                </div>`
@@ -12278,13 +12327,11 @@
       summary.classList.toggle("bottom-nav__summary--empty", !hasSvc);
       if (dur) dur.textContent = !hasSvc ? "—" : formatDuration(totals.duration || 0);
       if (price) {
-        price.textContent = !hasSvc
-          ? "—"
-          : totals.onlyDuration
-            ? "—"
-            : totals.hasNullPrice
-              ? "wycena indyw."
-              : formatPrice(totals.price);
+        setSummaryPriceContent(price, totals.price, {
+          empty: !hasSvc,
+          onlyDuration: totals.onlyDuration,
+          hasNullPrice: totals.hasNullPrice,
+        });
       }
     });
     document.querySelectorAll('[data-role="prov-cal-add-cta"]').forEach(function (cta) {
@@ -12623,13 +12670,11 @@
       const price = summary.querySelector(".bottom-nav__summary-price");
       if (dur) dur.textContent = !hasSvc ? "—" : formatDuration(totals.duration || 0);
       if (price) {
-        price.textContent = !hasSvc
-          ? "—"
-          : totals.onlyDuration
-            ? "—"
-            : totals.hasNullPrice
-              ? "wycena indyw."
-              : formatPrice(totals.price);
+        setSummaryPriceContent(price, totals.price, {
+          empty: !hasSvc,
+          onlyDuration: totals.onlyDuration,
+          hasNullPrice: totals.hasNullPrice,
+        });
       }
     });
     document.querySelectorAll('[data-role="prov-cal-add-cta"]').forEach(function (cta) {
@@ -13115,13 +13160,13 @@
         : "";
 
     const canSave = isReply ? draft.proposals.length > 0 : hasSvc && !!draft.slotId;
-    const priceText = !hasSvc
+    const priceHtml = !hasSvc
       ? "—"
       : totals.onlyDuration
         ? "—"
         : totals.hasNullPrice
-          ? "wycena indyw."
-          : formatPrice(totals.price);
+          ? individualPriceNoteHtml(true)
+          : escapeHtml(formatPrice(totals.price));
     const durText = !hasSvc ? "—" : formatDuration(totals.duration || 0);
     const serviceSummaryHtml = renderProvCalAddServiceSummaryHtml(selected);
     const serviceAriaLabel = !hasSvc
@@ -13208,7 +13253,7 @@
               <span class="bottom-nav__summary-label">${isReply ? "Wybrane:" : "Suma:"}</span>
               <div class="bottom-nav__summary-meta">
                 <span class="bottom-nav__summary-dur">${escapeHtml(durText)}</span>
-                <span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>
+                <span class="bottom-nav__summary-price">${priceHtml}</span>
               </div>
             </div>
             <button type="button" class="bottom-nav__book" data-role="prov-cal-add-cta" data-action="${saveAction}"${saveAttrs}${
@@ -13974,7 +14019,8 @@
         ? (picked ? "Odznacz" : "Zaznacz") + " " + (s.name || "usługę")
         : "Edytuj " + (s.name || "usługę");
       const rowPrice = formatRowPrice(resolved.price);
-      const rowSub = withIndividualPriceNote(serviceListSummary(s), resolved.price);
+      const rowSubHtml = withIndividualPriceNoteHtml(serviceListSummary(s), resolved.price);
+      const nameMarkHtml = individualPriceRefMarkHtml(resolved.price);
       return `
       <div class="service-row service-row--static${variants.length ? " service-row--has-variants" : ""}${
         selected ? " is-selected" : ""
@@ -13997,8 +14043,8 @@
           }
           <div class="service-row__static-main">
             <span class="service-row__body">
-              <span class="service-row__name">${escapeHtml(s.name)}</span>
-              <span class="service-row__sub">${escapeHtml(rowSub)}</span>
+              <span class="service-row__name">${escapeHtml(s.name)}${nameMarkHtml}</span>
+              <span class="service-row__sub">${rowSubHtml}</span>
               <span class="service-row__mode service-row__mode--${escapeHtml(mode)}">${escapeHtml(modeLabel)}</span>
               <span class="service-row__locs">${escapeHtml(locLabel)}</span>
             </span>
