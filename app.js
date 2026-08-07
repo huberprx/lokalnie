@@ -50,7 +50,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.233";
+  const APP_VERSION = "1.0.234";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   /** true tylko po świadomej aktualizacji PWA — wtedy wolno zrobić jeden reload. */
@@ -7021,13 +7021,10 @@
         .join("");
     }
 
-    // Jedna płaska lista — bez osobnych flex-grup, które rozpychają wolne miejsce.
+    // Lista terminów / kolejka: bez nagłówka grupy — wystarczy tytuł oferty.
+    // „Na prośbę” zostaje jako separator, gdy są oferty prośby.
     let html = "";
-    if (openBook.length) {
-      html += `<div class="service-list__group-head">
-          <h4 class="service-list__group-title">Lista terminów</h4>
-        </div>${rowsHtml(openBook)}`;
-    }
+    if (openBook.length) html += rowsHtml(openBook);
     if (requests.length) {
       html += `<div class="service-list__sep${openBook.length ? " service-list__sep--divider" : ""}">
           <h4 class="service-list__group-title">Na prośbę</h4>
@@ -17239,14 +17236,16 @@
           <div class="settings-share">
             <div class="settings__toggle-text">
               <span class="settings-contact__label">Link profilu</span>
-              <span class="settings__hint">/${escapeHtml(p.slug)}</span>
+              <label class="settings-share__slug"><span class="settings-share__slash" aria-hidden="true">/</span><input type="text" class="settings-share__slug-input" data-role="settings-slug"
+                  value="${escapeHtml(p.slug || "")}" maxlength="80" spellcheck="false" autocomplete="off"
+                  aria-label="Slug linku profilu" title="Adres publiczny profilu — domyślnie z nazwy firmy" /></label>
             </div>
             <button type="button" class="settings-share__btn" data-action="share-provider" data-slug="${escapeHtml(p.slug)}">Udostępnij</button>
           </div>
           <div class="settings-share">
             <div class="settings__toggle-text">
               <span class="settings-contact__label">Osadzenie na stronie</span>
-              <span class="settings__hint">/embed/${escapeHtml(p.slug)}</span>
+              <span class="settings__hint" data-role="settings-embed-hint">/embed/${escapeHtml(p.slug)}</span>
             </div>
             <button type="button" class="settings-share__btn" data-action="copy-provider-embed" data-slug="${escapeHtml(p.slug)}">Kopiuj</button>
           </div>
@@ -17303,18 +17302,32 @@
     if (!p) return;
     ensureProviderBookingRules(p);
     const nameEl = document.querySelector('[data-role="settings-name"]');
+    const slugEl = document.querySelector('[data-role="settings-slug"]');
     const catEl = document.querySelector('[data-role="settings-category"]');
     const cityEl = document.querySelector('[data-role="settings-city"]');
     const addrEl = document.querySelector('[data-role="settings-address"]');
     const aboutEl = document.querySelector('[data-role="settings-about"]');
+    const prevName = p.name;
+    const prevSlug = p.slug;
     if (nameEl) {
       const n = String(nameEl.value || "").trim();
       p.name = n || p.name || "Firma";
-      // Auto-slug tylko gdy jeszcze „techniczny” (my-provider…); nie nadpisuj wybranego sluga.
-      if (/^my-provider(?:-|$)/.test(String(p.slug || ""))) {
-        p.slug = uniqueProviderSlug(slugifyProviderSlug(p.name, p.id), p.id);
-      }
     }
+    const slugRaw = slugEl ? String(slugEl.value || "").trim() : "";
+    const slugTyped = slugRaw ? slugifyProviderSlug(slugRaw, p.id) : "";
+    const editingSlug = !!(slugEl && document.activeElement === slugEl);
+    const slugInputChanged =
+      !!slugTyped && slugTyped !== String(prevSlug || "") && slugTyped !== slugifyProviderSlug(p.name, p.id);
+    // Ręczna edycja linku ma pierwszeństwo; inaczej slug z nazwy firmy / legacy z klienta.
+    if ((editingSlug || slugInputChanged) && slugTyped) {
+      p.slug = uniqueProviderSlug(slugTyped, p.id);
+      p._slugCustom = true;
+    } else if (shouldAutoSyncProviderSlug(p, prevName)) {
+      const next = uniqueProviderSlug(slugifyProviderSlug(p.name, p.id), p.id);
+      if (next) p.slug = next;
+      p._slugCustom = false;
+    }
+    if (p.slug !== prevSlug || p.name !== prevName) syncSettingsShareSlugUi(p);
     if (catEl) p.category = String(catEl.value || "").trim();
     if (cityEl) p.city = String(cityEl.value || "").trim();
     if (addrEl) p.address = String(addrEl.value || "").trim();
@@ -17366,6 +17379,27 @@
       </div>`;
   }
 
+  function applySavedProviderProfile(saved, opts) {
+    opts = opts || {};
+    const p = myProvider();
+    if (!p || !saved) return null;
+    const prevSlug = p.slug;
+    Object.assign(p, saved, {
+      services: p.services || [],
+      availability: p.availability || [],
+      _slugCustom: p._slugCustom,
+      _mine: true,
+    });
+    if (prevSlug && saved.slug && saved.slug !== prevSlug) {
+      syncSettingsShareSlugUi(p);
+      if (opts.toastSlugAdjust !== false) {
+        showToast("Link był zajęty — użyto /" + saved.slug);
+      }
+    }
+    saveState();
+    return p;
+  }
+
   async function saveProviderSettings() {
     const p = myProvider();
     if (!p) return;
@@ -17379,17 +17413,18 @@
       showToast("Zapisano ustawienia.");
       return;
     }
+    const requestedSlug = p.slug;
     const saved = await persistProviderProfileNow();
     if (!saved) {
       showToast("Nie udało się zapisać ustawień. Spróbuj ponownie.");
       return;
     }
-    Object.assign(p, saved, {
-      services: p.services || [],
-      availability: p.availability || [],
+    applySavedProviderProfile(saved, {
+      toastSlugAdjust: !!(requestedSlug && saved.slug && saved.slug !== requestedSlug),
     });
-    saveState();
-    showToast("Zapisano ustawienia.");
+    if (!(requestedSlug && saved.slug && saved.slug !== requestedSlug)) {
+      showToast("Zapisano ustawienia.");
+    }
   }
 
   let providerProfileSyncTimer = null;
@@ -17445,8 +17480,15 @@
     markProviderProfileDirty();
     if (providerProfileSyncTimer) clearTimeout(providerProfileSyncTimer);
     providerProfileSyncTimer = setTimeout(function () {
+      const requestedSlug = (myProvider() && myProvider().slug) || "";
       void persistProviderProfileNow().then(function (saved) {
-        if (!saved) showToast("Nie udało się zapisać ustawień profilu.");
+        if (!saved) {
+          showToast("Nie udało się zapisać ustawień profilu.");
+          return;
+        }
+        applySavedProviderProfile(saved, {
+          toastSlugAdjust: !!(requestedSlug && saved.slug && saved.slug !== requestedSlug),
+        });
       });
     }, 400);
   }
@@ -20647,25 +20689,66 @@
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 48);
-    return raw || fallback || "moj-profil";
+    if (!raw) return fallback || "moj-profil";
+    // API wymaga min. 3 znaków — jak slugBase po stronie workera.
+    return raw.length >= 3 ? raw : ("profil-" + raw).slice(0, 48);
+  }
+
+  function isTechnicalProviderSlug(slug) {
+    return /^my-provider(?:-|$)/i.test(String(slug || ""));
+  }
+
+  function providerSlugTakenLocally(slug, exceptId) {
+    const key = String(slug || "").toLowerCase();
+    if (!key) return true;
+    if (RESERVED_APP_PATHS[key]) return true;
+    const match = function (p) {
+      return p && String(p.slug || "").toLowerCase() === key && p.id !== exceptId && p.apiId !== exceptId;
+    };
+    if ((data().PROVIDERS || []).some(match)) return true;
+    if (listOwnedProviders().some(match)) return true;
+    // Katalog z API — unikaj kolizji z innymi firmami o tej samej nazwie.
+    if (((window.AppState && window.AppState.catalogProviders) || []).some(match)) return true;
+    return false;
   }
 
   function uniqueProviderSlug(base, exceptId) {
     let slug = base || "moj-profil";
     let n = 2;
-    while (
-      (data().PROVIDERS || []).some(function (p) {
-        return p && p.slug === slug && p.id !== exceptId;
-      }) ||
-      listOwnedProviders().some(function (p) {
-        return p && p.slug === slug && p.id !== exceptId;
-      })
-    ) {
+    while (providerSlugTakenLocally(slug, exceptId)) {
+      if (n > 99) {
+        slug = String(base || "moj-profil").slice(0, 40) + "-" + Date.now().toString(36);
+        break;
+      }
       slug = base + "-" + n;
       n += 1;
-      if (n > 99) break;
     }
     return slug;
+  }
+
+  /** Auto-slug: techniczny, z poprzedniej nazwy firmy albo legacy z imienia klienta. */
+  function shouldAutoSyncProviderSlug(p, prevName) {
+    if (!p || p._slugCustom) return false;
+    const slug = String(p.slug || "");
+    if (!slug || isTechnicalProviderSlug(slug)) return true;
+    if (prevName && slug === slugifyProviderSlug(prevName, p.id)) return true;
+    const cp = window.AppState && window.AppState.clientProfile;
+    if (cp && cp.name && slug === slugifyProviderSlug(cp.name, p.id)) return true;
+    return false;
+  }
+
+  function syncSettingsShareSlugUi(p) {
+    if (!p) return;
+    const slugEl = document.querySelector('[data-role="settings-slug"]');
+    if (slugEl && document.activeElement !== slugEl) slugEl.value = p.slug || "";
+    document.querySelectorAll('[data-action="share-provider"]').forEach(function (btn) {
+      btn.setAttribute("data-slug", p.slug || "");
+    });
+    document.querySelectorAll('[data-action="copy-provider-embed"]').forEach(function (btn) {
+      btn.setAttribute("data-slug", p.slug || "");
+    });
+    const embedHint = document.querySelector('[data-role="settings-embed-hint"]');
+    if (embedHint) embedHint.textContent = "/embed/" + (p.slug || "");
   }
 
   /** Tworzy profil usługodawcy i od razu otwiera pełne ustawienia (bez mini-formularza). */
@@ -20676,9 +20759,11 @@
     }
     const cp = ensureClientProfile();
     const n = listOwnedProviders().length;
-    const name = cp.name || "Mój profil";
+    // Nazwa firmy i slug nie biorą się z profilu klienta (Google) —
+    // start techniczny; link ustawi się z nazwy firmy w ustawieniach.
+    const name = "Mój profil";
     const id = n === 0 ? "my-provider" : "my-provider-" + (n + 1) + "-" + Date.now().toString(36);
-    const slug = uniqueProviderSlug(slugifyProviderSlug(name, id), id);
+    const slug = uniqueProviderSlug("my-provider", id);
     let profile = {
       id: id,
       slug: slug,
@@ -20696,6 +20781,7 @@
       avatarUrl: null,
       avatarInitials: accountInitials(name) || "MP",
       _mine: true,
+      _slugCustom: false,
     };
     if (!isTesterMode()) {
       const api = window.LokalnieApi;
@@ -22599,11 +22685,17 @@
     }
 
     const profileField = event.target.closest(
-      '[data-role="settings-name"], [data-role="settings-category"], [data-role="settings-city"], [data-role="settings-address"], [data-role="settings-about"], [data-role="settings-rule-future"], [data-role="settings-rule-lead"], [data-role="settings-rule-propose-hold"], [data-role="settings-rule-cancel"], [data-role="settings-rule-policy"]'
+      '[data-role="settings-name"], [data-role="settings-slug"], [data-role="settings-category"], [data-role="settings-city"], [data-role="settings-address"], [data-role="settings-about"], [data-role="settings-rule-future"], [data-role="settings-rule-lead"], [data-role="settings-rule-propose-hold"], [data-role="settings-rule-cancel"], [data-role="settings-rule-policy"]'
     );
     if (profileField) {
       captureProviderProfileFields();
       saveState();
+      if (
+        profileField.matches('[data-role="settings-name"]') ||
+        profileField.matches('[data-role="settings-slug"]')
+      ) {
+        queueProviderProfileSync();
+      }
       if (profileField.matches("select") || profileField.matches('[data-role="settings-category"]')) {
         withSettingsScroll(function () {
           renderAll();

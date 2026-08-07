@@ -229,6 +229,46 @@ function slugBase(name) {
   return normalized.length >= 3 ? normalized : `profil-${normalized}`;
 }
 
+async function isSlugTaken(env, slug, exceptId) {
+  const normalized = String(slug || "").toLowerCase();
+  if (!normalized) return true;
+  if (exceptId) {
+    const row = await env.DB.prepare(
+      "SELECT id FROM provider_profiles WHERE lower(slug)=? AND id!=?"
+    )
+      .bind(normalized, exceptId)
+      .first();
+    return !!row;
+  }
+  const row = await env.DB.prepare("SELECT id FROM provider_profiles WHERE lower(slug)=?")
+    .bind(normalized)
+    .first();
+  return !!row;
+}
+
+/** Wolny slug: baza, potem baza-2…, na końcu krótki UUID — bez 409 przy kolizji nazw. */
+async function allocateUniqueSlug(env, desired, exceptId) {
+  const base = String(desired || "uslugodawca")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  const safeBase = base.length >= 3 ? base : slugBase(base);
+  let slug = safeBase;
+  let n = 2;
+  while (await isSlugTaken(env, slug, exceptId)) {
+    if (n > 99) {
+      slug = `${safeBase.slice(0, 55)}-${crypto.randomUUID().slice(0, 8)}`;
+      if (!(await isSlugTaken(env, slug, exceptId))) return slug;
+      continue;
+    }
+    const suffix = `-${n}`;
+    slug = safeBase.slice(0, Math.max(3, 80 - suffix.length)) + suffix;
+    n += 1;
+  }
+  return slug;
+}
+
 async function insertProvider(env, userId, providerId, slug, fields) {
   const ts = nowIso();
   const [insert] = await env.DB.batch([
@@ -291,7 +331,8 @@ export async function createProviderMe(request, env, ctx) {
   }
 
   const providerId = id("provider");
-  let slug = slugResult.value || slugBase(fieldsResult.value.name);
+  const requestedSlug = slugResult.value || slugBase(fieldsResult.value.name);
+  let slug = await allocateUniqueSlug(env, requestedSlug, null);
   let created = await insertProvider(
     env,
     auth.user.id,
@@ -303,10 +344,10 @@ export async function createProviderMe(request, env, ctx) {
     .bind(auth.user.id)
     .first();
 
+  // Wyścig INSERT — kolejna próba z UUID, potem allocateUniqueSlug jeszcze raz.
   if (!provider) {
-    const base = (slugResult.value || slugBase(fieldsResult.value.name)).slice(0, 67);
     for (let attempt = 0; attempt < 3 && !provider; attempt += 1) {
-      slug = `${base}-${crypto.randomUUID().slice(0, 8)}`;
+      slug = await allocateUniqueSlug(env, `${requestedSlug.slice(0, 55)}-${crypto.randomUUID().slice(0, 8)}`, null);
       created = await insertProvider(env, auth.user.id, providerId, slug, fieldsResult.value);
       provider = await env.DB.prepare("SELECT * FROM provider_profiles WHERE user_id=?")
         .bind(auth.user.id)
@@ -352,17 +393,13 @@ export async function patchProviderMe(request, env, ctx) {
   const fields = result.value;
 
   let nextSlug = auth.provider.slug;
+  let slugAdjusted = false;
   if (body.slug != null && String(body.slug).trim() !== "") {
     const slugResult = normalizeRequestedSlug(body.slug);
     if (slugResult.error) return json({ error: "invalid_provider_fields" }, 400);
     if (slugResult.value && slugResult.value !== auth.provider.slug) {
-      const taken = await env.DB.prepare(
-        "SELECT id FROM provider_profiles WHERE slug=? AND id!=?"
-      )
-        .bind(slugResult.value, auth.provider.id)
-        .first();
-      if (taken) return json({ error: "provider_slug_conflict" }, 409);
-      nextSlug = slugResult.value;
+      nextSlug = await allocateUniqueSlug(env, slugResult.value, auth.provider.id);
+      slugAdjusted = nextSlug !== slugResult.value;
     }
   }
 
@@ -405,7 +442,10 @@ export async function patchProviderMe(request, env, ctx) {
   )
     .bind(auth.provider.id, auth.user.id)
     .first();
-  return json({ provider: await mapProvider(provider, env) });
+  return json({
+    provider: await mapProvider(provider, env),
+    slugAdjusted: !!slugAdjusted,
+  });
 }
 
 function mapAvailabilityRows(rows) {

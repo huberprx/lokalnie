@@ -687,7 +687,9 @@
         method: "PATCH",
         json: providerToApi(profile),
       });
-      return mapProviderToApp(res && res.provider, { mine: true });
+      const mapped = mapProviderToApp(res && res.provider, { mine: true });
+      if (mapped && res && res.slugAdjusted) mapped._slugAdjusted = true;
+      return mapped;
     } catch (err) {
       console.warn("[LokalnieApi] updateProviderMe failed", err);
       return null;

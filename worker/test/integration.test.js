@@ -254,7 +254,8 @@ describe("provider profile persistence", () => {
     });
     expect(response.status).toBe(201);
     const created = await response.json();
-    expect(created.provider.slug).toMatch(/^provider-one-[a-f0-9]{8}$/);
+    expect(created.provider.slug).toMatch(/^provider-one-\d+$/);
+    expect(created.provider.slug).not.toBe("provider-one");
     const user = await env.DB.prepare(
       "SELECT role_provider FROM users WHERE id='user-other'"
     ).first();
@@ -1176,8 +1177,10 @@ describe("public catalog and profile sync", () => {
       token: PROVIDER_TOKEN,
       body: { name: "Provider One", slug: "slug-taken" },
     });
-    expect(conflict.status).toBe(409);
-    expect((await conflict.json()).error).toBe("provider_slug_conflict");
+    expect(conflict.status).toBe(200);
+    const conflictBody = await conflict.json();
+    expect(conflictBody.slugAdjusted).toBe(true);
+    expect(conflictBody.provider.slug).toBe("slug-taken-2");
   });
 
   it("stores avatar_key as media id, not R2 storage key", async () => {
