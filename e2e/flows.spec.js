@@ -12,6 +12,10 @@ const {
 test.describe("Lokalnie — kluczowe przepływy", function () {
   test("odświeżenie profilu usługodawcy pozostaje na tym samym ekranie rezerwacji", async function ({ page }) {
     await resetAndLogin(page, "client");
+    await page.evaluate(function () {
+      window.AppState.onboarding = null;
+      window.App.saveState();
+    });
 
     await page.goto("/grzesiu-barber", { waitUntil: "domcontentloaded" });
     await page.waitForFunction(function () {
