@@ -22,6 +22,8 @@ beforeEach(async () => {
     env.DB.prepare("DELETE FROM bookings"),
     env.DB.prepare("DELETE FROM booking_requests"),
     env.DB.prepare("DELETE FROM provider_clients"),
+    env.DB.prepare("DELETE FROM provider_locations"),
+    env.DB.prepare("DELETE FROM geocode_cache"),
     env.DB.prepare("DELETE FROM oauth_states"),
     env.DB.prepare("DELETE FROM sessions"),
     env.DB.prepare("DELETE FROM oauth_identities"),

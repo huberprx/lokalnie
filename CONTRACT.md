@@ -55,8 +55,14 @@ poza produkcją opcjonalnie Bearer / `X-Demo-User: demo`.
 ## 5. Publiczne API katalogu
 
 - `GET /providers` — tylko `visible_in_search=1` i nie dezaktywowane; bez prywatnego e-maila gdy `emailVisible=false`.
+  - Parametry tekstowe: `q`, `city`, `category`, `subcategory`, `limit`, `offset`.
+  - Parametry geo (łącznie): `latitude`, `longitude`, `radiusKm` (allowlista: 5–50).
+  - Przy geo: bounding box + Haversine po stronie Workera; sortowanie po `distanceKm`; lokale online (bez adresu) zawsze widoczne; paginacja po filtracji.
+  - Odpowiedź może zawierać `distanceKm`, `distanceLabel`, `location`, `search`.
+- `GET /geo/suggest?q=` — podpowiedzi miejsc (geokoder po stronie API; rate limit).
 - `GET /providers/:slug` — profil aktywny (także ukryty w wyszukiwaniu), z `services` i `availability`.
 - `avatar_key` w API = `media.id`; URL = `/media/:id`.
+- Lokalizacja użytkownika (GPS) jest używana wyłącznie do wyszukiwania; nie jest logowana ani wymagana przy serwisie.
 
 ## 6. Stan (`AppState`)
 

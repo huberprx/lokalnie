@@ -391,6 +391,11 @@
       bookingMode: provider.bookingMode || "auto",
       visibleInSearch: provider.visibleInSearch !== false,
       multiSelect: provider.multiSelect !== false,
+      distanceKm:
+        typeof provider.distanceKm === "number" && Number.isFinite(provider.distanceKm)
+          ? provider.distanceKm
+          : null,
+      distanceLabel: provider.distanceLabel || null,
       locations: Array.isArray(provider.locations) ? provider.locations : [],
       socialLinks: Array.isArray(provider.socialLinks) ? provider.socialLinks : [],
       bookingRules:
@@ -679,11 +684,13 @@
   async function listProviders(params) {
     params = params || {};
     const u = new URL(BASE + "/providers");
-    ["q", "city", "category", "subcategory", "limit", "offset"].forEach(function (key) {
-      if (params[key] != null && params[key] !== "") {
-        u.searchParams.set(key, String(params[key]));
+    ["q", "city", "category", "subcategory", "limit", "offset", "latitude", "longitude", "radiusKm"].forEach(
+      function (key) {
+        if (params[key] != null && params[key] !== "") {
+          u.searchParams.set(key, String(params[key]));
+        }
       }
-    });
+    );
     const path = u.pathname + u.search;
     const res = await request(path, { suppressUnauthorized: true });
     const providers = (res.providers || [])
@@ -696,7 +703,17 @@
       total: Number(res.total || providers.length),
       limit: Number(res.limit || 0),
       offset: Number(res.offset || 0),
+      search: res.search || null,
     };
+  }
+
+  async function suggestPlaces(query) {
+    const q = String(query || "").trim();
+    if (q.length < 2) return [];
+    const u = new URL(BASE + "/geo/suggest");
+    u.searchParams.set("q", q);
+    const res = await request(u.pathname + u.search, { suppressUnauthorized: true });
+    return Array.isArray(res && res.suggestions) ? res.suggestions : [];
   }
 
   async function fetchProviderBySlug(slug) {
@@ -1172,6 +1189,7 @@
     createProviderMe: createProviderMe,
     updateProviderMe: updateProviderMe,
     listProviders: listProviders,
+    suggestPlaces: suggestPlaces,
     fetchProviderBySlug: fetchProviderBySlug,
     loadCatalog: loadCatalog,
     getProviderAvailability: getProviderAvailability,

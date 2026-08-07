@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.225";
+  const APP_VERSION = "1.0.227";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -182,6 +182,14 @@
       searchLocation: "",
       searchUseCurrentLocation: true,
       searchRadiusKm: 15,
+      /** Współrzędne punktu wyszukiwania (WGS84); źródło prawdy odległości jest na API. */
+      searchLat: null,
+      searchLng: null,
+      /** 'none' | 'gps' | 'place' */
+      searchLocationSource: "none",
+      /** '' | locating | searching | ok | denied | error | unsupported | insecure | empty */
+      searchGeoStatus: "",
+      searchSuggestions: [],
       searchOpenSlug: null,
       myCalMonth: null,
       myCalDate: null,
@@ -295,6 +303,22 @@
 
   function formatPrice(price) {
     return price == null ? "wycena indyw." : `${price} zł`;
+  }
+
+  /** Cena w wierszu oferty — bez ceny zostawiamy puste (info w opisie). */
+  function formatRowPrice(price) {
+    return price == null ? "" : `${price} zł`;
+  }
+
+  var INDIVIDUAL_PRICE_NOTE = "Wycena indywidualna";
+
+  /** Dopisz informację o wycenie indywidualnej do opisu oferty. */
+  function withIndividualPriceNote(text, price) {
+    if (price != null) return String(text || "").trim();
+    const base = String(text || "").trim();
+    if (!base) return INDIVIDUAL_PRICE_NOTE;
+    if (/wycena\s+indyw/i.test(base)) return base;
+    return base + " · " + INDIVIDUAL_PRICE_NOTE;
   }
 
   function formatDuration(min) {
@@ -458,15 +482,160 @@
     return line;
   }
 
+  function hasSearchCoordinates() {
+    return (
+      typeof window.AppState.searchLat === "number" &&
+      Number.isFinite(window.AppState.searchLat) &&
+      typeof window.AppState.searchLng === "number" &&
+      Number.isFinite(window.AppState.searchLng)
+    );
+  }
+
+  function catalogSearchParams() {
+    const params = {};
+    const q = (window.AppState.searchQuery || "").trim();
+    if (q) params.q = q;
+    if (window.AppState.searchCategory) params.category = window.AppState.searchCategory;
+    if (window.AppState.searchSubcategory) params.subcategory = window.AppState.searchSubcategory;
+    if (hasSearchCoordinates()) {
+      params.latitude = window.AppState.searchLat;
+      params.longitude = window.AppState.searchLng;
+      params.radiusKm = Number(window.AppState.searchRadiusKm) || 15;
+    } else {
+      const loc = (window.AppState.searchLocation || "").trim();
+      if (loc && !window.AppState.searchUseCurrentLocation) params.city = loc;
+    }
+    return params;
+  }
+
+  function refreshCatalogFromSearch(opts) {
+    opts = opts || {};
+    if (!window.LokalnieApi || !window.LokalnieApi.enabled || !window.LokalnieApi.loadCatalog) {
+      updateProviderLists();
+      if (opts.render !== false) renderAll();
+      return Promise.resolve({ ok: false, reason: "api_disabled" });
+    }
+    window.AppState.searchGeoStatus = "searching";
+    if (opts.render !== false) renderAll();
+    return window.LokalnieApi.loadCatalog(catalogSearchParams()).then(function (result) {
+      const list = (window.AppState.catalogProviders || []);
+      if (result && result.ok && hasSearchCoordinates() && !list.length) {
+        window.AppState.searchGeoStatus = "empty";
+      } else if (result && result.ok) {
+        window.AppState.searchGeoStatus = "ok";
+      } else if (window.AppState.searchGeoStatus === "searching") {
+        window.AppState.searchGeoStatus = "";
+      }
+      saveState();
+      updateProviderLists();
+      if (opts.render !== false) renderAll();
+      return result;
+    });
+  }
+
+  function requestCurrentLocation() {
+    const secure =
+      window.isSecureContext ||
+      location.hostname === "localhost" ||
+      location.hostname === "127.0.0.1";
+    if (!secure) {
+      window.AppState.searchGeoStatus = "insecure";
+      showToast("Lokalizacja wymaga bezpiecznego połączenia (HTTPS).");
+      renderAll();
+      return;
+    }
+    if (!navigator.geolocation) {
+      window.AppState.searchGeoStatus = "unsupported";
+      showToast("Ta przeglądarka nie obsługuje lokalizacji.");
+      renderAll();
+      return;
+    }
+    window.AppState.searchGeoStatus = "locating";
+    renderAll();
+    navigator.geolocation.getCurrentPosition(
+      function (pos) {
+        window.AppState.searchLat = pos.coords.latitude;
+        window.AppState.searchLng = pos.coords.longitude;
+        window.AppState.searchUseCurrentLocation = true;
+        window.AppState.searchLocation = "";
+        window.AppState.searchLocationSource = "gps";
+        window.AppState.searchSuggestions = [];
+        window.AppState.searchGeoStatus = "ok";
+        saveState();
+        void refreshCatalogFromSearch();
+      },
+      function (err) {
+        const denied = err && err.code === 1;
+        window.AppState.searchGeoStatus = denied ? "denied" : "error";
+        showToast(
+          denied
+            ? "Brak zgody na lokalizację. Wpisz miasto lub adres."
+            : "Nie udało się pobrać lokalizacji. Wpisz miasto lub adres."
+        );
+        renderAll();
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+    );
+  }
+
+  let _suggestTimer = null;
+  function scheduleLocationSuggestions(raw) {
+    if (_suggestTimer) clearTimeout(_suggestTimer);
+    const q = String(raw || "").trim();
+    if (q.length < 2 || !window.LokalnieApi || !window.LokalnieApi.suggestPlaces) {
+      window.AppState.searchSuggestions = [];
+      return;
+    }
+    _suggestTimer = setTimeout(function () {
+      void window.LokalnieApi.suggestPlaces(q).then(function (items) {
+        if ((window.AppState.searchLocation || "").trim() !== q) return;
+        window.AppState.searchSuggestions = Array.isArray(items) ? items.slice(0, 8) : [];
+        renderAll();
+        const again = document.querySelector('[data-role="search-location"]');
+        if (again) {
+          try {
+            again.focus({ preventScroll: true });
+          } catch (e) {
+            again.focus();
+          }
+        }
+      });
+    }, 320);
+  }
+
+  function applyPlaceSuggestion(suggestion) {
+    if (!suggestion) return;
+    const lat = Number(suggestion.latitude);
+    const lng = Number(suggestion.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    window.AppState.searchLat = lat;
+    window.AppState.searchLng = lng;
+    window.AppState.searchLocation =
+      suggestion.name || suggestion.city || suggestion.label || "";
+    window.AppState.searchUseCurrentLocation = false;
+    window.AppState.searchLocationSource = "place";
+    window.AppState.searchSuggestions = [];
+    window.AppState.searchGeoStatus = "ok";
+    saveState();
+    void refreshCatalogFromSearch();
+  }
+
   function matchesSearchLocation(p) {
     const radius = Number(window.AppState.searchRadiusKm) || 15;
+    // Online zawsze widoczne.
+    if (!p.address) return true;
+
+    // Odległość z API jest źródłem prawdy.
+    if (typeof p.distanceKm === "number" && Number.isFinite(p.distanceKm)) {
+      return p.distanceKm <= radius;
+    }
+    // Katalog z geo-search już przefiltrowany po stronie Workera.
+    if (p._fromApi && hasSearchCoordinates()) return true;
+
     const useCurrent = window.AppState.searchUseCurrentLocation;
     const loc = (window.AppState.searchLocation || "").trim().toLowerCase();
-    // Własne profile często nie mają distanceKm — brak liczby nie może wykluczać z katalogu.
     const hasDistance = typeof p.distanceKm === "number" && Number.isFinite(p.distanceKm);
     const withinRadius = !hasDistance || p.distanceKm <= radius;
-
-    if (!p.address) return true;
 
     if (useCurrent || !loc) {
       return withinRadius;
@@ -476,6 +645,43 @@
       (p.city && p.city.toLowerCase().indexOf(loc) !== -1) ||
       (p.address && p.address.toLowerCase().indexOf(loc) !== -1);
     return inPlace && withinRadius;
+  }
+
+  function searchGeoStatusHtml() {
+    const status = window.AppState.searchGeoStatus || "";
+    const messages = {
+      locating: "Pobieram lokalizację… Użyjemy jej tylko do znalezienia usług w pobliżu.",
+      searching: "Szukam lokali…",
+      denied: "Brak zgody na lokalizację. Wpisz miasto lub wybierz podpowiedź.",
+      error: "Nie udało się określić lokalizacji. Wpisz miasto lub adres.",
+      unsupported: "Przeglądarka nie obsługuje lokalizacji.",
+      insecure: "Lokalizacja wymaga HTTPS.",
+      empty: "Brak lokali w tym promieniu.",
+    };
+    const text = messages[status];
+    if (!text) return "";
+    return `<p class="search-geo-status" role="status" aria-live="polite">${escapeHtml(text)}</p>`;
+  }
+
+  function searchSuggestionsHtml() {
+    const items = window.AppState.searchSuggestions || [];
+    if (!items.length) return "";
+    return `<ul class="search-suggest" role="listbox" aria-label="Podpowiedzi lokalizacji">${items
+      .map(function (item, index) {
+        const name = item.name || item.city || item.label || "Lokalizacja";
+        const meta =
+          item.subtitle ||
+          [item.county, item.state].filter(Boolean).join(", ") ||
+          "";
+        const aria = meta ? name + ", " + meta : name;
+        return `<li role="option">
+          <button type="button" class="search-suggest__item" data-action="pick-place-suggestion" data-index="${index}" aria-label="${escapeHtml(aria)}">
+            <span class="search-suggest__name">${escapeHtml(name)}</span>
+            ${meta ? `<span class="search-suggest__meta">${escapeHtml(meta)}</span>` : ""}
+          </button>
+        </li>`;
+      })
+      .join("")}</ul>`;
   }
 
   const SEARCH_PERIODS = [
@@ -1547,9 +1753,10 @@
   }
 
   function variantChipLabel(v) {
-    const dur = formatDuration(v.durationMin);
-    const price = formatPrice(v.price);
-    return dur + " · " + price;
+    const parts = [formatDuration(v.durationMin)];
+    const price = formatRowPrice(v.price);
+    if (price) parts.push(price);
+    return parts.join(" · ");
   }
 
   function serviceDetailText(s) {
@@ -2056,7 +2263,11 @@
         }
         <span class="avatar-preview__card-meta">
           <span class="avatar-preview__card-dur">${escapeHtml(formatDuration(s.durationMin))}</span>
-          <span class="avatar-preview__card-price">${escapeHtml(formatPrice(s.price))}</span>
+          ${
+            formatRowPrice(s.price)
+              ? `<span class="avatar-preview__card-price">${escapeHtml(formatRowPrice(s.price))}</span>`
+              : ""
+          }
         </span>
       </article>`;
   }
@@ -2088,7 +2299,11 @@
                 <img class="avatar-preview__card-img" src="${escapeHtml(url)}" alt="${escapeHtml(s.name + " — zdjęcie " + (i + 1))}" loading="lazy" />
                 <span class="avatar-preview__card-meta">
                   <span class="avatar-preview__card-dur">${escapeHtml(formatDuration(s.durationMin))}</span>
-                  <span class="avatar-preview__card-price">${escapeHtml(formatPrice(s.price))}</span>
+                  ${
+                    formatRowPrice(s.price)
+                      ? `<span class="avatar-preview__card-price">${escapeHtml(formatRowPrice(s.price))}</span>`
+                      : ""
+                  }
                 </span>
               </article>`;
             })
@@ -2784,7 +2999,7 @@
     const fav = window.AppState.favorites.indexOf(p.slug) !== -1;
     const dist =
       p.address && typeof p.distanceKm === "number" && Number.isFinite(p.distanceKm)
-        ? p.distanceKm.toFixed(1) + " km"
+        ? p.distanceLabel || String(p.distanceKm).replace(".", ",") + " km"
         : p.address
           ? ""
           : "Online";
@@ -2867,15 +3082,21 @@
   }
 
   function searchLocationFieldHtml() {
-    const locVal = window.AppState.searchUseCurrentLocation ? "" : (window.AppState.searchLocation || "");
-    const showClear = !window.AppState.searchUseCurrentLocation && !!window.AppState.searchLocation;
+    const gpsActive =
+      window.AppState.searchLocationSource === "gps" && hasSearchCoordinates();
+    const locVal = gpsActive ? "" : window.AppState.searchLocation || "";
+    const showClear =
+      !!window.AppState.searchLocation ||
+      hasSearchCoordinates() ||
+      (!window.AppState.searchUseCurrentLocation && !!locVal);
+    const placeholder = gpsActive ? CURRENT_LOCATION_LABEL : "Miasto lub adres";
     return `
-          <span class="search-bar__icon" aria-hidden="true">⌖</span>
-          <input type="text" class="search-bar__input" placeholder="${escapeHtml(CURRENT_LOCATION_LABEL)}"
-            value="${escapeHtml(locVal)}" data-role="search-location" autocomplete="off" spellcheck="false" />
+          <input type="text" class="search-bar__input" placeholder="${escapeHtml(placeholder)}"
+            value="${escapeHtml(locVal)}" data-role="search-location" autocomplete="off" spellcheck="false"
+            aria-label="Lokalizacja wyszukiwania" aria-autocomplete="list" />
           ${
             showClear
-              ? `<button type="button" class="search-bar__clear" data-action="clear-location" aria-label="Użyj obecnej lokalizacji">×</button>`
+              ? `<button type="button" class="search-bar__clear" data-action="clear-location" aria-label="Wyczyść lokalizację">×</button>`
               : ""
           }`;
   }
@@ -2888,12 +3109,16 @@
           <input type="search" class="search-bar__input" placeholder="Znajdź coś dla siebie"
             value="${escapeHtml(window.AppState.searchQuery || "")}" data-role="search-input" />
         </label>
-        <label class="search-bar__segment search-bar__segment--location">${searchLocationFieldHtml()}</label>
+        <div class="search-bar__segment search-bar__segment--location search-bar__segment--loc-wrap">
+          ${searchLocationFieldHtml()}
+          ${searchSuggestionsHtml()}
+        </div>
         <label class="search-bar__segment search-bar__segment--radius">
           <select class="search-bar__select" data-role="search-radius" aria-label="Promień wyszukiwania">${renderSearchRadiusOptions()}</select>
         </label>
         <button type="button" class="search-bar__submit btn btn--primary" data-action="run-search">Szukaj</button>
-      </div>`;
+      </div>
+      ${searchGeoStatusHtml()}`;
   }
 
   function renderSearchMobileBar() {
@@ -2910,12 +3135,16 @@
           </label>
         </div>
         <div class="search-bar__row search-bar__row--meta">
-          <label class="search-bar__segment search-bar__segment--location search-bar__segment--block">${searchLocationFieldHtml()}</label>
+          <div class="search-bar__segment search-bar__segment--location search-bar__segment--block search-bar__segment--loc-wrap">
+            ${searchLocationFieldHtml()}
+            ${searchSuggestionsHtml()}
+          </div>
           <label class="search-bar__segment search-bar__segment--radius search-bar__segment--block">
             <select class="search-bar__select" data-role="search-radius" aria-label="Promień wyszukiwania">${renderSearchRadiusOptions()}</select>
           </label>
         </div>
-      </div>`;
+      </div>
+      ${searchGeoStatusHtml()}`;
   }
 
   function locationLabel(provider, locId) {
@@ -3410,6 +3639,12 @@
       // Katalog zawsze z API — nie puchnij localStorage.
       delete state.catalogProviders;
       delete state._catalogSyncedAt;
+      delete state.searchSuggestions;
+      // GPS nie persystujemy (minimalizacja danych lokalizacyjnych).
+      if (state.searchLocationSource === "gps") {
+        delete state.searchLat;
+        delete state.searchLng;
+      }
       if (isProductionHostname()) {
         // Produkcja przechowuje wyłącznie cache UI; dane CRM pochodzą z API.
         delete state.providerClients;
@@ -3484,6 +3719,24 @@
           typeof stored.searchRadiusKm === "number" && stored.searchRadiusKm > 0
             ? stored.searchRadiusKm
             : base.searchRadiusKm,
+        searchLocationSource:
+          stored.searchLocationSource === "place" || stored.searchLocationSource === "gps"
+            ? stored.searchLocationSource
+            : base.searchLocationSource,
+        searchLat:
+          stored.searchLocationSource === "place" &&
+          typeof stored.searchLat === "number" &&
+          Number.isFinite(stored.searchLat)
+            ? stored.searchLat
+            : null,
+        searchLng:
+          stored.searchLocationSource === "place" &&
+          typeof stored.searchLng === "number" &&
+          Number.isFinite(stored.searchLng)
+            ? stored.searchLng
+            : null,
+        searchGeoStatus: "",
+        searchSuggestions: [],
         searchOpenSlug: typeof stored.searchOpenSlug === "string" ? stored.searchOpenSlug : base.searchOpenSlug,
         myCalMonth: typeof stored.myCalMonth === "string" ? stored.myCalMonth : base.myCalMonth,
         myCalDate: typeof stored.myCalDate === "string" ? stored.myCalDate : base.myCalDate,
@@ -6439,6 +6692,9 @@
     const mode = serviceBookingMode(s, p);
     const variantId = on ? selectedVariantIdForService(draft, s) : defaultServiceVariantId(s);
     const resolved = resolveServiceVariant(s, variantId);
+    const rowPrice = formatRowPrice(resolved.price);
+    const detailWithNote = withIndividualPriceNote(detail, resolved.price);
+    const summaryWithNote = withIndividualPriceNote(summary, resolved.price);
     const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
     const expandLabel = (expanded ? "Zwiń" : "Rozwiń") + " szczegóły: " + s.name;
     const thumbHtml = thumb
@@ -6457,16 +6713,16 @@
               ${
                 detail
                   ? `<span class="service-row__sub-clip" data-role="service-desc-clip">
-                      <span class="service-row__sub">${escapeHtml(detail)}</span>
+                      <span class="service-row__sub">${escapeHtml(detailWithNote)}</span>
                     </span>`
-                  : summary
-                    ? `<span class="service-row__sub">${escapeHtml(summary)}</span>`
+                  : summaryWithNote
+                    ? `<span class="service-row__sub">${escapeHtml(summaryWithNote)}</span>`
                     : ""
               }
             </span>
             <span class="service-row__meta">
               <span class="service-row__dur">${escapeHtml(formatDuration(resolved.durationMin))}</span>
-              <span class="service-row__price">${escapeHtml(formatPrice(resolved.price))}</span>
+              ${rowPrice ? `<span class="service-row__price">${escapeHtml(rowPrice)}</span>` : ""}
             </span>
           </button>
           <button type="button" class="service-row__check service-row__check--radio${on ? " service-row__check--on" : ""}" data-action="toggle-service-check" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
@@ -11604,7 +11860,7 @@
     const on = ((draft && draft.serviceIds) || []).indexOf(s.id) !== -1;
     const meta = s.isDuration
       ? formatDuration(s.durationMin)
-      : [formatDuration(s.durationMin), formatPrice(s.price)].filter(Boolean).join(" · ");
+      : [formatDuration(s.durationMin), formatRowPrice(s.price)].filter(Boolean).join(" · ");
     const selectLabel = (on ? "Odznacz" : "Zaznacz") + " " + provCalAddServiceDisplayName(s);
     return `<button type="button" class="avail-loc-pick__opt prov-cal-add__service-opt${on ? " is-selected" : ""}" role="option"
       data-action="prov-cal-add-service" data-service-id="${escapeHtml(s.id)}"
@@ -13717,6 +13973,8 @@
       const rowLabel = pickMode
         ? (picked ? "Odznacz" : "Zaznacz") + " " + (s.name || "usługę")
         : "Edytuj " + (s.name || "usługę");
+      const rowPrice = formatRowPrice(resolved.price);
+      const rowSub = withIndividualPriceNote(serviceListSummary(s), resolved.price);
       return `
       <div class="service-row service-row--static${variants.length ? " service-row--has-variants" : ""}${
         selected ? " is-selected" : ""
@@ -13740,13 +13998,13 @@
           <div class="service-row__static-main">
             <span class="service-row__body">
               <span class="service-row__name">${escapeHtml(s.name)}</span>
-              <span class="service-row__sub">${escapeHtml(serviceListSummary(s))}</span>
+              <span class="service-row__sub">${escapeHtml(rowSub)}</span>
               <span class="service-row__mode service-row__mode--${escapeHtml(mode)}">${escapeHtml(modeLabel)}</span>
               <span class="service-row__locs">${escapeHtml(locLabel)}</span>
             </span>
             <span class="service-row__meta">
               <span class="service-row__dur">${escapeHtml(formatDuration(resolved.durationMin))}</span>
-              <span class="service-row__price">${escapeHtml(formatPrice(resolved.price))}</span>
+              ${rowPrice ? `<span class="service-row__price">${escapeHtml(rowPrice)}</span>` : ""}
             </span>
           </div>
           ${
@@ -21068,12 +21326,26 @@
       case "clear-location":
         window.AppState.searchUseCurrentLocation = true;
         window.AppState.searchLocation = "";
+        window.AppState.searchLat = null;
+        window.AppState.searchLng = null;
+        window.AppState.searchLocationSource = "none";
+        window.AppState.searchSuggestions = [];
+        window.AppState.searchGeoStatus = "";
         saveState();
-        renderAll();
+        void refreshCatalogFromSearch();
         break;
+      case "use-my-location":
+        requestCurrentLocation();
+        break;
+      case "pick-place-suggestion": {
+        const idx = Number(btn.getAttribute("data-index"));
+        const suggestion = (window.AppState.searchSuggestions || [])[idx];
+        applyPlaceSuggestion(suggestion);
+        break;
+      }
       case "run-search":
         saveState();
-        updateProviderLists();
+        void refreshCatalogFromSearch();
         break;
       default: break;
     }
@@ -21095,12 +21367,27 @@
       if (!val) {
         window.AppState.searchUseCurrentLocation = true;
         window.AppState.searchLocation = "";
+        window.AppState.searchLat = null;
+        window.AppState.searchLng = null;
+        window.AppState.searchLocationSource = "none";
+        window.AppState.searchSuggestions = [];
+        window.AppState.searchGeoStatus = "";
+        saveState();
+        void refreshCatalogFromSearch({ render: false });
+        updateProviderLists();
       } else {
         window.AppState.searchUseCurrentLocation = false;
         window.AppState.searchLocation = val;
+        // Tekst bez wybranej podpowiedzi — czekamy na wybór / geokod; filtr city jako fallback.
+        if (window.AppState.searchLocationSource !== "place") {
+          window.AppState.searchLat = null;
+          window.AppState.searchLng = null;
+          window.AppState.searchLocationSource = "none";
+        }
+        saveState();
+        scheduleLocationSuggestions(val);
+        updateProviderLists();
       }
-      saveState();
-      updateProviderLists();
       return;
     }
 
@@ -21228,7 +21515,11 @@
     if (radiusSel) {
       window.AppState.searchRadiusKm = Number(radiusSel.value) || 15;
       saveState();
-      updateProviderLists();
+      if (hasSearchCoordinates()) {
+        void refreshCatalogFromSearch();
+      } else {
+        updateProviderLists();
+      }
       return;
     }
 
@@ -23280,7 +23571,7 @@
     registerServiceWorker();
 
     if (window.LokalnieApi && window.LokalnieApi.enabled && window.LokalnieApi.loadCatalog) {
-      void window.LokalnieApi.loadCatalog().then(function (catalogResult) {
+      void window.LokalnieApi.loadCatalog(catalogSearchParams()).then(function (catalogResult) {
         if (catalogResult && catalogResult.ok) {
           saveState();
           updateProviderLists();

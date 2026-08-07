@@ -50,6 +50,7 @@ export function withCors(response, request, env) {
   }
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "no-referrer");
+  // API nie używa GPS przeglądarki; geolocation zostaje wyłączone w odpowiedziach API.
   headers.set("Permissions-Policy", "geolocation=(), camera=(), microphone=()");
   headers.set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
   if (env?.ENVIRONMENT === "production") {

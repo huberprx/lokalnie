@@ -26,11 +26,13 @@ import {
 } from "./services.js";
 import {
   createProviderMe,
+  geocodePendingBatch,
   getProviderAvailability,
   patchProviderMe as updateProviderMeProfile,
   putProviderAvailability,
 } from "./provider.js";
 import { listPublicProviders, getPublicProviderBySlug } from "./catalog.js";
+import { suggestPlaces } from "./geocoding.js";
 import {
   adminStats,
   adminListUsers,
@@ -49,10 +51,10 @@ const ALLOWED_IMAGE = new Set(["image/jpeg", "image/png", "image/webp", "image/g
 const MAX_UPLOAD = 5 * 1024 * 1024;
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") return preflight(request, env);
     try {
-      return withCors(await routeRequest(request, env), request, env);
+      return withCors(await routeRequest(request, env, ctx), request, env);
     } catch (err) {
       console.error(JSON.stringify({ level: "error", err: String(err?.stack || err) }));
       const response =
@@ -72,7 +74,12 @@ export default {
   },
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(
-      Promise.all([processDueEmails(env), cleanupIdempotencyKeys(env), cleanupRetention(env)])
+      Promise.all([
+        processDueEmails(env),
+        cleanupIdempotencyKeys(env),
+        cleanupRetention(env),
+        geocodePendingBatch(env, 10),
+      ])
     );
   },
 };
@@ -83,17 +90,20 @@ const OUTBOX_RETENTION_DAYS = 30;
 export async function cleanupRetention(env) {
   const now = Date.now();
   const outboxBefore = new Date(now - OUTBOX_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const [rateResult, outboxResult] = await env.DB.batch([
+  const cacheBefore = new Date(now).toISOString();
+  const [rateResult, outboxResult, cacheResult] = await env.DB.batch([
     env.DB.prepare("DELETE FROM rate_limits WHERE expires_at <= ?").bind(now),
     env.DB.prepare("DELETE FROM email_outbox WHERE created_at < ?").bind(outboxBefore),
+    env.DB.prepare("DELETE FROM geocode_cache WHERE expires_at < ?").bind(cacheBefore),
   ]);
   return {
     rateLimits: Number(rateResult?.meta?.changes || 0),
     emailOutbox: Number(outboxResult?.meta?.changes || 0),
+    geocodeCache: Number(cacheResult?.meta?.changes || 0),
   };
 }
 
-async function routeRequest(request, env) {
+async function routeRequest(request, env, ctx) {
     const url = new URL(request.url);
 
     try {
@@ -129,6 +139,7 @@ async function routeRequest(request, env) {
             authLogout: "POST /auth/logout",
             me: "GET|PATCH|DELETE /me",
             providers: "GET /providers , GET /providers/:slug",
+            geoSuggest: "GET /geo/suggest?q=",
             provider: "GET|POST|PATCH /provider/me",
             availability: "GET|PUT /provider/me/availability",
             services: "GET|POST /provider/me/services, PATCH|DELETE /provider/me/services/:id",
@@ -193,10 +204,17 @@ async function routeRequest(request, env) {
         return getPublicProviderBySlug(request, env, parts[1]);
       }
 
+      if (path === "/geo/suggest" && request.method === "GET") {
+        const q = String(url.searchParams.get("q") || "").trim().slice(0, 200);
+        if (q.length < 2) return json({ suggestions: [] });
+        const suggestions = await suggestPlaces(env, q);
+        return json({ suggestions });
+      }
+
       if (path === "/provider/me") {
         if (request.method === "GET") return getProviderMe(request, env);
-        if (request.method === "POST") return createProviderMe(request, env);
-        if (request.method === "PATCH") return updateProviderMeProfile(request, env);
+        if (request.method === "POST") return createProviderMe(request, env, ctx);
+        if (request.method === "PATCH") return updateProviderMeProfile(request, env, ctx);
       }
 
       if (path === "/provider/me/availability") {
@@ -323,6 +341,9 @@ function rateLimitConfig(path, method) {
   if (path === "/auth/logout") return { route: "auth-logout", limit: 10 };
   if (path === "/providers" || path.startsWith("/providers/")) {
     return { route: "providers-public", limit: 60 };
+  }
+  if (path === "/geo/suggest") {
+    return { route: "geo-suggest", limit: 20 };
   }
   if (isAdminPath(path) && (method === "POST" || method === "PATCH")) {
     return { route: "admin-mutate", limit: 20 };

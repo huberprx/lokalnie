@@ -2,6 +2,8 @@ import { mapProvider, requireDemoUser } from "./auth.js";
 import { id, json, nowIso, parseJsonField, readJson } from "./http.js";
 import { encryptPhone, decryptPhone } from "./pii.js";
 import { BOOKING_MODES, isValidDateISO, normalizeText, validateSlot } from "./validate.js";
+import { geocodePendingForProvider, syncProviderLocations } from "./geocoding.js";
+import { isValidLatitude, isValidLongitude } from "./geo.js";
 
 const MAX_LOCATIONS = 20;
 const MAX_SOCIAL_LINKS = 8;
@@ -52,14 +54,29 @@ function normalizeLocations(value, fallback = []) {
       return { error: true };
     }
     ids.add(itemId.value);
-    result.push({
+    const entry = {
       id: itemId.value,
       label: label.value,
       address: address.value || "",
       toneIndex: toneIndex.value,
-    });
+    };
+    if (item.latitude != null || item.longitude != null) {
+      const lat = Number(item.latitude);
+      const lng = Number(item.longitude);
+      if (!isValidLatitude(lat) || !isValidLongitude(lng)) return { error: true };
+      entry.latitude = lat;
+      entry.longitude = lng;
+    }
+    result.push(entry);
   }
   return { value: result };
+}
+
+async function persistLocationRows(env, providerId, fields) {
+  await syncProviderLocations(env, providerId, fields.locations, {
+    city: fields.city,
+    address: fields.address,
+  });
 }
 
 function normalizeSocialLinks(value, fallback = []) {
@@ -252,7 +269,7 @@ async function insertProvider(env, userId, providerId, slug, fields) {
   return !!insert.meta?.changes;
 }
 
-export async function createProviderMe(request, env) {
+export async function createProviderMe(request, env, ctx) {
   const auth = await requireDemoUser(request, env);
   if (auth.error) return auth.error;
   if (auth.provider) {
@@ -297,10 +314,34 @@ export async function createProviderMe(request, env) {
     }
   }
   if (!provider) return json({ error: "provider_slug_conflict" }, 409);
+  if (created) {
+    await persistLocationRows(env, provider.id, fieldsResult.value);
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(geocodePendingForProvider(env, provider.id));
+    }
+  }
   return json({ provider: await mapProvider(provider, env), created }, created ? 201 : 200);
 }
 
-export async function patchProviderMe(request, env) {
+/** Uruchamia geokodowanie pending (np. z waitUntil / cron). */
+export async function geocodeProviderLocations(env, providerId) {
+  if (!providerId) return;
+  await geocodePendingForProvider(env, providerId);
+}
+
+export async function geocodePendingBatch(env, limit = 10) {
+  const rows = await env.DB.prepare(
+    `SELECT DISTINCT provider_id FROM provider_locations
+     WHERE geocode_status='pending' LIMIT ?`
+  )
+    .bind(Math.min(50, Math.max(1, limit)))
+    .all();
+  for (const row of rows.results || []) {
+    await geocodePendingForProvider(env, row.provider_id);
+  }
+}
+
+export async function patchProviderMe(request, env, ctx) {
   const auth = await requireDemoUser(request, env);
   if (auth.error) return auth.error;
   if (!auth.provider) return json({ error: "provider_not_found" }, 404);
@@ -355,6 +396,10 @@ export async function patchProviderMe(request, env) {
       auth.user.id
     )
     .run();
+  await persistLocationRows(env, auth.provider.id, fields);
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil(geocodePendingForProvider(env, auth.provider.id));
+  }
   const provider = await env.DB.prepare(
     "SELECT * FROM provider_profiles WHERE id=? AND user_id=?"
   )

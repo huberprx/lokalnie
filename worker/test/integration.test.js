@@ -25,6 +25,8 @@ beforeEach(async () => {
     env.DB.prepare("DELETE FROM provider_clients"),
     env.DB.prepare("DELETE FROM provider_services"),
     env.DB.prepare("DELETE FROM provider_availability"),
+    env.DB.prepare("DELETE FROM provider_locations"),
+    env.DB.prepare("DELETE FROM geocode_cache"),
     env.DB.prepare("DELETE FROM oauth_states"),
     env.DB.prepare("DELETE FROM sessions"),
     env.DB.prepare("DELETE FROM oauth_identities"),
@@ -1033,6 +1035,119 @@ describe("public catalog and profile sync", () => {
     const hiddenDirect = await publicApi("/providers/hidden-shop");
     expect(hiddenDirect.status).toBe(200);
     expect((await hiddenDirect.json()).provider.slug).toBe("hidden-shop");
+  });
+
+  it("returns place suggestions with name and county/state subtitle", async () => {
+    const nominatimPayload = [
+      {
+        lat: "52.8",
+        lon: "15.1",
+        name: "Sarbia",
+        type: "village",
+        display_name: "Sarbia, powiat krośnieński, województwo lubuskie, Polska",
+        address: {
+          village: "Sarbia",
+          county: "powiat krośnieński",
+          state: "województwo lubuskie",
+        },
+      },
+      {
+        lat: "53.1",
+        lon: "15.5",
+        name: "Sarbinowo",
+        type: "village",
+        display_name: "Sarbinowo, powiat strzelecko-drezdenecki, województwo lubuskie, Polska",
+        address: {
+          village: "Sarbinowo",
+          county: "powiat strzelecko-drezdenecki",
+          state: "województwo lubuskie",
+        },
+      },
+    ];
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(nominatimPayload), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+
+    const res = await publicApi("/geo/suggest?q=Sarb");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.suggestions).toHaveLength(2);
+    expect(body.suggestions[0]).toMatchObject({
+      name: "Sarbia",
+      county: "Krośnieński",
+      state: "Lubuskie",
+      subtitle: "Krośnieński, Lubuskie",
+    });
+    expect(body.suggestions[1].name).toBe("Sarbinowo");
+    expect(body.suggestions[1].subtitle).toContain("Lubuskie");
+    expect(fetchMock).toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
+  it("filters providers by latitude/longitude/radiusKm with inclusive boundary", async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        `UPDATE provider_profiles
+         SET city='Warszawa', address='ul. Marszalkowska 12', visible_in_search=1, deactivated=0
+         WHERE id='provider-1'`
+      ),
+      env.DB.prepare(
+        `INSERT INTO users (id, email, name, role_client, role_provider)
+         VALUES ('user-far', 'far@example.com', 'Far', 1, 1)`
+      ),
+      env.DB.prepare(
+        `INSERT INTO users (id, email, name, role_client, role_provider)
+         VALUES ('user-online', 'online@example.com', 'Online', 1, 1)`
+      ),
+      env.DB.prepare(
+        `INSERT INTO provider_profiles
+           (id, user_id, slug, name, email, city, address, visible_in_search, deactivated)
+         VALUES
+           ('provider-far', 'user-far', 'far-shop', 'Far Shop', 'far@example.com',
+            'Krakow', 'ul. Florianska 1', 1, 0),
+           ('provider-online', 'user-online', 'online-tutor', 'Online Tutor', 'online@example.com',
+            'Warszawa', '', 1, 0)`
+      ),
+      env.DB.prepare(
+        `INSERT INTO provider_locations
+           (id, provider_id, label, address, city, latitude, longitude, geocode_status, geocode_source)
+         VALUES
+           ('loc-near', 'provider-1', 'Studio', 'ul. Marszalkowska 12', 'Warszawa',
+            52.2297, 21.0122, 'ok', 'seed'),
+           ('loc-far', 'provider-far', 'Studio', 'ul. Florianska 1', 'Krakow',
+            50.0614, 19.9372, 'ok', 'seed')`
+      ),
+    ]);
+
+    const near = await publicApi(
+      "/providers?latitude=52.2297&longitude=21.0122&radiusKm=5"
+    );
+    expect(near.status).toBe(200);
+    const nearBody = await near.json();
+    const nearSlugs = nearBody.providers.map((p) => p.slug);
+    expect(nearSlugs).toContain("provider-one");
+    expect(nearSlugs).toContain("online-tutor");
+    expect(nearSlugs).not.toContain("far-shop");
+    expect(nearBody.providers.find((p) => p.slug === "provider-one").distanceKm).toBe(0);
+    expect(nearBody.search.radiusKm).toBe(5);
+
+    const wider = await publicApi(
+      "/providers?latitude=52.2297&longitude=21.0122&radiusKm=50"
+    );
+    const widerBody = await wider.json();
+    expect(widerBody.providers.map((p) => p.slug)).not.toContain("far-shop");
+
+    const krakow = await publicApi(
+      "/providers?latitude=50.0614&longitude=19.9372&radiusKm=5"
+    );
+    expect((await krakow.json()).providers.map((p) => p.slug)).toContain("far-shop");
+
+    const bad = await publicApi("/providers?latitude=52.2&radiusKm=15");
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).error).toBe("incomplete_coordinates");
   });
 
   it("accepts profile bookingMode queue/request and updates slug", async () => {

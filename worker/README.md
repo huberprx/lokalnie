@@ -57,7 +57,8 @@ i muszą być załadowane jawnie wyłącznie do lokalnej bazy.
 |---|---|---|
 | GET | `/me` | Profil (demo) |
 | PATCH | `/me` | Edycja profilu |
-| GET | `/providers` | Publiczny katalog (q, city, category, subcategory, limit, offset) |
+| GET | `/providers` | Publiczny katalog (q, city, category, subcategory, latitude, longitude, radiusKm, limit, offset) |
+| GET | `/geo/suggest` | Podpowiedzi lokalizacji (q) — geokoder po stronie API |
 | GET | `/providers/:slug` | Publiczny profil + usługi + dostępność |
 | GET | `/calendar/google/connect` | Rozpoczęcie OAuth Google Calendar |
 | GET | `/auth/google/calendar/callback` | Powrót OAuth Google Calendar |
@@ -134,6 +135,28 @@ Dozwolone wartości `repeat` to `none`, `weekly` i `biweekly`. API przyjmuje
 maksymalnie 366 unikalnych dni i 3 niepokrywające się bloki na dzień.
 Niepuste `locationId` musi wskazywać lokalizację z profilu. `GET` i `PUT`
 zwracają znormalizowane `{ availability }`, posortowane po dacie i godzinie.
+
+### Wyszukiwanie geo
+
+`GET /providers?latitude=&longitude=&radiusKm=` liczy odległość Haversine po stronie Workera
+(po bounding boxie na `provider_locations`). `radiusKm` musi być z listy:
+`5, 10, 15, 20, 25, 30, 40, 50`. Lokale bez adresu ulicznego (online) są zawsze dołączane.
+Współrzędne użytkownika nie są logowane ani zapisywane po stronie API.
+
+`GET /geo/suggest?q=` korzysta z Nominatim (OpenStreetMap) z cache D1 `geocode_cache`.
+Podpowiedzi mają format marketplace: **nazwa miejscowości** + druga linia
+**powiat, województwo** (bez prefiksów „powiat”/„województwo”).
+Opcjonalnie ustaw User-Agent:
+
+```bash
+npx wrangler secret put GEOCODER_USER_AGENT
+```
+
+Po migracji `0013_provider_locations_geo.sql` uruchom lokalnie:
+
+```bash
+npm run db:migrate:local
+```
 
 ## Zasoby
 
