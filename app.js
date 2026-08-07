@@ -43,10 +43,12 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.228";
+  const APP_VERSION = "1.0.229";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
+  /** Jednorazowa migracja: demo nie jest już domyślne na localhost. */
+  const DEMO_DEFAULT_OFF_KEY = "lokalnie.demoDefaultOff.v1";
 
   function isProductionHostname() {
     if (window.LokalnieApi && typeof window.LokalnieApi.isProductionHostname === "function") {
@@ -58,6 +60,9 @@
 
   function isTesterMode() {
     if (isProductionHostname()) return false;
+    if (window.LokalnieApi && typeof window.LokalnieApi.isTesterMode === "function") {
+      return window.LokalnieApi.isTesterMode();
+    }
     try {
       return localStorage.getItem(TESTER_KEY) === "1";
     } catch (err) {
@@ -72,6 +77,39 @@
     } catch (err) {
       /* ignore */
     }
+  }
+
+  /** Wyłącz zapamiętany tryb testera przy pierwszym starcie po przejściu na „production-first”. */
+  function migrateDemoDefaultOff() {
+    if (isProductionHostname()) return;
+    try {
+      if (localStorage.getItem(DEMO_DEFAULT_OFF_KEY) === "1") return;
+      localStorage.removeItem(TESTER_KEY);
+      localStorage.setItem(DEMO_DEFAULT_OFF_KEY, "1");
+    } catch (err) {
+      /* ignore */
+    }
+  }
+
+  function isDemoRecord(item, prefix) {
+    if (!item) return false;
+    if (item._demo) return true;
+    const id = String(item.id || "");
+    return !!prefix && id.indexOf(prefix) === 0;
+  }
+
+  function cloneDemoBooking(b) {
+    return Object.assign({}, b, { _demo: true });
+  }
+
+  function cloneDemoRequest(r) {
+    return Object.assign({}, r, {
+      _demo: true,
+      days: Array.isArray(r.days) ? r.days.map(function (d) { return Object.assign({}, d); }) : [],
+      proposals: Array.isArray(r.proposals) ? r.proposals.map(function (p) { return Object.assign({}, p); }) : [],
+      serviceIds: Array.isArray(r.serviceIds) ? r.serviceIds.slice() : [],
+      serviceNames: Array.isArray(r.serviceNames) ? r.serviceNames.slice() : [],
+    });
   }
 
   function hasApiToken() {
@@ -149,23 +187,15 @@
   }
 
   function defaultState() {
-    const includeDemo = !isProductionHostname();
+    // Demo tylko po świadomym „Kontynuuj jako tester” — lokalnie domyślnie jak produkcja.
+    const includeDemo = isTesterMode();
     return {
       role: { client: "client", provider: "provider" },
       screen: { client: DEFAULT_SCREEN.client, provider: DEFAULT_SCREEN.provider },
       params: { client: {}, provider: {} },
       favorites: [],
-      bookings: (includeDemo ? data().DEMO_BOOKINGS || [] : []).map(function (b) {
-        return Object.assign({}, b);
-      }),
-      requests: (includeDemo ? data().DEMO_REQUESTS || [] : []).map(function (r) {
-        return Object.assign({}, r, {
-          days: Array.isArray(r.days) ? r.days.map(function (d) { return Object.assign({}, d); }) : [],
-          proposals: Array.isArray(r.proposals) ? r.proposals.map(function (p) { return Object.assign({}, p); }) : [],
-          serviceIds: Array.isArray(r.serviceIds) ? r.serviceIds.slice() : [],
-          serviceNames: Array.isArray(r.serviceNames) ? r.serviceNames.slice() : [],
-        });
-      }),
+      bookings: (includeDemo ? data().DEMO_BOOKINGS || [] : []).map(cloneDemoBooking),
+      requests: (includeDemo ? data().DEMO_REQUESTS || [] : []).map(cloneDemoRequest),
       notifications: [],
       calendarConnections: [],
       catalogProviders: [],
@@ -422,7 +452,7 @@
       return p && (p.slug === slug || p.id === slug);
     });
     if (fromCatalog) return fromCatalog;
-    if (isProductionHostname()) return null;
+    if (!isTesterMode()) return null;
     return (data().PROVIDERS || []).find((p) => p.slug === slug || p.id === slug) || null;
   }
 
@@ -438,7 +468,7 @@
       return p && (p.id === id || p.apiId === id || p.slug === id);
     });
     if (fromCatalog) return fromCatalog;
-    if (isProductionHostname()) return null;
+    if (!isTesterMode()) return null;
     return (data().PROVIDERS || []).find((p) => p.id === id || p.slug === id) || null;
   }
 
@@ -691,7 +721,7 @@
   ];
 
   function demoTodayISO() {
-    if (!isProductionHostname()) return data().DEMO_TODAY_ISO || "2026-07-16";
+    if (isTesterMode()) return data().DEMO_TODAY_ISO || "2026-07-16";
     const today = new Date();
     return today.getFullYear() + "-" + pad(today.getMonth() + 1) + "-" + pad(today.getDate());
   }
@@ -850,6 +880,47 @@
         avatarInitials: mock.avatarInitials || accountInitials(mock.name) || "GB",
       })
     );
+  }
+
+  /** Podgląd testera: dociągnij wizyty i prośby demo (idempotentnie). */
+  function seedTesterDemoData() {
+    if (!isTesterMode() || !window.AppState) return;
+    if (!Array.isArray(window.AppState.bookings)) window.AppState.bookings = [];
+    if (!Array.isArray(window.AppState.requests)) window.AppState.requests = [];
+
+    const existingById = Object.create(null);
+    window.AppState.bookings.forEach(function (b) {
+      if (b && b.id) existingById[b.id] = b;
+    });
+    (data().DEMO_BOOKINGS || []).forEach(function (b) {
+      if (!b || !b.id) return;
+      const cur = existingById[b.id];
+      if (!cur) {
+        window.AppState.bookings.push(cloneDemoBooking(b));
+        return;
+      }
+      cur._demo = true;
+      ["clientPhone", "clientEmail", "clientAddress"].forEach(function (key) {
+        if (!String(cur[key] || "").trim() && String(b[key] || "").trim()) cur[key] = b[key];
+      });
+    });
+
+    const existingReq = Object.create(null);
+    window.AppState.requests.forEach(function (r) {
+      if (r && r.id) existingReq[r.id] = r;
+    });
+    (data().DEMO_REQUESTS || []).forEach(function (r) {
+      if (!r || !r.id) return;
+      const cur = existingReq[r.id];
+      if (!cur) {
+        window.AppState.requests.push(cloneDemoRequest(r));
+        return;
+      }
+      cur._demo = true;
+      ["clientPhone", "clientEmail", "clientAddress"].forEach(function (key) {
+        if (!String(cur[key] || "").trim() && String(r[key] || "").trim()) cur[key] = r[key];
+      });
+    });
   }
 
   const BOOKING_FUTURE_OPTS = [
@@ -1178,11 +1249,11 @@
     });
   }
 
-  /** Katalog: API + (poza prod) mocki + własne aktywne profile widoczne w wyszukiwaniu. */
+  /** Katalog: API + (tylko tryb testera) mocki + własne aktywne profile widoczne w wyszukiwaniu. */
   function catalogProviders() {
     const owned = (window.AppState && window.AppState.providerProfiles) || [];
     const fromApi = (window.AppState && window.AppState.catalogProviders) || [];
-    const mocks = isProductionHostname() ? [] : data().PROVIDERS || [];
+    const mocks = isTesterMode() ? data().PROVIDERS || [] : [];
 
     function sameProvider(a, b) {
       return (
@@ -3886,53 +3957,16 @@
       window.AppState = base;
     }
 
-    // Dopnij brakujące wizyty demo (np. po starym localStorage), ale nigdy po prawdziwym OAuth na prod.
-    const demoBookings = isProductionHostname() ? [] : data().DEMO_BOOKINGS || [];
-    if (demoBookings.length) {
-      const existingById = Object.create(null);
-      (window.AppState.bookings || []).forEach(function (b) {
-        if (b && b.id) existingById[b.id] = b;
+    // Poza trybem testera usuń resztki demo z localStorage; w testerze dociągnij brakujące rekordy.
+    if (!isTesterMode()) {
+      window.AppState.bookings = (window.AppState.bookings || []).filter(function (b) {
+        return !isDemoRecord(b, "bk-demo-");
       });
-      demoBookings.forEach(function (b) {
-        if (!b || !b.id) return;
-        const cur = existingById[b.id];
-        if (!cur) {
-          window.AppState.bookings.push(Object.assign({}, b));
-          return;
-        }
-        // Uzupełnij brakujące dane kontaktu z demo (bez nadpisywania edycji użytkownika).
-        ["clientPhone", "clientEmail", "clientAddress"].forEach(function (key) {
-          if (!String(cur[key] || "").trim() && String(b[key] || "").trim()) cur[key] = b[key];
-        });
+      window.AppState.requests = (window.AppState.requests || []).filter(function (r) {
+        return !isDemoRecord(r, "rq-demo-");
       });
-    }
-
-    // Dopnij brakujące prośby o termin z demo (+ uzupełnij telefon / e-mail).
-    const demoRequests = isProductionHostname() ? [] : data().DEMO_REQUESTS || [];
-    if (demoRequests.length) {
-      if (!Array.isArray(window.AppState.requests)) window.AppState.requests = [];
-      const existingReq = Object.create(null);
-      window.AppState.requests.forEach(function (r) {
-        if (r && r.id) existingReq[r.id] = r;
-      });
-      demoRequests.forEach(function (r) {
-        if (!r || !r.id) return;
-        const cur = existingReq[r.id];
-        if (!cur) {
-          window.AppState.requests.push(
-            Object.assign({}, r, {
-              days: Array.isArray(r.days) ? r.days.map(function (d) { return Object.assign({}, d); }) : [],
-              proposals: Array.isArray(r.proposals) ? r.proposals.map(function (p) { return Object.assign({}, p); }) : [],
-              serviceIds: Array.isArray(r.serviceIds) ? r.serviceIds.slice() : [],
-              serviceNames: Array.isArray(r.serviceNames) ? r.serviceNames.slice() : [],
-            })
-          );
-          return;
-        }
-        ["clientPhone", "clientEmail", "clientAddress"].forEach(function (key) {
-          if (!String(cur[key] || "").trim() && String(r[key] || "").trim()) cur[key] = r[key];
-        });
-      });
+    } else {
+      seedTesterDemoData();
     }
 
     const hasProposedClientVisit = (window.AppState.bookings || []).some(function (b) {
@@ -3971,8 +4005,20 @@
     const rules = ensureProviderBookingRules(provider);
     const today = demoTodayISO();
     const minLeadMin = ignoreLead ? 0 : rules.minLeadHours * 60;
-    // Prototyp: „teraz” = DEMO_TODAY 09:00 — reguła min. wyprzedzenia odcina poranne sloty tego dnia.
-    const nowMin = dateISO === today ? 9 * 60 + minLeadMin : dateISO < today ? Number.POSITIVE_INFINITY : 0;
+    // Tryb testera: sztuczne „teraz” = DEMO_TODAY 09:00. Poza testerem — prawdziwy zegar.
+    let nowMin;
+    if (dateISO < today) {
+      nowMin = Number.POSITIVE_INFINITY;
+    } else if (dateISO === today) {
+      if (isTesterMode()) {
+        nowMin = 9 * 60 + minLeadMin;
+      } else {
+        const now = new Date();
+        nowMin = now.getHours() * 60 + now.getMinutes() + minLeadMin;
+      }
+    } else {
+      nowMin = 0;
+    }
 
     const busy = [];
     (provider.busy || []).forEach((b) => {
@@ -19528,6 +19574,7 @@
     window.AppState.loggedIn = true;
     seedTesterClientProfile();
     seedTesterProviderProfiles();
+    seedTesterDemoData();
     window.AppState.activeRole = role;
     // Po bramce — dokończ akcję. Bez pending (np. z nagłówka) pokaż 1. okno onboardingu.
     if (pending && role === "client") {
@@ -19554,7 +19601,7 @@
 
   function googleLogin() {
     if (!window.LokalnieApi || !window.LokalnieApi.googleLoginUrl) {
-      showToast("API niedostępne — użyj logowania demo.");
+      showToast("API niedostępne. Spróbuj ponownie lub użyj lokalnego podglądu testera.");
       return;
     }
     window.location.href = window.LokalnieApi.googleLoginUrl(window.location.origin + "/");
@@ -23522,6 +23569,7 @@
     bindAvailWeekScrollBridge();
     bindAvailDaySwipe();
     bindAvailTimePickers();
+    migrateDemoDefaultOff();
     loadState();
     // Stary flow ustawiał loggedIn przy samym wejściu w marketplace — bez tokena = gość.
     try {

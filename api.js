@@ -1,10 +1,11 @@
-// api.js — klient API Lokalnie (sesja OAuth albo tryb demo: X-Demo-User).
+// api.js — klient API Lokalnie (sesja OAuth; lokalny demo auth tylko w trybie testera).
 // Wystawia: window.LokalnieApi
 (function () {
   "use strict";
 
   const BASE = "https://api.lokalnie.app";
   const TOKEN_KEY = "lokalnie.authToken";
+  const TESTER_KEY = "lokalnie.testerMode";
   const REQUEST_TIMEOUT_MS = 10000;
   const MAX_GET_RETRIES = 1;
   const DEMO_HEADER = { "X-Demo-User": "demo" };
@@ -57,6 +58,16 @@
     return host === "lokalnie.app" || host.endsWith(".lokalnie.app");
   }
 
+  /** Lokalny podgląd testera — świadomy opt-in; nigdy na produkcji. */
+  function isTesterMode() {
+    if (isProductionHostname()) return false;
+    try {
+      return localStorage.getItem(TESTER_KEY) === "1";
+    } catch (err) {
+      return false;
+    }
+  }
+
   function getAuthToken() {
     if (isProductionHostname()) return "";
     try {
@@ -83,8 +94,9 @@
   function authHeaders() {
     const token = getAuthToken();
     if (token) return { Authorization: "Bearer " + token };
-    if (isProductionHostname()) return {};
-    return Object.assign({}, DEMO_HEADER);
+    // Demo auth tylko po „Kontynuuj jako tester” — lokalnie domyślnie jak produkcja (gość / Google).
+    if (isTesterMode()) return Object.assign({}, DEMO_HEADER);
+    return {};
   }
 
   function newIdempotencyKey(action) {
@@ -586,12 +598,12 @@
       const otherBookings = (window.AppState.bookings || []).filter(function (b) {
         if (!b) return false;
         if (b._fromApi) return false;
-        // Demo zostaje lokalnie/testowo, ale nigdy w prawdziwej sesji produkcyjnej.
-        if (b._demo) return !isProductionHostname();
+        // Demo zostaje wyłącznie w świadomym trybie testera.
+        if (b._demo || (b.id && String(b.id).indexOf("bk-demo-") === 0)) return isTesterMode();
         const pid = b.providerId;
         return pid !== appProviderId && pid !== apiProviderId;
       });
-      window.AppState.bookings = isProductionHostname()
+      window.AppState.bookings = isProductionHostname() || !isTesterMode()
         ? serverBookings
         : otherBookings.concat(serverBookings);
 
@@ -600,11 +612,11 @@
       const otherRequests = (window.AppState.requests || []).filter(function (r) {
         if (!r) return false;
         if (r._fromApi) return false;
-        if (r._demo) return !isProductionHostname();
+        if (r._demo || (r.id && String(r.id).indexOf("rq-demo-") === 0)) return isTesterMode();
         const pid = r.providerId;
         return pid !== appProviderId && pid !== apiProviderId;
       });
-      window.AppState.requests = isProductionHostname()
+      window.AppState.requests = isProductionHostname() || !isTesterMode()
         ? serverRequests
         : otherRequests.concat(serverRequests);
 
@@ -1174,6 +1186,7 @@
     enabled: true,
     TOKEN_KEY: TOKEN_KEY,
     isProductionHostname: isProductionHostname,
+    isTesterMode: isTesterMode,
     getAuthToken: getAuthToken,
     setAuthToken: setAuthToken,
     clearAuthToken: clearAuthToken,

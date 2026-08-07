@@ -2,7 +2,7 @@
 
 Komunikator do rezerwacji usług lokalnych — podgląd interfejsu + szkielet API na Cloudflare.
 
-## Frontend (prototyp)
+## Frontend
 
 Otwórz `index.html` w przeglądarce lub uruchom lokalny serwer:
 
@@ -10,6 +10,9 @@ Otwórz `index.html` w przeglądarce lub uruchom lokalny serwer:
 npm start
 # albo: python3 -m http.server 8080 --bind 127.0.0.1
 ```
+
+Lokalnie domyślnie działa ścieżka produkcyjna: katalog i konto z API (`https://api.lokalnie.app`), logowanie przez Google.  
+Dane demo (firmy z `data.js`, sztuczna data, `X-Demo-User`) włączają się tylko po świadomym **Kontynuuj jako tester** / **Podgląd testera**.
 
 ### Testy E2E (Playwright)
 
@@ -19,14 +22,14 @@ npx playwright install chromium
 npm test
 ```
 
-Scenariusze w `e2e/flows.spec.js`: prośba→propozycja→rezerwacja, zmiana terminu, kolizja slotów.
+Scenariusze w `e2e/flows.spec.js`: prośba→propozycja→rezerwacja, zmiana terminu, kolizja slotów. E2E korzysta z podglądu testera.
 
 ## Backend API (Cloudflare Workers Free)
 
 - URL: https://api.lokalnie.app
 - Kod: katalog [`worker/`](worker/)
 - Health: https://api.lokalnie.app/health
-- Auth: Google OAuth (`Zaloguj przez Google`) albo demo (`X-Demo-User: demo`)
+- Auth: Google OAuth (`Zaloguj przez Google`); lokalny demo auth (`X-Demo-User: demo`) tylko w trybie testera i tylko gdy API nie jest `ENVIRONMENT=production`
 - Frontend (`api.js`) synchronizuje CRM, rezerwacje, prośby i awatar z API
 - Działa: CRM klientów, rezerwacje, prośby o termin, upload zdjęć (R2), kolejka maili
 
