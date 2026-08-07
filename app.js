@@ -20831,12 +20831,19 @@
         const showOnboarding = needsClientOnboarding(me.user) && !me.provider;
         sessionRestored = true;
         deferPending = showOnboarding;
-        // Na jawnej trasie /:slug nie przełączaj roli na panel usługodawcy przed nawigacją.
+        // Jawna trasa klienta, także "/", ma pierwszeństwo przed przywróceniem
+        // ostatniej roli usługodawcy — lista usług nie może migać panelem.
         const route = parseAppRouteFromLocation();
         const onPublicProvider =
           !!route && (route.kind === "provider" || route.kind === "embed") && !!route.slug;
+        const onExplicitClientRoute =
+          !!route && route.kind === "screen" && route.role === "client";
         const restoreProvider =
-          !showOnboarding && !!me.provider && !peekPendingIntent() && !onPublicProvider;
+          !showOnboarding &&
+          !!me.provider &&
+          !peekPendingIntent() &&
+          !onPublicProvider &&
+          !onExplicitClientRoute;
         window.AppState.activeRole = restoreProvider ? "provider" : "client";
         if (restoreProvider) window.AppState.screen.provider = DEFAULT_SCREEN.provider;
         window.AppState.onboarding = showOnboarding ? "client" : null;
