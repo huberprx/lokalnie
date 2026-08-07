@@ -6524,6 +6524,11 @@ body.service-photo-preview-open {
 .price-note {
   color: var(--price-note);
   font-weight: 600;
+}
+
+/* Podsumowanie — jedna linia; w opisie oferty pozwól zawijać jak zwykły tekst. */
+.bottom-nav__summary-price .price-note,
+.selection-summary__price .price-note {
   white-space: nowrap;
 }
 

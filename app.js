@@ -43,7 +43,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.230";
+  const APP_VERSION = "1.0.231";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   const TESTER_KEY = "lokalnie.testerMode";
@@ -349,7 +349,7 @@
     el.textContent = typeof priceTextOrNull === "string" ? priceTextOrNull : formatPrice(priceTextOrNull);
   }
 
-  /** Opis oferty z kolorowym przypisem wyceny indywidualnej (przypis na początku — widoczny przy clamp). */
+  /** Opis oferty z kolorowym przypisem wyceny indywidualnej (na końcu — bez zmiany kolejności treści). */
   function withIndividualPriceNoteHtml(text, price) {
     if (price != null) {
       const base = String(text || "").trim();
@@ -362,7 +362,7 @@
       .replace(/\s*·\s*\*?\s*wycena indyw\.?/gi, "")
       .trim();
     const note = individualPriceNoteHtml(false);
-    return cleaned ? note + " · " + escapeHtml(cleaned) : note;
+    return cleaned ? escapeHtml(cleaned) + " · " + note : note;
   }
 
   function formatDuration(min) {
@@ -1706,7 +1706,15 @@
         btn.setAttribute("aria-expanded", expanded ? "true" : "false");
         if (btn.classList.contains("service-row__static-main--btn")) {
           const nameEl = row.querySelector(".service-row__name");
-          const name = nameEl ? nameEl.textContent.trim() : "usługa";
+          // Bez gwiazdki-przypisu w etykiecie (textContent brałby też "*").
+          const name = nameEl
+            ? Array.prototype.map
+                .call(nameEl.childNodes, function (n) {
+                  return n.nodeType === 3 ? n.textContent : "";
+                })
+                .join("")
+                .trim() || "usługa"
+            : "usługa";
           const expandLabel = (expanded ? "Zwiń" : "Rozwiń") + " szczegóły: " + name;
           btn.setAttribute("aria-label", expandLabel);
           btn.setAttribute("title", expandLabel);
