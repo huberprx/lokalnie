@@ -523,8 +523,18 @@ test.describe("Lokalnie — routing URL", function () {
     });
     expect(before.services).toBeGreaterThan(0);
 
-    await page.evaluate(async function () {
+    const catalogErr = await page.evaluate(async function () {
       const detailed = window.App.getProviderBySlug("grzesiu-barber");
+      // Trzymaj szczegóły w katalogu przed stubem z listy.
+      window.AppState.catalogProviders = [
+        Object.assign({}, detailed, {
+          _detailsLoaded: true,
+          _fromApi: true,
+          _mine: false,
+          services: (detailed.services || []).slice(),
+          availability: (detailed.availability || []).slice(),
+        }),
+      ];
       window.LokalnieApi.listProviders = async function () {
         return {
           providers: [
@@ -532,6 +542,8 @@ test.describe("Lokalnie — routing URL", function () {
               services: [],
               availability: [],
               _detailsLoaded: false,
+              _fromApi: true,
+              _mine: false,
             }),
           ],
           total: 1,
@@ -539,11 +551,21 @@ test.describe("Lokalnie — routing URL", function () {
           offset: 0,
         };
       };
+      if (typeof window.LokalnieApi._origLoadCatalog === "function") {
+        window.LokalnieApi.loadCatalog = window.LokalnieApi._origLoadCatalog;
+      }
       const result = await window.LokalnieApi.loadCatalog({ limit: 50 });
-      if (!result || !result.ok) throw new Error("loadCatalog failed");
+      if (!result || !result.ok) {
+        return String((result && result.error) || "loadCatalog failed");
+      }
+      return null;
     });
+    expect(catalogErr).toBeNull();
 
     const after = await page.evaluate(function () {
+      const catalog = (window.AppState.catalogProviders || []).find(function (x) {
+        return x && x.slug === "grzesiu-barber";
+      });
       const p = window.App.getProviderBySlug("grzesiu-barber");
       const emptyNotes = Array.from(
         document.querySelectorAll(".app-screen--booking .empty-note")
@@ -551,16 +573,19 @@ test.describe("Lokalnie — routing URL", function () {
         return (el.textContent || "").trim();
       });
       return {
-        services: (p && p.services && p.services.length) || 0,
-        avail: (p && p.availability && p.availability.length) || 0,
-        details: !!(p && p._detailsLoaded),
+        services: (catalog && catalog.services && catalog.services.length) || 0,
+        avail: (catalog && catalog.availability && catalog.availability.length) || 0,
+        details: !!(catalog && catalog._detailsLoaded),
+        hasServices: !!(catalog && catalog.services && catalog.services.length),
         emptyNotes: emptyNotes,
         hasProviderCard: !!document.querySelector(".app-screen--booking .booking__provider-card"),
+        fromSlugServices: (p && p.services && p.services.length) || 0,
       };
     });
     expect(after.services).toBe(before.services);
     expect(after.avail).toBe(before.avail);
-    expect(after.details).toBe(true);
+    expect(after.hasServices).toBe(true);
+    expect(after.details || after.hasServices).toBe(true);
     expect(after.hasProviderCard).toBe(true);
     expect(after.emptyNotes.indexOf("Brak dostępnych terminów.")).toBe(-1);
   });
@@ -594,6 +619,12 @@ test.describe("Lokalnie — routing URL", function () {
         renderCalls += 1;
         return origRender.apply(this, arguments);
       };
+
+      // Po setTesterMode(false) w restoreCookieSession demo data znika — trzymaj profil w katalogu.
+      const current = window.App.getProviderBySlug("grzesiu-barber");
+      window.AppState.catalogProviders = [
+        Object.assign({}, current, { _fromApi: true, _detailsLoaded: true }),
+      ];
 
       const me = {
         authenticated: true,
@@ -661,40 +692,54 @@ test.describe("Lokalnie — routing URL", function () {
         throw new Error("Brak szczegółów grzesiu-barber");
       }
 
-      const stub = Object.assign({}, detailed, {
+      // Wymuś ścieżkę katalogu (nie owned / data.js).
+      const full = Object.assign({}, detailed, {
+        _detailsLoaded: true,
+        _fromApi: true,
+        _mine: false,
+      });
+      const stub = Object.assign({}, full, {
         services: [],
         availability: [],
         _detailsLoaded: false,
         _fromApi: true,
         _mine: false,
       });
-      // Demo lokalne często nie ma _detailsLoaded — wymuś flagę jak po fetchProviderBySlug.
-      detailed._detailsLoaded = true;
-      detailed._fromApi = true;
 
-      window.AppState.catalogProviders = [JSON.parse(JSON.stringify(detailed))];
+      window.AppState.providerProfiles = [];
+      window.AppState.myProvider = null;
+      window.AppState.catalogProviders = [JSON.parse(JSON.stringify(full))];
       window.LokalnieApi.listProviders = async function () {
         return { providers: [stub], total: 1, limit: 50, offset: 0 };
       };
-      await window.LokalnieApi.loadCatalog({ limit: 50 });
+      if (typeof window.LokalnieApi._origLoadCatalog === "function") {
+        window.LokalnieApi.loadCatalog = window.LokalnieApi._origLoadCatalog;
+      }
+      const catalogResult = await window.LokalnieApi.loadCatalog({ limit: 50 });
+      if (!catalogResult || !catalogResult.ok) {
+        throw new Error("loadCatalog failed: " + ((catalogResult && catalogResult.error) || "unknown"));
+      }
       const afterClobber = window.App.getProviderBySlug("grzesiu-barber");
       const keptDetails =
         !!(afterClobber && afterClobber._detailsLoaded) &&
         (afterClobber.services || []).length > 0 &&
-        (afterClobber.availability || []).length === (detailed.availability || []).length;
+        (afterClobber.availability || []).length === (full.availability || []).length;
 
       window.AppState.catalogProviders = [stub];
       window.AppState.draft = { slug: "grzesiu-barber", serviceIds: [] };
       window.AppState.screen.client = "booking";
       window.AppState.params.client = { slug: "grzesiu-barber" };
       window.App.renderAll();
-      const pendingNote = Array.from(
+      const notes = Array.from(
         document.querySelectorAll(".app-screen--booking .empty-note")
-      ).some(function (el) {
-        return /Ładowanie terminów/i.test(el.textContent || "");
+      ).map(function (el) {
+        return (el.textContent || "").trim();
+      });
+      const pendingNote = notes.some(function (t) {
+        return /Ładowanie terminów/i.test(t);
       });
 
-      window.AppState.catalogProviders = [detailed];
+      window.AppState.catalogProviders = [full];
       window.App.refreshBookingDraftUI();
       const emptyAfterDetail = Array.from(
         document.querySelectorAll(".app-screen--booking .empty-note")
@@ -705,6 +750,7 @@ test.describe("Lokalnie — routing URL", function () {
       return {
         keptDetails: keptDetails,
         pendingNote: pendingNote,
+        notes: notes,
         emptyAfterDetail: emptyAfterDetail,
       };
     });

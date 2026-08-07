@@ -6565,7 +6565,7 @@ body.service-photo-preview-open {
   letter-spacing: 0;
 }
 
-/* Legenda wyceny indywidualnej — druga linia pod opisem (ta sama gwiazdka + tekst). */
+/* Legenda wyceny — druga linia pod opisem (ta sama gwiazdka + „Wycena”). */
 .service-row__indiv-note {
   display: block;
   font-size: 0.78rem;

@@ -774,7 +774,7 @@
       return Object.assign({}, prev, next, {
         services: Array.isArray(prev.services) ? prev.services : [],
         availability: Array.isArray(prev.availability) ? prev.availability : [],
-        _detailsLoaded: prev._detailsLoaded != null ? !!prev._detailsLoaded : true,
+        _detailsLoaded: true,
         _mine: !!(prev._mine || next._mine),
       });
     }
@@ -796,7 +796,12 @@
       let offset = Number(options.offset) || 0;
 
       while (true) {
-        const result = await listProviders(
+        // Przez LokalnieApi — testy mogą podmienić listProviders bez patchowania closures.
+        const listFn =
+          (window.LokalnieApi && typeof window.LokalnieApi.listProviders === "function"
+            ? window.LokalnieApi.listProviders
+            : listProviders);
+        const result = await listFn(
           Object.assign({}, options, { limit: pageSize, offset: offset })
         );
         const pageProviders = result.providers || [];

@@ -448,18 +448,18 @@
   }
 
   function hasIndividualPriceCopy(text) {
-    return /wycena\s+indyw/i.test(String(text || ""));
+    return /\bwycena(?:\s+indywidualna)?\b/i.test(String(text || ""));
   }
 
-  /** Czy pokazać legendę wyceny indywidualnej (gdy brak ceny i nie ma jej już w tekście). */
+  /** Czy pokazać legendę wyceny (gdy brak ceny i nie ma jej już w tekście). */
   function shouldShowIndividualPriceNote(text, price) {
     return price == null && !hasIndividualPriceCopy(text);
   }
 
-  /** HTML drugiej linii: ta sama gwiazdka + „Wycena indywidualna”. */
+  /** HTML drugiej linii: ta sama gwiazdka + „Wycena”. */
   function individualPriceNoteHtml(text, price) {
     if (!shouldShowIndividualPriceNote(text, price)) return "";
-    return `<span class="service-row__indiv-note">${individualPriceMarkHtml()} <span class="service-row__indiv-note-label">Wycena indywidualna</span></span>`;
+    return `<span class="service-row__indiv-note">${individualPriceMarkHtml()} <span class="service-row__indiv-note-label">Wycena</span></span>`;
   }
 
   /** Ustaw tekst/HTML ceny w stopce (gwiazdka / „120 zł*”). */
@@ -623,7 +623,7 @@
       return Object.assign({}, prev, next, {
         services: Array.isArray(prev.services) ? prev.services : [],
         availability: Array.isArray(prev.availability) ? prev.availability : [],
-        _detailsLoaded: prev._detailsLoaded != null ? !!prev._detailsLoaded : true,
+        _detailsLoaded: true,
         _mine: !!(prev._mine || next._mine),
       });
     }
