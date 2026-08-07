@@ -6526,12 +6526,6 @@ body.service-photo-preview-open {
   font-weight: 600;
 }
 
-/* Podsumowanie — jedna linia; w opisie oferty pozwól zawijać jak zwykły tekst. */
-.bottom-nav__summary-price .price-note,
-.selection-summary__price .price-note {
-  white-space: nowrap;
-}
-
 .price-note__mark {
   color: var(--price-note);
   font-weight: 700;
@@ -6546,9 +6540,11 @@ body.service-photo-preview-open {
   margin-left: 0.15em;
 }
 
+/* Podsumowanie — jedna linia; w opisie oferty tekst zawija się normalnie. */
 .bottom-nav__summary-price .price-note,
 .selection-summary__price .price-note {
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .service-row__sub {
