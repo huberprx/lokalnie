@@ -50,7 +50,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.234";
+  const APP_VERSION = "1.0.236";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   /** true tylko po świadomej aktualizacji PWA — wtedy wolno zrobić jeden reload. */
@@ -2281,12 +2281,21 @@
     return "/embed/" + encodeURIComponent(String(slug || "").trim());
   }
 
+  /** Osadzenie samego panelu rezerwacji — bez paska profilu (imię, ulubione, info). */
+  function providerEmbedPanelPath(slug) {
+    return providerEmbedPath(slug) + "/panel";
+  }
+
   function providerShareUrl(slug) {
     return location.origin + providerPublicPath(slug);
   }
 
   function providerEmbedUrl(slug) {
     return location.origin + providerEmbedPath(slug);
+  }
+
+  function providerEmbedPanelUrl(slug) {
+    return location.origin + providerEmbedPanelPath(slug);
   }
 
   function syncPublicProviderUrl(slug, opts) {
@@ -2303,6 +2312,7 @@
         kind: opts.embed ? "embed" : "provider",
         slug: slug,
         serviceIds: serviceIds,
+        panel: !!(opts.embed && opts.panel),
       },
       { replace: !!opts.replace }
     );
@@ -2312,10 +2322,11 @@
     writeAppRoute({ kind: "screen", screen: "search", role: "client" });
   }
 
-  function providerEmbedSnippet(slug) {
+  function providerEmbedSnippet(slug, opts) {
+    opts = opts || {};
     const p = getProviderBySlug(slug);
     const title = (p && p.name) || "Lokalnie";
-    const src = providerEmbedUrl(slug);
+    const src = opts.panel ? providerEmbedPanelUrl(slug) : providerEmbedUrl(slug);
     return (
       '<iframe src="' +
       src +
@@ -2363,9 +2374,24 @@
     copyTextOrToast(providerEmbedSnippet(slug), "Kod osadzenia skopiowany ✓");
   }
 
-  function setEmbedMode(on) {
-    document.documentElement.classList.toggle("embed-mode", !!on);
-    document.body.classList.toggle("embed-mode", !!on);
+  function copyProviderEmbedPanel(slug) {
+    const p = getProviderBySlug(slug);
+    if (!p) return;
+    copyTextOrToast(providerEmbedSnippet(slug, { panel: true }), "Kod panelu rezerwacji skopiowany ✓");
+  }
+
+  function setEmbedMode(on, opts) {
+    opts = opts || {};
+    const enabled = !!on;
+    const panel = enabled && !!opts.panel;
+    document.documentElement.classList.toggle("embed-mode", enabled);
+    document.body.classList.toggle("embed-mode", enabled);
+    document.documentElement.classList.toggle("embed-mode--panel", panel);
+    document.body.classList.toggle("embed-mode--panel", panel);
+  }
+
+  function isEmbedPanelMode() {
+    return document.documentElement.classList.contains("embed-mode--panel");
   }
 
   function reportProvider(slug) {
@@ -4170,7 +4196,6 @@
     // Poza trybem testera usuń resztki demo z localStorage; w testerze dociągnij brakujące rekordy.
     if (!isTesterMode()) {
       purgeTesterFixturesFromState();
-      saveState();
     } else {
       seedTesterDemoData();
     }
@@ -4188,6 +4213,10 @@
     if (window.AppState.loggedIn && isTesterMode() && !listOwnedProviders().length) {
       seedTesterProviderProfiles();
     }
+
+    // Project mode: nie przywracaj lipcowej daty demo jako bieżącego widoku.
+    sanitizeProvCalFocusDate();
+    saveState();
 
     return window.AppState;
   }
@@ -7463,9 +7492,13 @@
     const ctx = buildBookingContext(p);
     if (!ctx) return renderBookingLoading();
     const mode = draftBookingMode(p);
+    const panelEmbed = isEmbedPanelMode();
     // Nagłówek poza .booking-mobile — na desktopie ten blok jest ukrywany,
     // a bez karty usługodawcy ekran rezerwacji wygląda na „pusty”.
-    const providerHead = `
+    // /embed/:slug/panel — sam panel usług i terminów (bez paska profilu).
+    const providerHead = panelEmbed
+      ? ""
+      : `
         <div class="booking__provider-card${ctx.draft.providerInfoOpen ? " booking__provider-card--info-open" : ""}">
           ${renderProviderCard(p, false, { staticMain: true, bookingHeader: true, showBack: true })}
           ${ctx.draft.providerInfoOpen ? renderProviderInfoPopover(p) : ""}
@@ -7491,7 +7524,7 @@
             </div>`;
 
     return `
-      <div class="app-screen app-screen--client app-screen--booking" data-booking-mode="${isOfferRequestMode(mode) ? mode : "auto"}">
+      <div class="app-screen app-screen--client app-screen--booking${panelEmbed ? " app-screen--booking-panel" : ""}" data-booking-mode="${isOfferRequestMode(mode) ? mode : "auto"}"${panelEmbed ? ' data-booking-embed="panel"' : ""}>
         ${providerHead}
         <div class="booking-mobile">
           <div class="booking booking--mobile-split">
@@ -8343,13 +8376,39 @@
       });
   }
 
-  function ensureProvCalDate() {
-    if (window.AppState.provCalDate) return window.AppState.provCalDate;
+  /** Domyślny fokus kalendarza: dziś, albo najbliższa przyszła wizyta. */
+  function defaultProvCalFocusDate() {
     const today = demoTodayISO();
     const next = providerVisits().find(function (b) {
       return b.dateISO >= today;
     });
-    window.AppState.provCalDate = (next && next.dateISO) || today;
+    return (next && next.dateISO) || today;
+  }
+
+  /**
+   * Odrzuć zapamiętaną datę z przeszłości (localStorage / stary ?data=).
+   * Inaczej project mode zostaje na dacie z demo (np. lipiec), zamiast dziś.
+   * Nie wołać przy każdym renderze — wtedy nie da się przeglądać dni wstecz.
+   */
+  function sanitizeProvCalFocusDate() {
+    const today = demoTodayISO();
+    const date = window.AppState.provCalDate;
+    if (date && /^\d{4}-\d{2}-\d{2}$/.test(String(date)) && String(date) >= today) {
+      return date;
+    }
+    const next = defaultProvCalFocusDate();
+    window.AppState.provCalDate = next;
+    window.AppState.provCalPickerMonth = next.slice(0, 7);
+    window.AppState.provCalWindowStart = defaultProvCalWindowStart(
+      next,
+      clampProvCalVisibleDays(window.AppState.provCalVisibleDays)
+    );
+    return next;
+  }
+
+  function ensureProvCalDate() {
+    if (window.AppState.provCalDate) return window.AppState.provCalDate;
+    window.AppState.provCalDate = defaultProvCalFocusDate();
     return window.AppState.provCalDate;
   }
 
@@ -17249,6 +17308,13 @@
             </div>
             <button type="button" class="settings-share__btn" data-action="copy-provider-embed" data-slug="${escapeHtml(p.slug)}">Kopiuj</button>
           </div>
+          <div class="settings-share">
+            <div class="settings__toggle-text">
+              <span class="settings-contact__label">Panel rezerwacji</span>
+              <span class="settings__hint" data-role="settings-embed-panel-hint">/embed/${escapeHtml(p.slug)}/panel</span>
+            </div>
+            <button type="button" class="settings-share__btn" data-action="copy-provider-embed-panel" data-slug="${escapeHtml(p.slug)}">Kopiuj</button>
+          </div>
         </div>
       </div>`;
   }
@@ -18259,11 +18325,21 @@
       window.AppState.params.client &&
       window.AppState.params.client.slug;
     if (paramsSlug && paramsSlug !== slug) return false;
-    return !!document.querySelector(".app-screen--booking .booking__provider-card");
+    const booking = document.querySelector(".app-screen--booking");
+    if (!booking) return false;
+    // Panel bez nagłówka — wystarczy widoczny układ usług/terminów.
+    if (isEmbedPanelMode() || booking.getAttribute("data-booking-embed") === "panel") {
+      return !!(
+        booking.querySelector('[data-role="booking-mobile-services"]') ||
+        booking.querySelector(".booking-layout") ||
+        booking.querySelector(".booking__services-list")
+      );
+    }
+    return !!booking.querySelector(".booking__provider-card");
   }
 
   function refreshBookingProviderHead(p) {
-    if (!p) return;
+    if (!p || isEmbedPanelMode()) return;
     document.querySelectorAll(".app-screen--booking .booking__provider-card").forEach(function (card) {
       const draft = window.AppState.draft;
       const infoOpen = !!(draft && draft.providerInfoOpen);
@@ -18319,7 +18395,11 @@
     paintBookingProviderUI(p, { slug: publicSlug });
     window.AppState.bookingPanelEnterSlug = null;
     if (!opts.skipUrlSync) {
-      syncPublicProviderUrl(publicSlug, { embed: !!opts.embed, replace: !!opts.replaceUrl });
+      syncPublicProviderUrl(publicSlug, {
+        embed: !!opts.embed,
+        panel: !!opts.panel,
+        replace: !!opts.replaceUrl,
+      });
     }
   }
 
@@ -19867,10 +19947,21 @@
       };
     }
 
+    const embedPanelPath = path.match(/^\/embed\/([^/]+)\/panel$/);
+    if (embedPanelPath && embedPanelPath[1]) {
+      return {
+        kind: "embed",
+        panel: true,
+        slug: safeDecodeRoutePart(embedPanelPath[1]),
+        serviceIds: routeQueryValues(params, "usluga", APP_ROUTE_QUERY.embed),
+        fromHash: false,
+      };
+    }
     const embedPath = path.match(/^\/embed\/([^/]+)$/);
     if (embedPath && embedPath[1]) {
       return {
         kind: "embed",
+        panel: false,
         slug: safeDecodeRoutePart(embedPath[1]),
         serviceIds: routeQueryValues(params, "usluga", APP_ROUTE_QUERY.embed),
         fromHash: false,
@@ -19897,7 +19988,12 @@
     const params = new URLSearchParams();
     let path = "/";
     if (route.kind === "provider" || route.kind === "embed") {
-      path = route.kind === "embed" ? providerEmbedPath(route.slug) : providerPublicPath(route.slug);
+      path =
+        route.kind === "embed"
+          ? route.panel
+            ? providerEmbedPanelPath(route.slug)
+            : providerEmbedPath(route.slug)
+          : providerPublicPath(route.slug);
       (route.serviceIds || []).filter(Boolean).forEach(function (id) {
         params.append("usluga", id);
       });
@@ -19964,6 +20060,7 @@
     ) {
       return {
         kind: document.documentElement.classList.contains("embed-mode") ? "embed" : "provider",
+        panel: isEmbedPanelMode(),
         slug: state.params.client.slug,
         serviceIds: state.draft && Array.isArray(state.draft.serviceIds) ? state.draft.serviceIds : [],
       };
@@ -20092,7 +20189,7 @@
     ) {
       window.AppState.activeRole = "client";
       window.AppState.appMenuOpen = false;
-      setEmbedMode(route.kind === "embed");
+      setEmbedMode(route.kind === "embed", { panel: !!route.panel });
       if (route.kind === "embed") window.AppState.loggedIn = true;
       saveState();
       updateAppHeader("client");
@@ -20100,6 +20197,7 @@
       if (!bookingScreenPaintedForSlug(route.slug) || !refreshBookingDraftUI()) {
         void openProvider(route.slug, {
           embed: route.kind === "embed",
+          panel: !!route.panel,
           serviceIds: route.serviceIds || [],
           preserveDraft: true,
           skipUrlSync: true,
@@ -20180,6 +20278,8 @@
           window.AppState.provCalDate = null;
           window.AppState.provCalWindowStart = null;
         }
+        // Stare ?data= / zapis z przeszłości nie mogą trzymać kalendarza poza „dziś”.
+        sanitizeProvCalFocusDate();
       }
     } else {
       window.AppState.screen.client = route.screen || "search";
@@ -20256,7 +20356,7 @@
           );
           return applyScreenRoute({ kind: "screen", role: "client", screen: "search" });
         }
-        setEmbedMode(route.kind === "embed");
+        setEmbedMode(route.kind === "embed", { panel: !!route.panel });
         if (route.kind === "embed") window.AppState.loggedIn = true;
         window.AppState.activeRole = "client";
         window.AppState.appMenuOpen = false;
@@ -20272,6 +20372,7 @@
         renderAll();
         void openProvider(route.slug, {
           embed: route.kind === "embed",
+          panel: !!route.panel,
           serviceIds: route.serviceIds || [],
           preserveDraft: true,
           skipUrlSync: true,
@@ -20289,6 +20390,7 @@
           writeAppRoute(
             {
               kind: route.kind,
+              panel: !!route.panel,
               slug: (provider && provider.slug) || route.slug,
               serviceIds:
                 window.AppState.draft && Array.isArray(window.AppState.draft.serviceIds)
@@ -20312,7 +20414,7 @@
     if (!route || (route.kind !== "provider" && route.kind !== "embed") || !route.slug) {
       return false;
     }
-    setEmbedMode(route.kind === "embed");
+    setEmbedMode(route.kind === "embed", { panel: !!route.panel });
     if (route.kind === "embed") window.AppState.loggedIn = true;
     window.AppState.activeRole = "client";
     window.AppState.appMenuOpen = false;
@@ -20334,6 +20436,7 @@
       if (!refreshBookingDraftUI()) {
         openProviderResolved(existing, route.slug, {
           embed: route.kind === "embed",
+          panel: !!route.panel,
           serviceIds: route.serviceIds || [],
           preserveDraft: true,
           skipUrlSync: true,
@@ -20345,6 +20448,7 @@
     }
     void openProvider(route.slug, {
       embed: route.kind === "embed",
+      panel: !!route.panel,
       serviceIds: route.serviceIds || [],
       preserveDraft: true,
       skipUrlSync: true,
@@ -20747,8 +20851,13 @@
     document.querySelectorAll('[data-action="copy-provider-embed"]').forEach(function (btn) {
       btn.setAttribute("data-slug", p.slug || "");
     });
+    document.querySelectorAll('[data-action="copy-provider-embed-panel"]').forEach(function (btn) {
+      btn.setAttribute("data-slug", p.slug || "");
+    });
     const embedHint = document.querySelector('[data-role="settings-embed-hint"]');
     if (embedHint) embedHint.textContent = "/embed/" + (p.slug || "");
+    const embedPanelHint = document.querySelector('[data-role="settings-embed-panel-hint"]');
+    if (embedPanelHint) embedPanelHint.textContent = "/embed/" + (p.slug || "") + "/panel";
   }
 
   /** Tworzy profil usługodawcy i od razu otwiera pełne ustawienia (bez mini-formularza). */
@@ -21752,6 +21861,10 @@
         event.preventDefault();
         copyProviderEmbed(d.slug);
         break;
+      case "copy-provider-embed-panel":
+        event.preventDefault();
+        copyProviderEmbedPanel(d.slug);
+        break;
       case "report-provider":
         event.preventDefault();
         reportProvider(d.slug);
@@ -21918,7 +22031,7 @@
         updateAppHeader("provider");
         if (d.tab === "availability") openAvailability();
         else if (d.tab === "calendar") {
-          ensureProvCalDate();
+          sanitizeProvCalFocusDate();
           navigate("provider", "calendar", {});
         } else if (d.tab === "requests") openProvCalAddRequests();
         else navigate("provider", d.tab, {});
@@ -24648,6 +24761,19 @@
       saveState();
       renderAll();
     }, 60000);
+    // Zegar nie odświeża DOM-u sam — usuń sloty, które stały się przeszłe,
+    // także gdy użytkownik zostawi ekran rezerwacji otwarty.
+    setInterval(function () {
+      if (
+        !window.AppState ||
+        window.AppState.screen.client !== "booking" ||
+        !window.AppState.draft ||
+        !window.AppState.draft.dateISO
+      ) {
+        return;
+      }
+      refreshBookingDraftUI();
+    }, 30000);
     if (!initialRoute) handleAppRoute();
     bindPwaInstallPrompt();
     registerServiceWorker();

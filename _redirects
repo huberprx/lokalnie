@@ -1,3 +1,3 @@
-# Cloudflare Pages — czyste URL-e profili (/slug, /embed/slug) → SPA
+# Cloudflare Pages — czyste URL-e profili (/slug, /embed/slug, /embed/slug/panel) → SPA
 /embed/*    /index.html   200
 /*          /index.html   200

@@ -11,7 +11,13 @@ import {
 import { disconnectCalendar, listCalendarConnections, syncBookingToGoogle } from "./calendar.js";
 import { prepareEmailOutbox, listOutbox, processDueEmails } from "./email.js";
 import { mapClient, mapBooking, mapRequest, mapMedia } from "./mappers.js";
-import { validateSlot, normalizeText, normalizeStringArray, isValidDateISO } from "./validate.js";
+import {
+  validateBookingWindow,
+  validateSlot,
+  normalizeText,
+  normalizeStringArray,
+  isValidDateISO,
+} from "./validate.js";
 import { canTransitionBooking } from "./bookings.js";
 import { cleanupIdempotencyKeys, withIdempotency } from "./idempotency.js";
 import { enforceRateLimit, rateLimitScope } from "./rateLimit.js";
@@ -723,7 +729,7 @@ async function createBookingMutation(request, env, auth) {
 
   const providerId = body.providerId || auth.provider?.id;
   if (!providerId) return json({ error: "provider_id_required" }, 400);
-  const provider = await env.DB.prepare("SELECT id FROM provider_profiles WHERE id=?")
+  const provider = await env.DB.prepare("SELECT id, booking_rules_json FROM provider_profiles WHERE id=?")
     .bind(providerId)
     .first();
   if (!provider) return json({ error: "provider_not_found" }, 404);
@@ -737,6 +743,20 @@ async function createBookingMutation(request, env, auth) {
     : "confirmed";
   const slotError = validateSlot({ dateISO: body.dateISO, from: body.from, to: body.to });
   if (slotError) return json({ error: slotError }, 400);
+  let bookingRules = {};
+  try {
+    bookingRules = JSON.parse(provider.booking_rules_json || "{}");
+  } catch {
+    bookingRules = {};
+  }
+  const windowError = validateBookingWindow({
+    dateISO: body.dateISO,
+    from: body.from,
+    // Usługodawca może ręcznie dodać dzisiejszy termin bez limitu wyprzedzenia,
+    // ale nie może zapisać wizyty, która już się rozpoczęła.
+    minLeadHours: ownProviderBooking ? 0 : bookingRules.minLeadHours,
+  });
+  if (windowError) return json({ error: windowError }, 400);
 
   const serviceIdsResult = normalizeStringArray(body.serviceIds, 50, 100);
   const serviceNamesResult = normalizeStringArray(body.serviceNames, 50, 120);
@@ -933,6 +953,17 @@ async function patchBookingMutation(request, env, auth, bookingId) {
     locationLabel = body.locationLabel ?? row.location_label;
     const slotError = validateSlot({ dateISO, from, to });
     if (slotError) return json({ error: slotError }, 400);
+    const slotChanged =
+      dateISO !== row.date_iso || from !== row.time_from || to !== row.time_to;
+    if (slotChanged) {
+      // Usługodawca może przesunąć bez limitu wyprzedzenia, ale nie w przeszłość.
+      const windowError = validateBookingWindow({
+        dateISO,
+        from,
+        minLeadHours: 0,
+      });
+      if (windowError) return json({ error: windowError }, 400);
+    }
     const locationResult = normalizeText(locationLabel, 240);
     if (locationResult.error) return json({ error: "location_too_long" }, 400);
     locationLabel = locationResult.value;
@@ -1144,6 +1175,13 @@ async function proposeRequestMutation(request, env, auth, requestId) {
     const proposal = proposals[i];
     const slotError = validateSlot(proposal || {});
     if (slotError) return json({ error: slotError, proposalIndex: i }, 400);
+    // Propozycja musi być w przyszłości; limit wyprzedzenia nie blokuje usługodawcy.
+    const windowError = validateBookingWindow({
+      dateISO: proposal.dateISO,
+      from: proposal.from,
+      minLeadHours: 0,
+    });
+    if (windowError) return json({ error: windowError, proposalIndex: i }, 400);
     const location = normalizeText(proposal.locationLabel, 240);
     const proposalId = normalizeText(proposal.id, 100);
     if (proposalId.error) return json({ error: "proposal_id_too_long", proposalIndex: i }, 400);
@@ -1211,6 +1249,23 @@ async function acceptRequestMutation(request, env, auth, requestId) {
   if (!chosen) return json({ error: "proposal_not_found" }, 404);
   const slotError = validateSlot(chosen);
   if (slotError) return json({ error: slotError }, 400);
+  const provider = await env.DB.prepare(
+    "SELECT booking_rules_json FROM provider_profiles WHERE id=?"
+  )
+    .bind(row.provider_id)
+    .first();
+  let bookingRules = {};
+  try {
+    bookingRules = JSON.parse(provider?.booking_rules_json || "{}");
+  } catch {
+    bookingRules = {};
+  }
+  const windowError = validateBookingWindow({
+    dateISO: chosen.dateISO,
+    from: chosen.from,
+    minLeadHours: bookingRules.minLeadHours,
+  });
+  if (windowError) return json({ error: windowError }, 400);
 
   const bookingId = id("bk");
   const ts = nowIso();

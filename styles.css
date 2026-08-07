@@ -1182,6 +1182,12 @@ body.embed-mode {
   background: var(--bg);
 }
 
+/* /embed/:slug/panel — sam panel usług i terminów, bez paska profilu */
+html.embed-mode--panel .booking__provider-card,
+body.embed-mode--panel .booking__provider-card {
+  display: none !important;
+}
+
 body.embed-mode #page-home {
   display: none !important;
 }

@@ -26,6 +26,41 @@ export function validateSlot({ dateISO, from, to }) {
   return null;
 }
 
+function zonedNowParts(now = new Date(), timeZone = "Europe/Warsaw") {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  })
+    .formatToParts(now)
+    .reduce((result, part) => {
+      if (part.type !== "literal") result[part.type] = part.value;
+      return result;
+    }, {});
+  return {
+    dateISO: `${parts.year}-${parts.month}-${parts.day}`,
+    minutes: Number(parts.hour) * 60 + Number(parts.minute),
+  };
+}
+
+/** Nie pozwól zapisać terminu, który już się rozpoczął lub łamie min. wyprzedzenie. */
+export function validateBookingWindow({ dateISO, from, minLeadHours = 0, now = new Date() }) {
+  const current = zonedNowParts(now);
+  const targetMinutes = Number(from.slice(0, 2)) * 60 + Number(from.slice(3, 5));
+  const leadMinutes = Math.max(0, Number(minLeadHours) || 0) * 60;
+  if (dateISO < current.dateISO || (dateISO === current.dateISO && targetMinutes < current.minutes)) {
+    return "slot_in_past";
+  }
+  if (dateISO === current.dateISO && targetMinutes < current.minutes + leadMinutes) {
+    return "minimum_lead_time";
+  }
+  return null;
+}
+
 export function normalizeText(value, maxLength, { required = false } = {}) {
   if (value == null) return required ? { error: "required" } : { value: null };
   const normalized = String(value).trim();

@@ -8,9 +8,37 @@ import { json, withCors } from "../src/http.js";
 import { withIdempotency } from "../src/idempotency.js";
 import { enforceRateLimit } from "../src/rateLimit.js";
 import { renderEmail } from "../src/templates.js";
-import { isValidDateISO, validateSlot } from "../src/validate.js";
+import { isValidDateISO, validateBookingWindow, validateSlot } from "../src/validate.js";
 
 describe("production authentication", () => {
+  it("rejects past slots and enforces minimum lead time in the provider timezone", () => {
+    const now = new Date("2026-08-08T00:24:00+02:00");
+    expect(
+      validateBookingWindow({
+        dateISO: "2026-08-08",
+        from: "00:15",
+        minLeadHours: 0,
+        now,
+      })
+    ).toBe("slot_in_past");
+    expect(
+      validateBookingWindow({
+        dateISO: "2026-08-08",
+        from: "01:30",
+        minLeadHours: 2,
+        now,
+      })
+    ).toBe("minimum_lead_time");
+    expect(
+      validateBookingWindow({
+        dateISO: "2026-08-08",
+        from: "02:30",
+        minLeadHours: 2,
+        now,
+      })
+    ).toBeNull();
+  });
+
   it("parses the session cookie without exposing bearer credentials", () => {
     expect(
       sessionTokenFromCookie(new Request("https://api.lokalnie.app/me", {

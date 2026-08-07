@@ -343,6 +343,39 @@ test.describe("Lokalnie — routing URL", function () {
     await expect(page).toHaveURL(/\/$/);
   });
 
+  test("/embed/:slug/panel otwiera rezerwację bez paska profilu", async function ({ page }) {
+    await resetAndLogin(page, "client");
+    await page.goto("/embed/grzesiu-barber/panel", { waitUntil: "domcontentloaded" });
+    await waitForApp(page);
+    await expect
+      .poll(async function () {
+        return page.evaluate(function () {
+          return {
+            embed: document.documentElement.classList.contains("embed-mode"),
+            panel: document.documentElement.classList.contains("embed-mode--panel"),
+            screen: window.AppState.screen.client,
+            slug: window.AppState.params.client && window.AppState.params.client.slug,
+            hasProviderCard: !!document.querySelector(
+              "#app-fullscreen .app-screen--booking .booking__provider-card"
+            ),
+            hasProviderName: /Grzesiu Barber/i.test(
+              (document.querySelector("#app-fullscreen .app-screen--booking") || {}).textContent ||
+                ""
+            ),
+          };
+        });
+      })
+      .toEqual({
+        embed: true,
+        panel: true,
+        screen: "booking",
+        slug: "grzesiu-barber",
+        hasProviderCard: false,
+        hasProviderName: false,
+      });
+    await expect(page).toHaveURL(/\/embed\/grzesiu-barber\/panel/);
+  });
+
   test("popstate odtwarza ekran bez dopisywania historii", async function ({ page }) {
     await resetAndLogin(page, "client");
     await page.evaluate(function () {
