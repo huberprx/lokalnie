@@ -61,6 +61,8 @@ async function resetAndLogin(page, role) {
   await page.evaluate(function (startRole) {
     try {
       localStorage.clear();
+      // Reset nie może ponownie uruchomić migracji, która przy reloadzie wyłącza świadomy tryb testera.
+      localStorage.setItem("lokalnie.demoDefaultOff.v1", "1");
     } catch (err) {
       /* ignore */
     }

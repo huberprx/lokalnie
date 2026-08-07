@@ -3065,8 +3065,14 @@ body.cancel-visit-dialog-open {
   min-width: 6.5rem;
 }
 
+.search-bar--mobile .search-bar__segment--radius-idle {
+  flex: 1 1 auto;
+  min-width: 9.5rem;
+}
+
 .search-bar--mobile .search-bar__select {
   width: 100%;
+  min-width: 0;
 }
 
 .search-bar--desktop {
@@ -3125,6 +3131,28 @@ body.cancel-visit-dialog-open {
 .search-bar__segment--radius {
   flex: 0 0 auto;
   padding-right: 0.5rem;
+}
+
+/* Bez lokalizacji: szersze pole z etykietą „Odległość” (jak tekst w sąsiednim segmencie). */
+.search-bar__segment--radius-idle {
+  flex: 0 1 auto;
+  min-width: 10.5rem;
+  gap: 0.35rem;
+  padding-right: 0.65rem;
+}
+
+.search-bar__radius-label {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 400;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.search-bar__segment--radius-idle .search-bar__select {
+  font-weight: 600;
+  min-width: 4.5rem;
 }
 
 .search-bar__icon {
@@ -6523,6 +6551,51 @@ body.service-photo-preview-open {
 .service-row--expanded .service-row__sub {
   -webkit-line-clamp: unset;
   display: block;
+}
+
+/* Ten sam znak „*” wyceny indywidualnej — wiersz, legenda, suma. */
+.indiv-price-mark {
+  display: inline;
+  font-family: inherit;
+  font-style: normal;
+  font-weight: 700;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  color: var(--text);
+  letter-spacing: 0;
+}
+
+/* Legenda wyceny indywidualnej — druga linia pod opisem (ta sama gwiazdka + tekst). */
+.service-row__indiv-note {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+  margin-top: 0.12rem;
+}
+
+.service-row__indiv-note .indiv-price-mark {
+  margin-right: 0.15em;
+}
+
+.service-row__indiv-note-label {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.service-row__price .indiv-price-mark,
+.bottom-nav__summary-price .indiv-price-mark,
+.selection-summary__price .indiv-price-mark,
+.avatar-preview__card-price .indiv-price-mark {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* Suma mieszana: „120 zł*” — gwiazdka zaraz po kwocie. */
+.bottom-nav__summary-price .indiv-price-mark,
+.selection-summary__price .indiv-price-mark {
+  margin-left: 0.05em;
 }
 
 .service-row__meta {
@@ -13064,6 +13137,7 @@ button.time-row {
   min-width: 0;
   margin-left: 0.35rem;
   margin-right: 0.45rem;
+  overflow: visible;
 }
 
 .bottom-nav__summary-dur {
@@ -13076,6 +13150,7 @@ button.time-row {
   font-weight: 700;
   font-size: 0.95rem;
   white-space: nowrap;
+  overflow: visible;
 }
 
 .bottom-nav__add {
@@ -13174,11 +13249,14 @@ button.time-row {
   align-items: center;
   padding-left: 0;
   align-self: center;
+  overflow: visible;
 }
 
 .booking-confirm-bar__info > .bottom-nav__summary .bottom-nav__summary-meta {
   margin-left: 0.35rem;
   margin-right: 0;
+  overflow: visible;
+  flex-shrink: 0;
 }
 
 .booking-confirm-bar__info > .booking-confirm-bar__seg {

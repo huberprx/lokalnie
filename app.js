@@ -7,6 +7,13 @@
 (function () {
   "use strict";
 
+  // History API zmienia bazę względnych assetów; po załadowaniu aplikacji trzymaj ją w root.
+  if (!document.querySelector("base")) {
+    const base = document.createElement("base");
+    base.href = "/";
+    document.head.insertBefore(base, document.head.firstChild);
+  }
+
   const STATE_KEY = "lokalnie.state";
   const INSTANCES = ["client", "provider"];
 
@@ -43,9 +50,11 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.229";
+  const APP_VERSION = "1.0.233";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
+  /** true tylko po świadomej aktualizacji PWA — wtedy wolno zrobić jeden reload. */
+  let pwaReloadOnControllerChange = false;
   const TESTER_KEY = "lokalnie.testerMode";
   /** Jednorazowa migracja: demo nie jest już domyślne na localhost. */
   const DEMO_DEFAULT_OFF_KEY = "lokalnie.demoDefaultOff.v1";
@@ -96,6 +105,64 @@
     if (item._demo) return true;
     const id = String(item.id || "");
     return !!prefix && id.indexOf(prefix) === 0;
+  }
+
+  /** Fixtury z data.js / seed testera — nie mogą zostać w ścieżce produkcyjnej. */
+  function isMockProviderFixture(provider) {
+    if (!provider) return false;
+    if (provider._demo) return true;
+    const id = String(provider.id || "");
+    const slug = String(provider.slug || "");
+    if (id.indexOf("provider-demo-") === 0) return true;
+    const mocks = data().PROVIDERS || [];
+    return mocks.some(function (m) {
+      return (
+        m &&
+        (m.id === id || m.slug === id || m.id === slug || m.slug === slug)
+      );
+    });
+  }
+
+  function purgeTesterFixturesFromState() {
+    if (!window.AppState || isTesterMode()) return;
+    window.AppState.bookings = (window.AppState.bookings || []).filter(function (b) {
+      return !isDemoRecord(b, "bk-demo-");
+    });
+    window.AppState.requests = (window.AppState.requests || []).filter(function (r) {
+      return !isDemoRecord(r, "rq-demo-");
+    });
+    const keptProfiles = (window.AppState.providerProfiles || []).filter(function (p) {
+      return !isMockProviderFixture(p);
+    });
+    const removedSlugs = Object.create(null);
+    (window.AppState.providerProfiles || []).forEach(function (p) {
+      if (!p || !isMockProviderFixture(p)) return;
+      if (p.slug) removedSlugs[p.slug] = true;
+      if (p.id) removedSlugs[p.id] = true;
+    });
+    (data().PROVIDERS || []).forEach(function (m) {
+      if (!m) return;
+      if (m.slug) removedSlugs[m.slug] = true;
+      if (m.id) removedSlugs[m.id] = true;
+    });
+    window.AppState.providerProfiles = keptProfiles;
+    window.AppState.favorites = (window.AppState.favorites || []).filter(function (slug) {
+      return slug && !removedSlugs[slug];
+    });
+    if (
+      window.AppState.activeProviderId &&
+      removedSlugs[window.AppState.activeProviderId]
+    ) {
+      window.AppState.activeProviderId = null;
+    }
+    if (isMockProviderFixture(window.AppState.myProvider)) {
+      window.AppState.myProvider = null;
+    }
+    if (!keptProfiles.length) {
+      window.AppState.providerRoleActive = false;
+      window.AppState.activeProviderId = null;
+      window.AppState.myProvider = null;
+    }
   }
 
   function cloneDemoBooking(b) {
@@ -331,24 +398,84 @@
     return String(n).padStart(2, "0");
   }
 
+  /** Jeden znak odniesienia wyceny indywidualnej — wszędzie ten sam. */
+  var INDIVIDUAL_PRICE_MARK = "*";
+
   function formatPrice(price) {
-    return price == null ? "wycena indyw." : `${price} zł`;
+    return price == null ? INDIVIDUAL_PRICE_MARK : `${price} zł`;
   }
 
-  /** Cena w wierszu oferty — bez ceny zostawiamy puste (info w opisie). */
+  /** Cena w wierszu oferty — bez ceny: ta sama gwiazdka co w legendzie i sumie. */
   function formatRowPrice(price) {
-    return price == null ? "" : `${price} zł`;
+    return price == null ? INDIVIDUAL_PRICE_MARK : `${price} zł`;
   }
 
-  var INDIVIDUAL_PRICE_NOTE = "Wycena indywidualna";
+  function individualPriceMarkHtml() {
+    return `<span class="indiv-price-mark" aria-hidden="true">${escapeHtml(INDIVIDUAL_PRICE_MARK)}</span>`;
+  }
 
-  /** Dopisz informację o wycenie indywidualnej do opisu oferty. */
-  function withIndividualPriceNote(text, price) {
-    if (price != null) return String(text || "").trim();
-    const base = String(text || "").trim();
-    if (!base) return INDIVIDUAL_PRICE_NOTE;
-    if (/wycena\s+indyw/i.test(base)) return base;
-    return base + " · " + INDIVIDUAL_PRICE_NOTE;
+  /** HTML ceny — przy braku ceny ta sama oznaczona gwiazdka. */
+  function formatPriceHtml(price) {
+    return price == null ? individualPriceMarkHtml() : escapeHtml(formatPrice(price));
+  }
+
+  function formatRowPriceHtml(price) {
+    return price == null ? individualPriceMarkHtml() : escapeHtml(formatRowPrice(price));
+  }
+
+  /**
+   * Suma w stopce / podsumowaniu:
+   * - same stałe ceny → „120 zł”
+   * - tylko wycena indyw. → „*”
+   * - mieszane → „120 zł*” (suma stałych + gwiazdka)
+   */
+  function formatTotalsPriceHtml(totals) {
+    if (!totals || !totals.count) return escapeHtml("—");
+    if (totals.onlyDuration) return escapeHtml("—");
+    if (!totals.hasNullPrice) return escapeHtml(formatPrice(totals.price));
+    if (totals.price > 0) {
+      return escapeHtml(totals.price + " zł") + individualPriceMarkHtml();
+    }
+    return individualPriceMarkHtml();
+  }
+
+  function formatTotalsPriceText(totals) {
+    if (!totals || !totals.count) return "—";
+    if (totals.onlyDuration) return "—";
+    if (!totals.hasNullPrice) return formatPrice(totals.price);
+    if (totals.price > 0) return totals.price + " zł" + INDIVIDUAL_PRICE_MARK;
+    return INDIVIDUAL_PRICE_MARK;
+  }
+
+  function hasIndividualPriceCopy(text) {
+    return /wycena\s+indyw/i.test(String(text || ""));
+  }
+
+  /** Czy pokazać legendę wyceny indywidualnej (gdy brak ceny i nie ma jej już w tekście). */
+  function shouldShowIndividualPriceNote(text, price) {
+    return price == null && !hasIndividualPriceCopy(text);
+  }
+
+  /** HTML drugiej linii: ta sama gwiazdka + „Wycena indywidualna”. */
+  function individualPriceNoteHtml(text, price) {
+    if (!shouldShowIndividualPriceNote(text, price)) return "";
+    return `<span class="service-row__indiv-note">${individualPriceMarkHtml()} <span class="service-row__indiv-note-label">Wycena indywidualna</span></span>`;
+  }
+
+  /** Ustaw tekst/HTML ceny w stopce (gwiazdka / „120 zł*”). */
+  function setSummaryPriceContent(el, text) {
+    if (!el) return;
+    const s = String(text == null ? "" : text);
+    if (s === INDIVIDUAL_PRICE_MARK) {
+      el.innerHTML = individualPriceMarkHtml();
+      return;
+    }
+    const mixed = s.match(/^(\d+(?:[.,]\d+)?\s*zł)\s*\*$/i);
+    if (mixed) {
+      el.innerHTML = escapeHtml(mixed[1]) + individualPriceMarkHtml();
+      return;
+    }
+    el.textContent = s;
   }
 
   function formatDuration(min) {
@@ -472,6 +599,37 @@
     return (data().PROVIDERS || []).find((p) => p.id === id || p.slug === id) || null;
   }
 
+  function providerDetailsPending(provider) {
+    return !!(provider && provider._fromApi && !provider._mine && !provider._detailsLoaded);
+  }
+
+  function catalogEntryHasDetails(p) {
+    return !!(
+      p &&
+      (p._detailsLoaded ||
+        p._mine ||
+        (Array.isArray(p.services) && p.services.length > 0) ||
+        (Array.isArray(p.availability) && p.availability.length > 0))
+    );
+  }
+
+  /** Stub listy nie może wycierać services/availability z profilu z detail fetch. */
+  function mergeProviderPreferDetails(prev, next) {
+    if (!next) return prev || null;
+    if (!prev) return next;
+    const prevLoaded = catalogEntryHasDetails(prev);
+    const nextLoaded = catalogEntryHasDetails(next);
+    if (prevLoaded && !nextLoaded) {
+      return Object.assign({}, prev, next, {
+        services: Array.isArray(prev.services) ? prev.services : [],
+        availability: Array.isArray(prev.availability) ? prev.availability : [],
+        _detailsLoaded: prev._detailsLoaded != null ? !!prev._detailsLoaded : true,
+        _mine: !!(prev._mine || next._mine),
+      });
+    }
+    return Object.assign({}, prev, next);
+  }
+
   function mergeCatalogProvider(provider) {
     if (!provider || !window.AppState) return;
     if (!Array.isArray(window.AppState.catalogProviders)) {
@@ -486,7 +644,7 @@
           (provider.slug && p.slug === provider.slug))
       );
     });
-    if (idx >= 0) list[idx] = Object.assign({}, list[idx], provider);
+    if (idx >= 0) list[idx] = mergeProviderPreferDetails(list[idx], provider);
     else list.push(provider);
   }
 
@@ -1457,7 +1615,9 @@
     const action = opts.action || "pick-date";
     const multi = opts.selectedDates instanceof Set ? opts.selectedDates : null;
     const highlight = opts.highlightDates instanceof Set ? opts.highlightDates : null;
-    if (!availDates.length) return `<p class="empty-note">Brak dostępnych terminów.</p>`;
+    if (!availDates.length) {
+      return `<p class="empty-note">${escapeHtml(opts.emptyNote || "Brak dostępnych terminów.")}</p>`;
+    }
     const availSet = new Set(availDates);
     const today = demoTodayISO();
     const stripDates = eachDateISO(availDates[0], availDates[availDates.length - 1]);
@@ -1488,8 +1648,8 @@
       .join("");
   }
 
-  function refreshBookingServiceLists(screen, ctx) {
-    const html = ctx.services;
+  function refreshBookingServiceLists(screen, ctx, p) {
+    const html = bookingServicesListHtml(p || getProviderBySlug(ctx.draft && ctx.draft.slug), ctx);
     const mobile =
       screen.querySelector('[data-role="booking-mobile-services"]') ||
       screen.querySelector(".booking-mobile .booking__services-list");
@@ -1531,7 +1691,7 @@
       }
     }
 
-    refreshBookingServiceLists(screen, ctx);
+    refreshBookingServiceLists(screen, ctx, p);
 
     const split = screen.querySelector(".booking--mobile-split");
     const schedule = split && split.querySelector(".booking__schedule, .booking__schedule--request");
@@ -1553,7 +1713,7 @@
                 <h3 class="booking__label booking__label--caps">Wybierz datę</h3>
                 <span class="booking__month" data-role="booking-mobile-month">${escapeHtml(monthLabelFromISO(ctx.activeDate || ctx.availDates[0]))}</span>
               </div>
-              <div class="date-strip date-strip--booking" data-role="booking-date-strip">${renderDateStripHtml(ctx.availDates, ctx.activeDate)}</div>
+              <div class="date-strip date-strip--booking" data-role="booking-date-strip">${bookingDateStripHtml(p, ctx.availDates, ctx.activeDate)}</div>
               <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>Wolne terminy</h3>
               <div class="time-list time-list--horizontal" data-role="booking-mobile-times"${ctx.activeDate ? "" : " hidden"}>${
                 ctx.activeDate
@@ -1577,7 +1737,7 @@
     const timeScrollLeft = timeListEl ? timeListEl.scrollLeft : 0;
 
     if (dateStripEl) {
-      dateStripEl.innerHTML = renderDateStripHtml(ctx.availDates, ctx.activeDate);
+      dateStripEl.innerHTML = bookingDateStripHtml(p, ctx.availDates, ctx.activeDate);
       dateStripEl.scrollLeft = dateScrollLeft;
       updateBookingMonthLabel(dateStripEl);
     }
@@ -1943,14 +2103,14 @@
   }
 
   /** Desktop: ten sam kalendarz miesięczny co przy auto + pora dnia (multi-select dni). */
-  function renderRequestDaysSections(ctx) {
+  function renderRequestDaysSections(ctx, p) {
     return `
       <section class="booking__calendar booking__request-days">
         <h3 class="booking__panel-label">Wybierz dni</h3>
         ${
           ctx.availDates.length
             ? ctx.requestCalendarGrid
-            : `<p class="empty-note">Brak dostępnych terminów.</p>`
+            : `<p class="empty-note">${escapeHtml(bookingAvailEmptyNote(p))}</p>`
         }
         <p class="booking__request-hint">Zaznacz jeden lub kilka pasujących dni — usługodawca odeśle konkretne godziny.</p>
       </section>
@@ -1993,18 +2153,14 @@
     const totals = ctx.totals;
     const hasSelection = !!totals.count;
     const durationText = hasSelection ? formatDuration(totals.duration) : "—";
-    const priceText = !hasSelection
-      ? "—"
-      : totals.hasNullPrice
-        ? "wycena indyw."
-        : totals.price + " zł";
+    const priceHtml = formatTotalsPriceHtml(hasSelection ? totals : null);
 
     if (isOfferRequestMode(mode)) {
       return `
         <div class="selection-summary selection-summary--inline${hasSelection ? "" : " selection-summary--empty"}">
           <div class="selection-summary__info">
             <span class="selection-summary__duration">${escapeHtml(durationText)}</span>
-            <span class="selection-summary__price">${escapeHtml(priceText)}</span>
+            <span class="selection-summary__price">${priceHtml}</span>
           </div>
           <button type="button" class="btn btn--primary selection-summary__cta" data-action="send-request" data-slug="${escapeHtml(p.slug)}"${
             ctx.canSendRequest && !p.deactivated ? "" : " disabled"
@@ -2016,12 +2172,18 @@
       <div class="selection-summary selection-summary--inline${hasSelection ? "" : " selection-summary--empty"}">
         <div class="selection-summary__info">
           <span class="selection-summary__duration">${escapeHtml(durationText)}</span>
-          <span class="selection-summary__price">${escapeHtml(priceText)}</span>
+          <span class="selection-summary__price">${priceHtml}</span>
         </div>
         <button type="button" class="btn btn--primary selection-summary__cta" data-action="confirm-booking"${
           ctx.canConfirm && !p.deactivated ? "" : " disabled"
         }>Rezerwuj</button>
       </div>`;
+  }
+
+  function bookingServicesListHtml(p, ctx) {
+    if (ctx && ctx.services) return ctx.services;
+    if (providerDetailsPending(p)) return `<p class="empty-note">Ładowanie oferty…</p>`;
+    return `<p class="empty-note">Brak usług w ofercie.</p>`;
   }
 
   function renderBookingLayoutBlock(p, ctx) {
@@ -2031,17 +2193,17 @@
       <div class="booking-layout${isRequestStyle ? " booking-layout--approval" : ""}">
         <aside class="booking__services">
           ${renderServicesPanelHead(p, ctx.draft)}
-          <div class="booking__services-list service-list">${ctx.services}</div>
+          <div class="booking__services-list service-list">${bookingServicesListHtml(p, ctx)}</div>
         </aside>
 
         ${
           mode === "approval"
-            ? renderRequestDaysSections(ctx)
+            ? renderRequestDaysSections(ctx, p)
             : mode === "request"
               ? renderOpenRequestSections()
               : `<section class="booking__calendar">
           <h3 class="booking__panel-label">Wybierz dzień</h3>
-          ${ctx.availDates.length ? ctx.calendarGrid : `<p class="empty-note">Brak dostępnych terminów.</p>`}
+          ${ctx.availDates.length ? ctx.calendarGrid : `<p class="empty-note">${escapeHtml(bookingAvailEmptyNote(p))}</p>`}
         </section>
 
         <aside class="booking__times">
@@ -2094,6 +2256,11 @@
     api: true,
     admin: true,
     embed: true,
+    ulubione: true,
+    kalendarz: true,
+    konto: true,
+    logowanie: true,
+    panel: true,
     "sw.js": true,
     "manifest.webmanifest": true,
     "styles.css": true,
@@ -2125,27 +2292,24 @@
   function syncPublicProviderUrl(slug, opts) {
     opts = opts || {};
     if (!slug) return;
-    const target = (opts.embed ? providerEmbedPath(slug) : providerPublicPath(slug)) + (location.search || "");
-    const current = (location.pathname || "/") + (location.search || "");
-    if (current === target) {
-      if (location.hash) history.replaceState(null, "", target);
-      return;
-    }
-    history[opts.replace ? "replaceState" : "pushState"](null, "", target);
+    const serviceIds =
+      window.AppState &&
+      window.AppState.draft &&
+      Array.isArray(window.AppState.draft.serviceIds)
+        ? window.AppState.draft.serviceIds
+        : [];
+    writeAppRoute(
+      {
+        kind: opts.embed ? "embed" : "provider",
+        slug: slug,
+        serviceIds: serviceIds,
+      },
+      { replace: !!opts.replace }
+    );
   }
 
   function clearPublicProviderUrl() {
-    const path = location.pathname || "/";
-    if (path === "/" || path === "/index.html") {
-      if (location.hash && /^(#provider\/|#embed\/)/.test(location.hash)) {
-        history.replaceState(null, "", "/" + (location.search || ""));
-      }
-      return;
-    }
-    const route = parseAppRouteFromLocation();
-    if (route && (route.kind === "provider" || route.kind === "embed")) {
-      history.pushState(null, "", "/" + (location.search || ""));
-    }
+    writeAppRoute({ kind: "screen", screen: "search", role: "client" });
   }
 
   function providerEmbedSnippet(slug) {
@@ -2219,6 +2383,7 @@
     window.AppState.screen.client = "profile";
     saveState();
     renderAll();
+    syncPublicProviderUrl(slug);
   }
 
   function callProvider(slug) {
@@ -2336,7 +2501,7 @@
           <span class="avatar-preview__card-dur">${escapeHtml(formatDuration(s.durationMin))}</span>
           ${
             formatRowPrice(s.price)
-              ? `<span class="avatar-preview__card-price">${escapeHtml(formatRowPrice(s.price))}</span>`
+              ? `<span class="avatar-preview__card-price">${formatRowPriceHtml(s.price)}</span>`
               : ""
           }
         </span>
@@ -2372,7 +2537,7 @@
                   <span class="avatar-preview__card-dur">${escapeHtml(formatDuration(s.durationMin))}</span>
                   ${
                     formatRowPrice(s.price)
-                      ? `<span class="avatar-preview__card-price">${escapeHtml(formatRowPrice(s.price))}</span>`
+                      ? `<span class="avatar-preview__card-price">${formatRowPriceHtml(s.price)}</span>`
                       : ""
                   }
                 </span>
@@ -3152,6 +3317,45 @@
     }).join("");
   }
 
+  /** Czy wybrano lokalizację (adres / GPS) — bez niej pole promienia pokazuje etykietę „Odległość”. */
+  function hasSearchLocationSelected() {
+    return hasSearchCoordinates() || !!(window.AppState.searchLocation || "").trim();
+  }
+
+  function renderSearchRadiusSegment(extraClass) {
+    const idle = !hasSearchLocationSelected();
+    const classes = [
+      "search-bar__segment",
+      "search-bar__segment--radius",
+      extraClass || "",
+      idle ? "search-bar__segment--radius-idle" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return `
+      <label class="${classes}">
+        ${idle ? `<span class="search-bar__radius-label">Odległość</span>` : ""}
+        <select class="search-bar__select" data-role="search-radius" aria-label="Promień wyszukiwania">${renderSearchRadiusOptions()}</select>
+      </label>`;
+  }
+
+  /** Po zmianie lokalizacji — etykieta „Odległość” / szerokość bez pełnego renderAll. */
+  function syncSearchRadiusSegments() {
+    const idle = !hasSearchLocationSelected();
+    document.querySelectorAll(".search-bar__segment--radius").forEach(function (seg) {
+      seg.classList.toggle("search-bar__segment--radius-idle", idle);
+      const label = seg.querySelector(".search-bar__radius-label");
+      if (idle && !label) {
+        const span = document.createElement("span");
+        span.className = "search-bar__radius-label";
+        span.textContent = "Odległość";
+        seg.insertBefore(span, seg.firstChild);
+      } else if (!idle && label) {
+        label.remove();
+      }
+    });
+  }
+
   function searchLocationFieldHtml() {
     const gpsActive =
       window.AppState.searchLocationSource === "gps" && hasSearchCoordinates();
@@ -3184,9 +3388,7 @@
           ${searchLocationFieldHtml()}
           ${searchSuggestionsHtml()}
         </div>
-        <label class="search-bar__segment search-bar__segment--radius">
-          <select class="search-bar__select" data-role="search-radius" aria-label="Promień wyszukiwania">${renderSearchRadiusOptions()}</select>
-        </label>
+        ${renderSearchRadiusSegment()}
         <button type="button" class="search-bar__submit btn btn--primary" data-action="run-search">Szukaj</button>
       </div>
       ${searchGeoStatusHtml()}`;
@@ -3210,9 +3412,7 @@
             ${searchLocationFieldHtml()}
             ${searchSuggestionsHtml()}
           </div>
-          <label class="search-bar__segment search-bar__segment--radius search-bar__segment--block">
-            <select class="search-bar__select" data-role="search-radius" aria-label="Promień wyszukiwania">${renderSearchRadiusOptions()}</select>
-          </label>
+          ${renderSearchRadiusSegment("search-bar__segment--block")}
         </div>
       </div>
       ${searchGeoStatusHtml()}`;
@@ -3503,6 +3703,16 @@
 
   function bookingTimesEmptyNote(provider) {
     return "Brak wolnych godzin tego dnia.";
+  }
+
+  function bookingAvailEmptyNote(provider) {
+    return providerDetailsPending(provider) ? "Ładowanie terminów…" : "Brak dostępnych terminów.";
+  }
+
+  function bookingDateStripHtml(provider, availDates, activeDate) {
+    return renderDateStripHtml(availDates, activeDate, {
+      emptyNote: bookingAvailEmptyNote(provider),
+    });
   }
 
   /** Brak locationIds / pusta lista = usługa we wszystkich lokalizacjach. */
@@ -3959,12 +4169,8 @@
 
     // Poza trybem testera usuń resztki demo z localStorage; w testerze dociągnij brakujące rekordy.
     if (!isTesterMode()) {
-      window.AppState.bookings = (window.AppState.bookings || []).filter(function (b) {
-        return !isDemoRecord(b, "bk-demo-");
-      });
-      window.AppState.requests = (window.AppState.requests || []).filter(function (r) {
-        return !isDemoRecord(r, "rq-demo-");
-      });
+      purgeTesterFixturesFromState();
+      saveState();
     } else {
       seedTesterDemoData();
     }
@@ -4432,6 +4638,7 @@
   function activateWaitingWorker(worker) {
     if (!worker) return false;
     PWA.waitingWorker = worker;
+    pwaReloadOnControllerChange = true;
     worker.postMessage({ type: "SKIP_WAITING" });
     return true;
   }
@@ -4486,23 +4693,24 @@
       if (!installing) return;
       installing.addEventListener("statechange", function () {
         if (installing.state === "installed" && navigator.serviceWorker.controller) {
-          applyPwaUpdateNow(installing);
+          // Nie wdrażaj automatycznie — auto-reload psuje odświeżenie ekranu rezerwacji.
+          notifyPwaUpdateAvailable(installing);
         }
       });
     });
   }
 
-  /** Przy starcie: wykryj update i od razu wgraj (PWA inaczej potrafi trzymać stary UI). */
+  /** Przy starcie wykryj update, ale nie przeładowuj strony samoczynnie. */
   function checkPwaUpdateOnLaunch(reg) {
     if (!reg) return;
     if (reg.waiting) {
-      applyPwaUpdateNow(reg.waiting);
+      notifyPwaUpdateAvailable(reg.waiting);
       return;
     }
     reg
       .update()
       .then(function () {
-        if (reg.waiting) applyPwaUpdateNow(reg.waiting);
+        if (reg.waiting) notifyPwaUpdateAvailable(reg.waiting);
       })
       .catch(function () {});
   }
@@ -4510,22 +4718,24 @@
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator)) return;
     navigator.serviceWorker
-      .register("./sw.js?v=" + encodeURIComponent(APP_VERSION))
+      .register("/sw.js?v=" + encodeURIComponent(APP_VERSION))
       .then(function (reg) {
         trackServiceWorker(reg);
         checkPwaUpdateOnLaunch(reg);
         setInterval(function () {
           reg.update().then(function () {
-            if (reg.waiting) applyPwaUpdateNow(reg.waiting);
+            if (reg.waiting) notifyPwaUpdateAvailable(reg.waiting);
           }).catch(function () {});
         }, 60 * 60 * 1000);
       })
       .catch(function () {});
 
-    var refreshing = false;
+    if (registerServiceWorker._boundControllerChange) return;
+    registerServiceWorker._boundControllerChange = true;
     navigator.serviceWorker.addEventListener("controllerchange", function () {
-      if (refreshing) return;
-      refreshing = true;
+      // Reload tylko po świadomym „Wersja aplikacji” — inaczej pętla przy /:slug.
+      if (!pwaReloadOnControllerChange) return;
+      pwaReloadOnControllerChange = false;
       window.location.reload();
     });
   }
@@ -4676,7 +4886,7 @@
     }
 
     showToast("Sprawdzam aktualizacje…");
-    navigator.serviceWorker.getRegistration("./").then(function (reg) {
+    navigator.serviceWorker.getRegistration("/").then(function (reg) {
       if (!reg) {
         registerServiceWorker();
         showToast("Brak Service Workera — spróbuj ponownie za chwilę.");
@@ -4788,14 +4998,14 @@
 
   function renderBookingConfirmSummary(p, totals, draft) {
     const empty = !totals || !totals.count;
-    const priceText = empty ? "—" : totals.hasNullPrice ? "wycena indyw." : formatPrice(totals.price);
+    const priceHtml = formatTotalsPriceHtml(empty ? null : totals);
     const durText = empty ? "—" : formatDuration(totals.duration);
     return `
       <div class="bottom-nav__summary${empty ? " bottom-nav__summary--empty" : ""}">
         <span class="bottom-nav__summary-label">Suma:</span>
         <div class="bottom-nav__summary-meta">
           <span class="bottom-nav__summary-dur">${escapeHtml(durText)}</span>
-          <span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>
+          <span class="bottom-nav__summary-price">${priceHtml}</span>
         </div>
       </div>`;
   }
@@ -5449,6 +5659,7 @@
     saveState();
     renderAll();
     loadAdminTab(true);
+    syncCurrentAppRoute();
   }
 
   function setAdminTab(tab) {
@@ -5459,6 +5670,7 @@
     admin.tab = tab;
     admin.error = null;
     renderAll();
+    syncCurrentAppRoute({ replace: true });
     loadAdminTab(true);
   }
 
@@ -6150,6 +6362,7 @@
     window.AppState.myCalMonth = dateISO.slice(0, 7);
     saveState();
     renderAll();
+    syncCurrentAppRoute({ replace: true });
   }
 
   function goMyCalToday() {
@@ -6158,6 +6371,7 @@
     window.AppState.myCalMonth = today.slice(0, 7);
     saveState();
     renderAll();
+    syncCurrentAppRoute({ replace: true });
   }
 
   function setMyCalStatusFilter(status) {
@@ -6166,6 +6380,7 @@
     window.AppState.myCalStatusFilters = [status];
     saveState();
     renderAll();
+    syncCurrentAppRoute({ replace: true });
   }
 
   /** Filtr „Czekające na potwierdzenie” obejmuje pending i proposed. */
@@ -6739,8 +6954,7 @@
     const variantId = on ? selectedVariantIdForService(draft, s) : defaultServiceVariantId(s);
     const resolved = resolveServiceVariant(s, variantId);
     const rowPrice = formatRowPrice(resolved.price);
-    const detailWithNote = withIndividualPriceNote(detail, resolved.price);
-    const summaryWithNote = withIndividualPriceNote(summary, resolved.price);
+    const noteHtml = individualPriceNoteHtml(detail || summary, resolved.price);
     const selectLabel = (on ? "Odznacz" : "Wybierz") + " " + s.name;
     const expandLabel = (expanded ? "Zwiń" : "Rozwiń") + " szczegóły: " + s.name;
     const thumbHtml = thumb
@@ -6759,16 +6973,21 @@
               ${
                 detail
                   ? `<span class="service-row__sub-clip" data-role="service-desc-clip">
-                      <span class="service-row__sub">${escapeHtml(detailWithNote)}</span>
+                      <span class="service-row__sub">${escapeHtml(detail)}</span>
+                      ${noteHtml}
                     </span>`
-                  : summaryWithNote
-                    ? `<span class="service-row__sub">${escapeHtml(summaryWithNote)}</span>`
+                  : summary || noteHtml
+                    ? `${summary ? `<span class="service-row__sub">${escapeHtml(summary)}</span>` : ""}${noteHtml}`
                     : ""
               }
             </span>
             <span class="service-row__meta">
               <span class="service-row__dur">${escapeHtml(formatDuration(resolved.durationMin))}</span>
-              ${rowPrice ? `<span class="service-row__price">${escapeHtml(rowPrice)}</span>` : ""}
+              ${
+                rowPrice
+                  ? `<span class="service-row__price">${formatRowPriceHtml(resolved.price)}</span>`
+                  : ""
+              }
             </span>
           </button>
           <button type="button" class="service-row__check service-row__check--radio${on ? " service-row__check--on" : ""}" data-action="toggle-service-check" data-service-id="${escapeHtml(s.id)}" aria-pressed="${on ? "true" : "false"}" aria-label="${escapeHtml(selectLabel)}" title="${escapeHtml(selectLabel)}">
@@ -7221,7 +7440,7 @@
             ? `<div class="selection-summary">
                  <div class="selection-summary__info">
                    <span class="selection-summary__duration">${escapeHtml(formatDuration(totals.duration))}</span>
-                   <span class="selection-summary__price">${totals.hasNullPrice ? "wycena indyw." : escapeHtml(totals.price + " zł")}</span>
+                   <span class="selection-summary__price">${formatTotalsPriceHtml(totals)}</span>
                  </div>
                  <button type="button" class="btn btn--primary selection-summary__cta" data-action="${ctaAction}" data-slug="${escapeHtml(p.slug)}">${ctaLabel}</button>
                </div>`
@@ -7231,12 +7450,21 @@
       </div>`;
   }
 
+  function renderBookingLoading() {
+    return `
+      <div class="app-screen app-screen--client app-screen--booking">
+        <div class="app-scroll">
+          <p class="empty-note">Ładowanie oferty…</p>
+        </div>
+      </div>`;
+  }
+
   function renderBooking(slug) {
     const p = getProviderBySlug(slug);
-    if (!p) return renderSearch();
+    if (!p) return renderBookingLoading();
 
     const ctx = buildBookingContext(p);
-    if (!ctx) return renderSearch();
+    if (!ctx) return renderBookingLoading();
     const mode = draftBookingMode(p);
     // Nagłówek poza .booking-mobile — na desktopie ten blok jest ukrywany,
     // a bez karty usługodawcy ekran rezerwacji wygląda na „pusty”.
@@ -7255,7 +7483,7 @@
                 <h3 class="booking__label booking__label--caps">Wybierz datę</h3>
                 <span class="booking__month" data-role="booking-mobile-month">${escapeHtml(monthLabelFromISO(ctx.activeDate || ctx.availDates[0]))}</span>
               </div>
-              <div class="date-strip date-strip--booking" data-role="booking-date-strip">${renderDateStripHtml(ctx.availDates, ctx.activeDate)}</div>
+              <div class="date-strip date-strip--booking" data-role="booking-date-strip">${bookingDateStripHtml(p, ctx.availDates, ctx.activeDate)}</div>
 
               <h3 class="booking__label booking__label--caps" data-role="booking-mobile-time-label"${ctx.activeDate ? "" : " hidden"}>Wolne terminy</h3>
               <div class="time-list time-list--horizontal" data-role="booking-mobile-times"${ctx.activeDate ? "" : " hidden"}>${
@@ -7272,7 +7500,7 @@
           <div class="booking booking--mobile-split">
             <div class="booking__main">
               ${renderServicesPanelHead(p, ctx.draft, { mobile: true })}
-              <div class="booking__services-list service-list" data-role="booking-mobile-services">${ctx.services}</div>
+              <div class="booking__services-list service-list" data-role="booking-mobile-services">${bookingServicesListHtml(p, ctx)}</div>
             </div>
 
             ${mobileSchedule}
@@ -8249,6 +8477,7 @@
     }
     if (opts.persist !== false) saveState();
     if (opts.render !== false) renderAll();
+    syncCurrentAppRoute({ replace: true });
     return n;
   }
 
@@ -8276,6 +8505,7 @@
     }
     saveState();
     if (opts.render !== false) renderAll();
+    syncCurrentAppRoute({ replace: true });
   }
 
   /** ±N dni w kalendarzu usługodawcy (gest swipe / nawigacja) — przesuwa okno i zaznaczenie. */
@@ -11423,6 +11653,7 @@
     window.AppState.dashListMode = "visits";
     saveState();
     renderAll();
+    syncCurrentAppRoute();
     hapticTap(12);
   }
 
@@ -11471,6 +11702,7 @@
     }
     saveState();
     renderAll();
+    syncCurrentAppRoute();
     hapticTap(12);
   }
 
@@ -11483,6 +11715,7 @@
     }
     saveState();
     renderAll();
+    syncCurrentAppRoute();
     hapticTap(12);
   }
 
@@ -11494,15 +11727,12 @@
     window.AppState.provCalAddDraft = null;
     window.AppState.provCalAddTab = "requests";
     window.AppState.dashListMode = "requests";
-    if (!usesDesktopLayout()) {
-      window.AppState.screen.provider = "dashboard";
-    } else if (window.AppState.screen.provider !== "calendar" && window.AppState.screen.provider !== "dashboard") {
-      window.AppState.screen.provider = "calendar";
-    }
+    window.AppState.screen.provider = "dashboard";
     setProvCalMonthOpen(false, { animate: false, render: false, persist: false });
     closeProvCalViewCloud();
     saveState();
     renderAll();
+    syncCurrentAppRoute();
     hapticTap(16);
   }
 
@@ -12324,13 +12554,7 @@
       summary.classList.toggle("bottom-nav__summary--empty", !hasSvc);
       if (dur) dur.textContent = !hasSvc ? "—" : formatDuration(totals.duration || 0);
       if (price) {
-        price.textContent = !hasSvc
-          ? "—"
-          : totals.onlyDuration
-            ? "—"
-            : totals.hasNullPrice
-              ? "wycena indyw."
-              : formatPrice(totals.price);
+        setSummaryPriceContent(price, !hasSvc ? "—" : formatTotalsPriceText(totals));
       }
     });
     document.querySelectorAll('[data-role="prov-cal-add-cta"]').forEach(function (cta) {
@@ -12669,13 +12893,7 @@
       const price = summary.querySelector(".bottom-nav__summary-price");
       if (dur) dur.textContent = !hasSvc ? "—" : formatDuration(totals.duration || 0);
       if (price) {
-        price.textContent = !hasSvc
-          ? "—"
-          : totals.onlyDuration
-            ? "—"
-            : totals.hasNullPrice
-              ? "wycena indyw."
-              : formatPrice(totals.price);
+        setSummaryPriceContent(price, !hasSvc ? "—" : formatTotalsPriceText(totals));
       }
     });
     document.querySelectorAll('[data-role="prov-cal-add-cta"]').forEach(function (cta) {
@@ -13161,13 +13379,7 @@
         : "";
 
     const canSave = isReply ? draft.proposals.length > 0 : hasSvc && !!draft.slotId;
-    const priceText = !hasSvc
-      ? "—"
-      : totals.onlyDuration
-        ? "—"
-        : totals.hasNullPrice
-          ? "wycena indyw."
-          : formatPrice(totals.price);
+    const priceHtml = !hasSvc ? escapeHtml("—") : formatTotalsPriceHtml(totals);
     const durText = !hasSvc ? "—" : formatDuration(totals.duration || 0);
     const serviceSummaryHtml = renderProvCalAddServiceSummaryHtml(selected);
     const serviceAriaLabel = !hasSvc
@@ -13254,7 +13466,7 @@
               <span class="bottom-nav__summary-label">${isReply ? "Wybrane:" : "Suma:"}</span>
               <div class="bottom-nav__summary-meta">
                 <span class="bottom-nav__summary-dur">${escapeHtml(durText)}</span>
-                <span class="bottom-nav__summary-price">${escapeHtml(priceText)}</span>
+                <span class="bottom-nav__summary-price">${priceHtml}</span>
               </div>
             </div>
             <button type="button" class="bottom-nav__book" data-role="prov-cal-add-cta" data-action="${saveAction}"${saveAttrs}${
@@ -14020,7 +14232,8 @@
         ? (picked ? "Odznacz" : "Zaznacz") + " " + (s.name || "usługę")
         : "Edytuj " + (s.name || "usługę");
       const rowPrice = formatRowPrice(resolved.price);
-      const rowSub = withIndividualPriceNote(serviceListSummary(s), resolved.price);
+      const rowSub = serviceListSummary(s);
+      const rowNoteHtml = individualPriceNoteHtml(rowSub, resolved.price);
       return `
       <div class="service-row service-row--static${variants.length ? " service-row--has-variants" : ""}${
         selected ? " is-selected" : ""
@@ -14044,13 +14257,18 @@
           <div class="service-row__static-main">
             <span class="service-row__body">
               <span class="service-row__name">${escapeHtml(s.name)}</span>
-              <span class="service-row__sub">${escapeHtml(rowSub)}</span>
+              ${rowSub ? `<span class="service-row__sub">${escapeHtml(rowSub)}</span>` : ""}
+              ${rowNoteHtml}
               <span class="service-row__mode service-row__mode--${escapeHtml(mode)}">${escapeHtml(modeLabel)}</span>
               <span class="service-row__locs">${escapeHtml(locLabel)}</span>
             </span>
             <span class="service-row__meta">
               <span class="service-row__dur">${escapeHtml(formatDuration(resolved.durationMin))}</span>
-              ${rowPrice ? `<span class="service-row__price">${escapeHtml(rowPrice)}</span>` : ""}
+              ${
+                rowPrice
+                  ? `<span class="service-row__price">${formatRowPriceHtml(resolved.price)}</span>`
+                  : ""
+              }
             </span>
           </div>
           ${
@@ -17834,6 +18052,7 @@
     window.AppState.params[instance] = params || {};
     saveState();
     renderAll();
+    syncCurrentAppRoute();
   }
 
   function setRole(instance, role) {
@@ -17883,15 +18102,22 @@
     saveState();
     renderAll();
     if (screen === "admin") loadAdminTab(true);
+    syncCurrentAppRoute();
   }
 
-  function openAuth() {
+  function openAuth(returnTo) {
     window.AppState.appMenuOpen = false;
     window.AppState.activeRole = "client";
     window.AppState.screen.client = "auth";
     saveState();
     updateAppHeader("client");
     renderAll();
+    writeAppRoute({
+      kind: "screen",
+      role: "client",
+      screen: "auth",
+      returnTo: isSafeLocalReturnPath(returnTo || "") ? returnTo : "",
+    });
   }
 
   function closeAuth() {
@@ -17899,6 +18125,7 @@
     saveState();
     updateAppHeader("client");
     renderAll();
+    writeAppRoute({ kind: "screen", role: "client", screen: "account" });
   }
 
   function usesDesktopLayout() {
@@ -17962,6 +18189,7 @@
     if (!hasInlinePanel || prefersReducedMotion()) {
       applyCloseProviderState();
       renderAll();
+      writeAppRoute({ kind: "screen", role: "client", screen: "search" });
       return;
     }
 
@@ -17970,12 +18198,57 @@
       window.AppState.closingProvider = false;
       applyCloseProviderState();
       renderAll();
+      writeAppRoute({ kind: "screen", role: "client", screen: "search" });
     });
+  }
+
+  function hasDraftForProvider(slug) {
+    return !!(
+      window.AppState.draft &&
+      typeof window.AppState.draft === "object" &&
+      window.AppState.draft.slug === slug
+    );
+  }
+
+  function bookingScreenPaintedForSlug(slug) {
+    if (!slug || window.AppState.screen.client !== "booking") return false;
+    const paramsSlug =
+      window.AppState.params &&
+      window.AppState.params.client &&
+      window.AppState.params.client.slug;
+    if (paramsSlug && paramsSlug !== slug) return false;
+    return !!document.querySelector(".app-screen--booking .booking__provider-card");
+  }
+
+  function refreshBookingProviderHead(p) {
+    if (!p) return;
+    document.querySelectorAll(".app-screen--booking .booking__provider-card").forEach(function (card) {
+      const draft = window.AppState.draft;
+      const infoOpen = !!(draft && draft.providerInfoOpen);
+      card.classList.toggle("booking__provider-card--info-open", infoOpen);
+      card.innerHTML =
+        renderProviderCard(p, false, { staticMain: true, bookingHeader: true, showBack: true }) +
+        (infoOpen ? renderProviderInfoPopover(p) : "");
+    });
+  }
+
+  function paintBookingProviderUI(p, opts) {
+    opts = opts || {};
+    const publicSlug = p.slug || (opts.slug || "");
+    if (bookingScreenPaintedForSlug(publicSlug) && refreshBookingDraftUI()) {
+      refreshBookingProviderHead(p);
+      updateAppHeader("client");
+      return "partial";
+    }
+    renderAll();
+    return "full";
   }
 
   function openProviderResolved(p, slug, opts) {
     opts = opts || {};
-    initDraftForProvider(p);
+    if (!opts.preserveDraft || !hasDraftForProvider(p.slug || slug)) {
+      initDraftForProvider(p);
+    }
     const preferredIds = Array.isArray(opts.serviceIds) ? opts.serviceIds.filter(Boolean) : [];
     if (preferredIds.length) {
       const validIds = preferredIds.filter(function (id) {
@@ -18001,7 +18274,7 @@
     window.AppState.screen.client = "booking";
 
     saveState();
-    renderAll();
+    paintBookingProviderUI(p, { slug: publicSlug });
     window.AppState.bookingPanelEnterSlug = null;
     if (!opts.skipUrlSync) {
       syncPublicProviderUrl(publicSlug, { embed: !!opts.embed, replace: !!opts.replaceUrl });
@@ -18255,6 +18528,7 @@
     // Pusty wybór = zostajemy w panelu (nie zamykamy usługodawcy).
     saveState();
     if (!refreshBookingDraftUI()) renderAll();
+    syncCurrentAppRoute({ replace: true });
   }
 
   function pickServiceVariant(serviceId, variantId) {
@@ -18293,6 +18567,7 @@
     draft.slotId = null;
     saveState();
     if (!refreshBookingDraftUI()) renderAll();
+    syncCurrentAppRoute({ replace: true });
   }
 
   function toggleService(serviceId) {
@@ -19284,7 +19559,15 @@
       /* ignore */
     }
     showToast("Zaloguj się, aby kontynuować.");
-    openAuth();
+    let returnTo = buildAppRoute(routeFromAppState());
+    if (intent && intent.type === "screen" && intent.screen) {
+      returnTo = buildAppRoute({
+        kind: "screen",
+        role: "client",
+        screen: intent.screen,
+      });
+    }
+    openAuth(returnTo);
     return false;
   }
 
@@ -19323,26 +19606,33 @@
 
   function resumePendingIntent() {
     const intent = takePendingIntent();
-    if (!intent || !intent.type) return;
+    if (!intent || !intent.type) return false;
+    if (intent.type === "route" && isSafeLocalReturnPath(intent.path)) {
+      history.replaceState({ lokalnieRoute: true }, "", intent.path);
+      handleAppRoute();
+      return true;
+    }
     if (intent.type === "screen" && intent.screen) {
       goScreen(intent.screen);
-      return;
+      return true;
     }
     if (intent.type === "confirm-booking") {
       confirmBooking();
-      return;
+      return true;
     }
     if (intent.type === "send-request" && intent.slug) {
       sendRequest(intent.slug);
-      return;
+      return true;
     }
     if (intent.type === "toggle-fav" && intent.slug) {
       toggleFav(intent.slug);
-      return;
+      return true;
     }
     if (intent.type === "menu") {
       openAppMenu();
+      return true;
     }
+    return false;
   }
 
   /** Marketplace — dostępny też bez logowania (jak Allegro/OLX). */
@@ -19358,9 +19648,78 @@
     showPage("app");
   }
 
+  const APP_ROUTE_QUERY = {
+    search: ["q", "kategoria", "podkategoria", "miejsce", "promien", "data", "pora"],
+    provider: ["usluga"],
+    embed: ["usluga"],
+    myCalendar: ["status", "data"],
+    providerCalendar: ["widok", "data"],
+    admin: ["tab"],
+    auth: ["powrot"],
+  };
+  const MY_CAL_ROUTE_STATUSES = {
+    upcoming: true,
+    past: true,
+    pending: true,
+    cancelled: true,
+    rejected: true,
+  };
+  const ADMIN_ROUTE_TABS = {
+    stats: true,
+    users: true,
+    providers: true,
+    bookings: true,
+    emails: true,
+    audit: true,
+  };
+  let appRouteApplyDepth = 0;
+  let appRouteTextTimer = null;
+
+  function safeDecodeRoutePart(raw) {
+    try {
+      return decodeURIComponent(raw);
+    } catch (err) {
+      return "";
+    }
+  }
+
+  function isSafeLocalReturnPath(value) {
+    if (typeof value !== "string" || value.charAt(0) !== "/" || value.slice(0, 2) === "//") {
+      return false;
+    }
+    if (
+      /^[a-z][a-z0-9+.-]*:/i.test(value) ||
+      /^\/[a-z][a-z0-9+.-]*:/i.test(value) ||
+      value.indexOf("://") !== -1 ||
+      value.indexOf("\\") !== -1
+    ) {
+      return false;
+    }
+    try {
+      const parsed = new URL(value, location.origin);
+      return parsed.origin === location.origin && parsed.pathname.charAt(0) === "/";
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function routeQueryValues(params, key, allowed) {
+    if (allowed.indexOf(key) === -1) return [];
+    const values = [];
+    params.getAll(key).forEach(function (raw) {
+      String(raw || "")
+        .split(",")
+        .forEach(function (value) {
+          value = value.trim();
+          if (value && values.indexOf(value) === -1) values.push(value);
+        });
+    });
+    return values;
+  }
+
   function parseAppRouteFromLocation() {
     const hash = (location.hash || "").replace(/^#/, "");
-    // OAuth / calendar callback w hashu — nie traktuj jako trasy profilu.
+    // OAuth / calendar callback w hashu — hash musi pozostać nietknięty do consumeAuthHash.
     if (
       hash &&
       (hash.indexOf("access_token=") !== -1 ||
@@ -19368,15 +19727,25 @@
         hash.indexOf("calendar_connected=") !== -1 ||
         hash.indexOf("calendar_error=") !== -1)
     ) {
-      return null;
+      return { kind: "oauth-hash" };
     }
     const embedHash = hash.match(/^embed\/(.+)$/);
     if (embedHash && embedHash[1]) {
-      return { kind: "embed", slug: decodeURIComponent(embedHash[1]), fromHash: true };
+      return {
+        kind: "embed",
+        slug: safeDecodeRoutePart(embedHash[1]),
+        serviceIds: [],
+        fromHash: true,
+      };
     }
     const providerHash = hash.match(/^provider\/(.+)$/);
     if (providerHash && providerHash[1]) {
-      return { kind: "provider", slug: decodeURIComponent(providerHash[1]), fromHash: true };
+      return {
+        kind: "provider",
+        slug: safeDecodeRoutePart(providerHash[1]),
+        serviceIds: [],
+        fromHash: true,
+      };
     }
     if (hash === "simulator" || hash === "calendar") {
       return { kind: "legacy-hash", hash: hash };
@@ -19384,50 +19753,561 @@
 
     let path = location.pathname || "/";
     if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
-    if (path === "/" || path === "/index.html") return null;
+    const params = new URLSearchParams(location.search || "");
+    if (path === "/" || path === "/index.html") {
+      return {
+        kind: "screen",
+        role: "client",
+        screen: "search",
+        query: {
+          q: params.get("q") || "",
+          category: params.get("kategoria") || "",
+          subcategory: params.get("podkategoria") || "",
+          location: params.get("miejsce") || "",
+          radius: params.get("promien") || "",
+          dates: routeQueryValues(params, "data", APP_ROUTE_QUERY.search),
+          periods: routeQueryValues(params, "pora", APP_ROUTE_QUERY.search),
+        },
+      };
+    }
+    if (path === "/ulubione") {
+      return { kind: "screen", role: "client", screen: "favorites", auth: true };
+    }
+    if (path === "/kalendarz") {
+      return {
+        kind: "screen",
+        role: "client",
+        screen: "myCalendar",
+        auth: true,
+        status: params.get("status") || "",
+        date: params.get("data") || "",
+      };
+    }
+    if (path === "/konto") {
+      return { kind: "screen", role: "client", screen: "account" };
+    }
+    if (path === "/logowanie") {
+      const returnTo = params.get("powrot") || "";
+      return {
+        kind: "screen",
+        role: "client",
+        screen: "auth",
+        returnTo: isSafeLocalReturnPath(returnTo) ? returnTo : "",
+      };
+    }
+    if (path === "/admin") {
+      return {
+        kind: "screen",
+        role: "client",
+        screen: "admin",
+        auth: true,
+        admin: true,
+        tab: params.get("tab") || "",
+      };
+    }
+    const providerScreens = {
+      "/panel": "dashboard",
+      "/panel/kalendarz": "calendar",
+      "/panel/prosby": "dashboard",
+      "/panel/uslugi": "services",
+      "/panel/dostepnosc": "availability",
+      "/panel/ustawienia": "settings",
+    };
+    if (providerScreens[path]) {
+      return {
+        kind: "screen",
+        role: "provider",
+        screen: providerScreens[path],
+        auth: true,
+        requests: path === "/panel/prosby",
+        view: params.get("widok") || "",
+        date: params.get("data") || "",
+      };
+    }
 
     const embedPath = path.match(/^\/embed\/([^/]+)$/);
     if (embedPath && embedPath[1]) {
-      return { kind: "embed", slug: decodeURIComponent(embedPath[1]), fromHash: false };
+      return {
+        kind: "embed",
+        slug: safeDecodeRoutePart(embedPath[1]),
+        serviceIds: routeQueryValues(params, "usluga", APP_ROUTE_QUERY.embed),
+        fromHash: false,
+      };
     }
-
     const parts = path.split("/").filter(Boolean);
-    if (parts.length !== 1) return null;
-    const seg = parts[0];
-    if (RESERVED_APP_PATHS[seg] || seg.indexOf(".") !== -1) return null;
-    return { kind: "provider", slug: decodeURIComponent(seg), fromHash: false };
+    if (parts.length === 1) {
+      const rawSeg = parts[0];
+      const seg = safeDecodeRoutePart(rawSeg);
+      if (seg && !RESERVED_APP_PATHS[seg] && seg.indexOf(".") === -1) {
+        return {
+          kind: "provider",
+          slug: seg,
+          serviceIds: routeQueryValues(params, "usluga", APP_ROUTE_QUERY.provider),
+          fromHash: false,
+        };
+      }
+    }
+    return { kind: "not-found" };
   }
 
-  function applyAppRoute(route) {
-    if (!route) {
-      setEmbedMode(false);
-      return false;
+  function buildAppRoute(route) {
+    route = route || { kind: "screen", role: "client", screen: "search" };
+    const params = new URLSearchParams();
+    let path = "/";
+    if (route.kind === "provider" || route.kind === "embed") {
+      path = route.kind === "embed" ? providerEmbedPath(route.slug) : providerPublicPath(route.slug);
+      (route.serviceIds || []).filter(Boolean).forEach(function (id) {
+        params.append("usluga", id);
+      });
+    } else {
+      const screen = route.screen || "search";
+      if (route.role === "provider") {
+        const providerPaths = {
+          dashboard: route.requests ? "/panel/prosby" : "/panel",
+          calendar: "/panel/kalendarz",
+          services: "/panel/uslugi",
+          availability: "/panel/dostepnosc",
+          settings: "/panel/ustawienia",
+        };
+        path = providerPaths[screen] || "/panel";
+        if (screen === "calendar") {
+          const visibleDays = Number(route.view);
+          if (Number.isInteger(visibleDays) && visibleDays >= 1 && visibleDays <= 7) {
+            params.set("widok", String(visibleDays));
+          } else if (route.view === "day" || route.view === "week") {
+            params.set("widok", route.view);
+          }
+          if (/^\d{4}-\d{2}-\d{2}$/.test(route.date || "")) params.set("data", route.date);
+        }
+      } else if (screen === "favorites") path = "/ulubione";
+      else if (screen === "myCalendar") {
+        path = "/kalendarz";
+        if (MY_CAL_ROUTE_STATUSES[route.status]) params.set("status", route.status);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(route.date || "")) params.set("data", route.date);
+      } else if (screen === "account") path = "/konto";
+      else if (screen === "auth") {
+        path = "/logowanie";
+        if (isSafeLocalReturnPath(route.returnTo || "")) params.set("powrot", route.returnTo);
+      } else if (screen === "admin") {
+        path = "/admin";
+        if (ADMIN_ROUTE_TABS[route.tab]) params.set("tab", route.tab);
+      } else {
+        const query = route.query || {};
+        if (query.q) params.set("q", query.q);
+        if (query.category) params.set("kategoria", query.category);
+        if (query.subcategory) params.set("podkategoria", query.subcategory);
+        if (query.location) params.set("miejsce", query.location);
+        if (query.radius && Number(query.radius) !== 15) params.set("promien", String(query.radius));
+        (query.dates || []).forEach(function (date) {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(date)) params.append("data", date);
+        });
+        (query.periods || []).forEach(function (period) {
+          if (period === "morning" || period === "afternoon" || period === "evening") {
+            params.append("pora", period);
+          }
+        });
+      }
     }
-    if (route.kind === "legacy-hash") {
-      history.replaceState(null, "", "/" + (location.search || ""));
-      goMarketplace();
-      return true;
+    const queryString = params.toString();
+    return path + (queryString ? "?" + queryString : "");
+  }
+
+  function routeFromAppState() {
+    const state = window.AppState || {};
+    if (
+      (state.screen && (state.screen.client === "booking" || state.screen.client === "profile")) &&
+      state.params &&
+      state.params.client &&
+      state.params.client.slug
+    ) {
+      return {
+        kind: document.documentElement.classList.contains("embed-mode") ? "embed" : "provider",
+        slug: state.params.client.slug,
+        serviceIds: state.draft && Array.isArray(state.draft.serviceIds) ? state.draft.serviceIds : [],
+      };
     }
-    if (route.kind === "embed") {
-      setEmbedMode(true);
-      window.AppState.loggedIn = true;
+    if (state.activeRole === "provider") {
+      return {
+        kind: "screen",
+        role: "provider",
+        screen: (state.screen && state.screen.provider) || "dashboard",
+        requests:
+          state.screen && state.screen.provider === "dashboard" && state.dashListMode === "requests",
+        view: state.provCalVisibleDays || (state.provCalView === "day" ? 1 : 7),
+        date: state.provCalDate,
+      };
+    }
+    const screen = (state.screen && state.screen.client) || "search";
+    return {
+      kind: "screen",
+      role: "client",
+      screen: screen,
+      status:
+        state.myCalStatusFilters && state.myCalStatusFilters.length
+          ? state.myCalStatusFilters[0]
+          : "upcoming",
+      date: state.myCalDate,
+      tab: state.admin && state.admin.tab,
+      query: {
+        q: state.searchQuery || "",
+        category: state.searchCategory || "",
+        subcategory: state.searchSubcategory || "",
+        location: state.searchUseCurrentLocation ? "" : state.searchLocation || "",
+        radius: state.searchRadiusKm || 15,
+        dates: state.searchFilterDates || [],
+        periods: state.searchFilterPeriods || [],
+      },
+    };
+  }
+
+  function writeAppRoute(route, opts) {
+    opts = opts || {};
+    if (appRouteApplyDepth && !opts.force) return false;
+    const target = buildAppRoute(route);
+    const current = (location.pathname || "/") + (location.search || "") + (location.hash || "");
+    if (current === target) return false;
+    history[opts.replace ? "replaceState" : "pushState"]({ lokalnieRoute: true }, "", target);
+    return true;
+  }
+
+  function syncCurrentAppRoute(opts) {
+    return writeAppRoute(routeFromAppState(), opts || {});
+  }
+
+  function scheduleSearchRouteSync() {
+    if (appRouteApplyDepth) return;
+    if (appRouteTextTimer) clearTimeout(appRouteTextTimer);
+    appRouteTextTimer = window.setTimeout(function () {
+      appRouteTextTimer = null;
+      if (window.AppState.screen.client === "search") syncCurrentAppRoute({ replace: true });
+    }, 250);
+  }
+
+  function finishSuccessfulLoginNavigation(opts) {
+    opts = opts || {};
+    const route = parseAppRouteFromLocation();
+    const onAuthRoute = !!(route && route.kind === "screen" && route.screen === "auth");
+    const returnTo = onAuthRoute && isSafeLocalReturnPath(route.returnTo || "") ? route.returnTo : "";
+
+    if (opts.deferPending) {
+      if (returnTo && !peekPendingIntent()) setPendingIntent({ type: "route", path: returnTo });
+      if (returnTo) {
+        history.replaceState({ lokalnieRoute: true }, "", returnTo);
+        handleAppRoute();
+        return;
+      }
+      if (onAuthRoute) {
+        window.AppState.activeRole = "client";
+        window.AppState.screen.client = DEFAULT_SCREEN.client;
+        saveState();
+        updateAppHeader("client");
+        showPage("app");
+        renderAll();
+        syncCurrentAppRoute({ replace: true });
+      } else {
+        handleAppRoute();
+      }
+      return;
+    }
+
+    if (peekPendingIntent()) {
+      const resumed = resumePendingIntent();
+      // Akcje bez własnej nawigacji wracają na bezpieczny ekran spod logowania.
+      if (resumed && returnTo && location.pathname === "/logowanie") {
+        history.replaceState({ lokalnieRoute: true }, "", returnTo);
+        handleAppRoute();
+      }
+      if (resumed) return;
+    }
+    if (returnTo) {
+      history.replaceState({ lokalnieRoute: true }, "", returnTo);
+      handleAppRoute();
+      return;
+    }
+    if (onAuthRoute) {
+      if (window.AppState.activeRole === "provider" && hasProviderRole()) {
+        window.AppState.screen.provider =
+          window.AppState.screen.provider || DEFAULT_SCREEN.provider;
+      } else {
+        window.AppState.activeRole = "client";
+        window.AppState.screen.client = DEFAULT_SCREEN.client;
+      }
+      saveState();
+      updateAppHeader(window.AppState.activeRole || "client");
+      showPage("app");
+      renderAll();
+      syncCurrentAppRoute({ replace: true });
+      return;
+    }
+    // Po asynchronicznym odtworzeniu sesji nie aplikuj ponownie tej samej trasy /:slug.
+    if (
+      route &&
+      (route.kind === "provider" || route.kind === "embed") &&
+      route.slug &&
+      window.AppState.screen.client === "booking" &&
+      window.AppState.params.client &&
+      window.AppState.params.client.slug === route.slug
+    ) {
       window.AppState.activeRole = "client";
-      window.AppState.screen.client = "booking";
+      window.AppState.appMenuOpen = false;
+      setEmbedMode(route.kind === "embed");
+      if (route.kind === "embed") window.AppState.loggedIn = true;
       saveState();
       updateAppHeader("client");
       showPage("app");
-      openProvider(route.slug, { force: true, embed: true, skipUrlSync: true });
-      syncPublicProviderUrl(route.slug, { embed: true, replace: true });
+      if (!bookingScreenPaintedForSlug(route.slug) || !refreshBookingDraftUI()) {
+        void openProvider(route.slug, {
+          embed: route.kind === "embed",
+          serviceIds: route.serviceIds || [],
+          preserveDraft: true,
+          skipUrlSync: true,
+        });
+      } else {
+        const existing = getProviderBySlug(route.slug);
+        if (existing) refreshBookingProviderHead(existing);
+      }
+      return;
+    }
+    // Po asynchronicznym odtworzeniu sesji URL ponownie ustala rolę i ekran.
+    handleAppRoute();
+  }
+
+  function redirectRouteToLogin(route) {
+    const returnTo = buildAppRoute(route);
+    setPendingIntent({ type: "route", path: returnTo });
+    const authRoute = {
+      kind: "screen",
+      role: "client",
+      screen: "auth",
+      returnTo: returnTo,
+    };
+    window.AppState.activeRole = "client";
+    window.AppState.screen.client = "auth";
+    saveState();
+    updateAppHeader("client");
+    showPage("app");
+    renderAll();
+    writeAppRoute(authRoute, { replace: true, force: true });
+  }
+
+  function applyScreenRoute(route) {
+    if (route.auth && !isLoggedIn()) {
+      redirectRouteToLogin(route);
       return true;
     }
-    if (route.kind === "provider") {
-      setEmbedMode(false);
-      goMarketplace();
-      openProvider(route.slug, { skipUrlSync: true });
-      syncPublicProviderUrl(route.slug, { replace: true });
+    if (route.admin && !window.AppState.isAdmin) {
+      showToast("Brak uprawnień admina.");
+      route = { kind: "screen", role: "client", screen: "account" };
+      writeAppRoute(route, { replace: true, force: true });
+    }
+    if (route.role === "provider" && !hasProviderRole()) {
+      showToast("Najpierw dodaj profil usługodawcy.");
+      route = { kind: "screen", role: "client", screen: "account" };
+      writeAppRoute(route, { replace: true, force: true });
+    }
+    if (
+      route.screen === "auth" &&
+      route.returnTo &&
+      isSafeLocalReturnPath(route.returnTo) &&
+      !peekPendingIntent()
+    ) {
+      setPendingIntent({ type: "route", path: route.returnTo });
+    }
+    setEmbedMode(false);
+    window.AppState.appMenuOpen = false;
+    window.AppState.searchOpenSlug = null;
+    window.AppState.activeRole = route.role || "client";
+    if (route.role === "provider") {
+      window.AppState.screen.provider = route.screen || "dashboard";
+      window.AppState.dashListMode = route.requests ? "requests" : "visits";
+      if (route.screen === "calendar") {
+        const visibleDays =
+          route.view === "day" ? 1 : route.view === "week" ? 7 : Number(route.view);
+        if (Number.isInteger(visibleDays) && visibleDays >= 1 && visibleDays <= 7) {
+          window.AppState.provCalVisibleDays = visibleDays;
+          window.AppState.provCalView = visibleDays <= 1 ? "day" : "week";
+        } else {
+          window.AppState.provCalVisibleDays = 7;
+          window.AppState.provCalView = "week";
+        }
+        if (/^\d{4}-\d{2}-\d{2}$/.test(route.date || "")) {
+          window.AppState.provCalDate = route.date;
+          window.AppState.provCalWindowStart =
+            window.AppState.provCalVisibleDays === 7 ? mondayISOFrom(route.date) : route.date;
+        } else {
+          window.AppState.provCalDate = null;
+          window.AppState.provCalWindowStart = null;
+        }
+      }
+    } else {
+      window.AppState.screen.client = route.screen || "search";
+      if (route.screen === "search") {
+        const query = route.query || {};
+        const radius = Number(query.radius);
+        window.AppState.searchQuery = String(query.q || "").slice(0, 160);
+        window.AppState.searchCategory = String(query.category || "").slice(0, 80);
+        window.AppState.searchSubcategory = String(query.subcategory || "").slice(0, 80);
+        window.AppState.searchLocation = String(query.location || "").slice(0, 160);
+        window.AppState.searchUseCurrentLocation = !window.AppState.searchLocation;
+        window.AppState.searchLat = null;
+        window.AppState.searchLng = null;
+        window.AppState.searchLocationSource = "none";
+        window.AppState.searchRadiusKm =
+          Number.isFinite(radius) && radius >= 1 && radius <= 100 ? radius : 15;
+        window.AppState.searchFilterDates = (query.dates || []).filter(function (date) {
+          return /^\d{4}-\d{2}-\d{2}$/.test(date);
+        });
+        window.AppState.searchFilterPeriods = (query.periods || []).filter(function (period) {
+          return period === "morning" || period === "afternoon" || period === "evening";
+        });
+      } else if (route.screen === "myCalendar") {
+        window.AppState.myCalStatusFilters = [
+          MY_CAL_ROUTE_STATUSES[route.status] ? route.status : "upcoming",
+        ];
+        window.AppState.myCalDate = /^\d{4}-\d{2}-\d{2}$/.test(route.date || "")
+          ? route.date
+          : null;
+        window.AppState.myCalMonth = window.AppState.myCalDate
+          ? window.AppState.myCalDate.slice(0, 7)
+          : null;
+      } else if (route.screen === "admin") {
+        ensureAdminState().tab = ADMIN_ROUTE_TABS[route.tab] ? route.tab : "stats";
+      }
+    }
+    saveState();
+    updateAppHeader(window.AppState.activeRole);
+    showPage("app");
+    renderAll();
+    writeAppRoute(
+      route.screen === "auth" ? route : routeFromAppState(),
+      { replace: true, force: true }
+    );
+    if (route.screen === "admin") loadAdminTab(true);
+    return true;
+  }
+
+  function applyAppRoute(route) {
+    if (!route || route.kind === "oauth-hash") return false;
+    appRouteApplyDepth += 1;
+    try {
+      if (route.kind === "legacy-hash") {
+        writeAppRoute(
+          { kind: "screen", role: "client", screen: "search" },
+          { replace: true, force: true }
+        );
+        return applyScreenRoute({ kind: "screen", role: "client", screen: "search" });
+      }
+      if (route.kind === "not-found") {
+        showToast("Nie znaleziono strony.");
+        writeAppRoute(
+          { kind: "screen", role: "client", screen: "search" },
+          { replace: true, force: true }
+        );
+        return applyScreenRoute({ kind: "screen", role: "client", screen: "search" });
+      }
+      if (route.kind === "screen") return applyScreenRoute(route);
+      if (route.kind === "embed" || route.kind === "provider") {
+        if (!route.slug) {
+          writeAppRoute(
+            { kind: "screen", role: "client", screen: "search" },
+            { replace: true, force: true }
+          );
+          return applyScreenRoute({ kind: "screen", role: "client", screen: "search" });
+        }
+        setEmbedMode(route.kind === "embed");
+        if (route.kind === "embed") window.AppState.loggedIn = true;
+        window.AppState.activeRole = "client";
+        window.AppState.appMenuOpen = false;
+        window.AppState.searchOpenSlug = null;
+        window.AppState.screen.client = "booking";
+        window.AppState.params.client = { slug: route.slug };
+        if (!hasDraftForProvider(route.slug)) {
+          window.AppState.draft = { slug: route.slug };
+        }
+        saveState();
+        updateAppHeader("client");
+        showPage("app");
+        renderAll();
+        void openProvider(route.slug, {
+          embed: route.kind === "embed",
+          serviceIds: route.serviceIds || [],
+          preserveDraft: true,
+          skipUrlSync: true,
+        }).then(function (provider) {
+          const currentRoute = parseAppRouteFromLocation();
+          if (
+            !currentRoute ||
+            currentRoute.kind !== route.kind ||
+            currentRoute.slug !== route.slug
+          ) {
+            return;
+          }
+          // Zawsze zostań na /:slug (także po odświeżeniu / aktualizacji PWA).
+          // Brak profilu → „Ładowanie oferty…”; katalog lub ponowna próba dociągnie dane.
+          writeAppRoute(
+            {
+              kind: route.kind,
+              slug: (provider && provider.slug) || route.slug,
+              serviceIds:
+                window.AppState.draft && Array.isArray(window.AppState.draft.serviceIds)
+                  ? window.AppState.draft.serviceIds
+                  : route.serviceIds || [],
+            },
+            { replace: true, force: true }
+          );
+        });
+        return true;
+      }
+      return false;
+    } finally {
+      appRouteApplyDepth -= 1;
+    }
+  }
+
+  /** Po katalogu / sync: jeśli URL to profil, wróć na rezerwację zamiast marketplace. */
+  function resumeProviderRouteFromLocation() {
+    const route = parseAppRouteFromLocation();
+    if (!route || (route.kind !== "provider" && route.kind !== "embed") || !route.slug) {
+      return false;
+    }
+    setEmbedMode(route.kind === "embed");
+    if (route.kind === "embed") window.AppState.loggedIn = true;
+    window.AppState.activeRole = "client";
+    window.AppState.appMenuOpen = false;
+    window.AppState.searchOpenSlug = null;
+    window.AppState.screen.client = "booking";
+    window.AppState.params.client = { slug: route.slug };
+    if (!hasDraftForProvider(route.slug)) {
+      window.AppState.draft = { slug: route.slug };
+    }
+    saveState();
+    updateAppHeader("client");
+    showPage("app");
+    const existing = getProviderBySlug(route.slug);
+    if (
+      existing &&
+      (existing._mine || existing._detailsLoaded || !existing._fromApi) &&
+      bookingScreenPaintedForSlug(route.slug)
+    ) {
+      if (!refreshBookingDraftUI()) {
+        openProviderResolved(existing, route.slug, {
+          embed: route.kind === "embed",
+          serviceIds: route.serviceIds || [],
+          preserveDraft: true,
+          skipUrlSync: true,
+        });
+      } else {
+        refreshBookingProviderHead(existing);
+      }
       return true;
     }
-    return false;
+    void openProvider(route.slug, {
+      embed: route.kind === "embed",
+      serviceIds: route.serviceIds || [],
+      preserveDraft: true,
+      skipUrlSync: true,
+    });
+    return true;
   }
 
   function handleAppRoute() {
@@ -19592,11 +20472,8 @@
     }
     if (role === "provider") selectOwnedProvider((listOwnedProviders()[0] || {}).id);
     saveState();
-    updateAppHeader(role);
-    renderAll();
-    showPage("app");
     showToast(pending ? "Podgląd testera — bez Google." : "Podgląd testera — pierwsze okno jak po Google.");
-    if (pending) resumePendingIntent();
+    finishSuccessfulLoginNavigation({ deferPending: !!window.AppState.onboarding });
   }
 
   function googleLogin() {
@@ -19604,7 +20481,11 @@
       showToast("API niedostępne. Spróbuj ponownie lub użyj lokalnego podglądu testera.");
       return;
     }
-    window.location.href = window.LokalnieApi.googleLoginUrl(window.location.origin + "/");
+    const callbackPath =
+      location.pathname === "/logowanie"
+        ? location.pathname + location.search
+        : "/";
+    window.location.href = window.LokalnieApi.googleLoginUrl(window.location.origin + callbackPath);
   }
 
   function finishGoogleLogin(token) {
@@ -19641,25 +20522,21 @@
           if (restoreProvider) window.AppState.screen.provider = DEFAULT_SCREEN.provider;
           window.AppState.onboarding = showOnboarding ? "client" : null;
           saveState();
-          updateAppHeader(window.AppState.activeRole);
-          renderAll();
           showToast(showOnboarding ? "Zalogowano. Sprawdź swój profil." : "Zalogowano.");
           return window.LokalnieApi.syncFromServer().then(function (result) {
             // Sync nie może zjeść ekranu onboardingu.
             if (showOnboarding) window.AppState.onboarding = "client";
             saveState();
-            updateAppHeader(window.AppState.activeRole);
-            renderAll();
             if (!result || !result.ok) {
               showToast("Nie udało się pobrać wszystkich danych panelu. Spróbuj odświeżyć.");
             }
-            if (!showOnboarding) resumePendingIntent();
+            finishSuccessfulLoginNavigation({ deferPending: showOnboarding });
           });
         }
         ensureClientProfile();
         window.AppState.onboarding = "client";
         saveState();
-        renderAll();
+        finishSuccessfulLoginNavigation({ deferPending: true });
         return null;
       })
       .catch(function (err) {
@@ -19667,7 +20544,7 @@
         ensureClientProfile();
         window.AppState.onboarding = "client";
         saveState();
-        renderAll();
+        finishSuccessfulLoginNavigation({ deferPending: true });
         showToast("Zalogowano, ale nie pobrano profilu. Uzupełnij dane ręcznie.");
       });
     return true;
@@ -19734,14 +20611,8 @@
     window.AppState.onboarding = null;
     window.AppState.activeRole = "client";
     saveState();
-    updateAppHeader("client");
-    renderAll();
     showToast("Profil zapisany. Miłego szukania!");
-    if (peekPendingIntent()) {
-      resumePendingIntent();
-      return;
-    }
-    goMarketplace();
+    finishSuccessfulLoginNavigation();
   }
 
   function onboardingChooseClient() {
@@ -19930,36 +20801,63 @@
     }
   }
 
+  /** Jeden sync na boot (sesja cookie + loadCatalog) — bez podwójnego renderAll. */
+  let bootSyncFromServerPromise = null;
+  function runBootSyncFromServer() {
+    if (!window.LokalnieApi || typeof window.LokalnieApi.syncFromServer !== "function") {
+      return Promise.resolve(null);
+    }
+    if (bootSyncFromServerPromise) return bootSyncFromServerPromise;
+    bootSyncFromServerPromise = window.LokalnieApi.syncFromServer().catch(function (err) {
+      console.warn("[Lokalnie] boot syncFromServer failed", err);
+      return { ok: false, error: String(err && err.message ? err.message : err) };
+    });
+    return bootSyncFromServerPromise;
+  }
+
   function restoreCookieSession() {
-    if (!isProductionHostname() || !window.LokalnieApi || !window.LokalnieApi.request) return;
-    void window.LokalnieApi.request("/me", { suppressUnauthorized: true })
+    if (!isProductionHostname() || !window.LokalnieApi || !window.LokalnieApi.request) {
+      return Promise.resolve(null);
+    }
+    let sessionRestored = false;
+    let deferPending = false;
+    return window.LokalnieApi.request("/me", { suppressUnauthorized: true })
       .then(function (me) {
-        if (!me || !me.user) return;
+        if (!me || !me.user) return null;
         setTesterMode(false);
         window.AppState.loggedIn = true;
         applyGoogleUserToClientProfile(me.user);
         applyApiAuth(me);
         const showOnboarding = needsClientOnboarding(me.user) && !me.provider;
-        const restoreProvider = !showOnboarding && !!me.provider && !peekPendingIntent();
+        sessionRestored = true;
+        deferPending = showOnboarding;
+        // Na jawnej trasie /:slug nie przełączaj roli na panel usługodawcy przed nawigacją.
+        const route = parseAppRouteFromLocation();
+        const onPublicProvider =
+          !!route && (route.kind === "provider" || route.kind === "embed") && !!route.slug;
+        const restoreProvider =
+          !showOnboarding && !!me.provider && !peekPendingIntent() && !onPublicProvider;
         window.AppState.activeRole = restoreProvider ? "provider" : "client";
         if (restoreProvider) window.AppState.screen.provider = DEFAULT_SCREEN.provider;
         window.AppState.onboarding = showOnboarding ? "client" : null;
-        updateAppHeader(window.AppState.activeRole);
-        showPage("app");
-        renderAll();
-        return window.LokalnieApi.syncFromServer().then(function (result) {
+        return runBootSyncFromServer().then(function (result) {
           if (showOnboarding) window.AppState.onboarding = "client";
           saveState();
-          updateAppHeader(window.AppState.activeRole);
-          renderAll();
           if (!result || !result.ok) {
             showToast("Nie udało się pobrać wszystkich danych panelu. Spróbuj odświeżyć.");
           }
+          finishSuccessfulLoginNavigation({ deferPending: showOnboarding });
+          return result;
         });
       })
       .catch(function (err) {
         // Brak cookie oznacza gościa; nie pokazuj błędu ani nie zmieniaj UI.
         if (err && err.status !== 401) console.warn("[Lokalnie] cookie session restore failed", err);
+        if (sessionRestored) {
+          saveState();
+          finishSuccessfulLoginNavigation({ deferPending: deferPending });
+        }
+        return null;
       });
   }
 
@@ -19967,6 +20865,7 @@
   function onApiUnauthorized() {
     if (apiUnauthorizedHandling || !window.AppState) return;
     apiUnauthorizedHandling = true;
+    const returnTo = buildAppRoute(routeFromAppState());
     try {
       if (window.AppState.draft) {
         sessionStorage.setItem(PENDING_DRAFT_KEY, JSON.stringify(window.AppState.draft));
@@ -19996,6 +20895,15 @@
     updateAppHeader("client");
     renderAll();
     showPage("app");
+    writeAppRoute(
+      {
+        kind: "screen",
+        role: "client",
+        screen: "auth",
+        returnTo: returnTo,
+      },
+      { replace: true }
+    );
     showToast("Sesja wygasła. Zaloguj się ponownie, aby kontynuować.");
     window.setTimeout(function () {
       apiUnauthorizedHandling = false;
@@ -20029,6 +20937,7 @@
     window.AppState = defaultState();
     saveState();
     goMarketplace();
+    writeAppRoute({ kind: "screen", role: "client", screen: "search" }, { replace: true });
     showToast("Wylogowano.");
   }
 
@@ -20068,6 +20977,7 @@
     }
     clearLocalSessionState();
     goMarketplace();
+    writeAppRoute({ kind: "screen", role: "client", screen: "search" }, { replace: true });
     showToast("Konto zostało usunięte.");
   }
 
@@ -20151,6 +21061,7 @@
     }
     window.AppState.activeRole = role;
     updateAppHeader(role);
+    syncCurrentAppRoute();
     closeAppMenuThen(function () {
       renderAll();
     });
@@ -20160,6 +21071,7 @@
     window.AppState.activeRole = "client";
     window.AppState.screen.client = "account";
     updateAppHeader("client");
+    syncCurrentAppRoute();
     closeAppMenuThen(function () {
       renderAll();
     });
@@ -20174,6 +21086,7 @@
     window.AppState.activeRole = "provider";
     window.AppState.screen.provider = "settings";
     updateAppHeader("provider");
+    syncCurrentAppRoute();
     closeAppMenuThen(function () {
       renderAll();
     });
@@ -20309,6 +21222,7 @@
     logout: logout,
     onApiUnauthorized: onApiUnauthorized,
     applyApiAuth: applyApiAuth,
+    restoreCookieSession: restoreCookieSession,
     switchRole: switchRole,
     showPage: showPage,
     showSimulator: showSimulator,
@@ -20320,6 +21234,9 @@
     declineRequestProposals: declineRequestProposals,
     cancelClientRequest: cancelClientRequest,
     rejectRequest: rejectRequest,
+    openProvider: openProvider,
+    getProviderBySlug: getProviderBySlug,
+    refreshBookingDraftUI: refreshBookingDraftUI,
   };
 
   // ─────────────────────────────────────────────────────────
@@ -20637,8 +21554,8 @@
         event.preventDefault();
         {
           const pages = {
-            privacy: "polityka-prywatnosci.html",
-            terms: "regulamin.html",
+            privacy: "/polityka-prywatnosci.html",
+            terms: "/regulamin.html",
           };
           if (pages[d.doc]) {
             window.location.href = pages[d.doc];
@@ -21332,11 +22249,13 @@
         window.AppState.searchSubcategory = "";
         saveState();
         renderAll();
+        syncCurrentAppRoute({ replace: true });
         break;
       case "filter-subcategory":
         window.AppState.searchSubcategory = d.subcategory || "";
         saveState();
         renderAll();
+        syncCurrentAppRoute({ replace: true });
         break;
       case "toggle-search-filters":
         window.AppState.searchFiltersOpen = !window.AppState.searchFiltersOpen;
@@ -21355,6 +22274,7 @@
           window.AppState.searchFilterDates = dates;
           saveState();
           renderAll();
+          syncCurrentAppRoute({ replace: true });
         }
         break;
       case "toggle-filter-period":
@@ -21368,6 +22288,7 @@
           window.AppState.searchFilterPeriods = periods;
           saveState();
           renderAll();
+          syncCurrentAppRoute({ replace: true });
         }
         break;
       case "clear-location":
@@ -21379,7 +22300,9 @@
         window.AppState.searchSuggestions = [];
         window.AppState.searchGeoStatus = "";
         saveState();
+        syncSearchRadiusSegments();
         void refreshCatalogFromSearch();
+        syncCurrentAppRoute({ replace: true });
         break;
       case "use-my-location":
         requestCurrentLocation();
@@ -21388,11 +22311,13 @@
         const idx = Number(btn.getAttribute("data-index"));
         const suggestion = (window.AppState.searchSuggestions || [])[idx];
         applyPlaceSuggestion(suggestion);
+        syncCurrentAppRoute({ replace: true });
         break;
       }
       case "run-search":
         saveState();
         void refreshCatalogFromSearch();
+        syncCurrentAppRoute({ replace: true });
         break;
       default: break;
     }
@@ -21405,6 +22330,7 @@
       window.AppState.searchQuery = inp.value;
       saveState();
       updateProviderLists();
+      scheduleSearchRouteSync();
       return;
     }
 
@@ -21420,6 +22346,7 @@
         window.AppState.searchSuggestions = [];
         window.AppState.searchGeoStatus = "";
         saveState();
+        syncSearchRadiusSegments();
         void refreshCatalogFromSearch({ render: false });
         updateProviderLists();
       } else {
@@ -21432,9 +22359,11 @@
           window.AppState.searchLocationSource = "none";
         }
         saveState();
+        syncSearchRadiusSegments();
         scheduleLocationSuggestions(val);
         updateProviderLists();
       }
+      scheduleSearchRouteSync();
       return;
     }
 
@@ -21562,6 +22491,7 @@
     if (radiusSel) {
       window.AppState.searchRadiusKm = Number(radiusSel.value) || 15;
       saveState();
+      syncCurrentAppRoute({ replace: true });
       if (hasSearchCoordinates()) {
         void refreshCatalogFromSearch();
       } else {
@@ -23588,9 +24518,14 @@
     }
     // Callback Google OAuth: #auth_error=... albo (poza prod) #access_token=...
     const justAuthed = consumeAuthHash();
+    // Trasa /:slug ma pierwszeństwo przed pierwszym renderem marketplace —
+    // inaczej odświeżenie rezerwacji miga wyszukiwarką i wygląda jak wielokrotny reload.
+    const initialRoute = justAuthed ? null : parseAppRouteFromLocation();
     try {
       if (justAuthed) {
         /* finishGoogleLogin już pokazał app */
+      } else if (initialRoute) {
+        applyAppRoute(initialRoute);
       } else if (window.AppState.loggedIn && window.AppState.activeRole) {
         updateAppHeader(window.AppState.activeRole);
         showPage("app");
@@ -23614,7 +24549,7 @@
       saveState();
       renderAll();
     }, 60000);
-    handleAppRoute();
+    if (!initialRoute) handleAppRoute();
     bindPwaInstallPrompt();
     registerServiceWorker();
 
@@ -23623,7 +24558,7 @@
         if (catalogResult && catalogResult.ok) {
           saveState();
           updateProviderLists();
-          renderAll();
+          if (!resumeProviderRouteFromLocation()) renderAll();
         }
         if (window.AppState.loggedIn) {
           const onProd =
@@ -23631,12 +24566,15 @@
             window.LokalnieApi.isProductionHostname();
           const hasToken =
             window.LokalnieApi.getAuthToken && window.LokalnieApi.getAuthToken();
-          if (onProd || hasToken) {
-            void window.LokalnieApi.syncFromServer().then(function (result) {
+          // Produkcja: restoreCookieSession już robi boot sync + nawigację.
+          if (onProd) {
+            /* skip duplicate sync */
+          } else if (hasToken) {
+            void runBootSyncFromServer().then(function (result) {
               if (!result) return;
               if (result.ok || result.partial) {
                 saveState();
-                renderAll();
+                if (!resumeProviderRouteFromLocation()) renderAll();
               }
               if (result.partial) {
                 showToast("Część danych nie została wczytana. Odśwież stronę.");
@@ -23651,10 +24589,10 @@
       window.AppState.loggedIn &&
       (window.LokalnieApi.getAuthToken && window.LokalnieApi.getAuthToken())
     ) {
-      void window.LokalnieApi.syncFromServer().then(function (result) {
+      void runBootSyncFromServer().then(function (result) {
         if (result && result.ok) {
           saveState();
-          renderAll();
+          if (!resumeProviderRouteFromLocation()) renderAll();
         }
       });
     }

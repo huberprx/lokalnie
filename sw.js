@@ -1,11 +1,11 @@
 /* Lokalnie PWA — przy publikacji podbij CACHE (zgodnie z APP_VERSION w app.js). */
-const CACHE = "lokalnie-shell-v1.0.229";
+const CACHE = "lokalnie-shell-v1.0.233";
 const SHELL = [
-  "./",
-  "./index.html",
-  "./manifest.webmanifest",
-  "./assets/icons/icon-192.png",
-  "./assets/icons/icon-512.png",
+  "/",
+  "/index.html",
+  "/manifest.webmanifest",
+  "/assets/icons/icon-192.png",
+  "/assets/icons/icon-512.png",
 ];
 
 self.addEventListener("install", function (event) {
@@ -54,8 +54,8 @@ function networkFirst(request) {
       }
       // Czyste URL-e profilu (/slug) — serwer może oddać 404; SPA i tak ładuje index.html.
       if (request.mode === "navigate") {
-        return fetch("./index.html", { cache: "no-store" }).then(function (shell) {
-          return shell && shell.ok ? shell : caches.match("./index.html");
+        return fetch("/index.html", { cache: "no-store" }).then(function (shell) {
+          return shell && shell.ok ? shell : caches.match("/index.html");
         });
       }
       return response;
@@ -64,7 +64,7 @@ function networkFirst(request) {
       return caches.match(request).then(function (cached) {
         if (cached) return cached;
         // Fallback na shell tylko dla nawigacji — JS/CSS nigdy nie może dostać HTML-a.
-        if (request.mode === "navigate") return caches.match("./index.html");
+        if (request.mode === "navigate") return caches.match("/index.html");
         return Response.error();
       });
     });

@@ -1,10 +1,10 @@
 {
-  "id": "./",
+  "id": "/",
   "name": "Lokalnie",
   "short_name": "Lokalnie",
   "description": "Rezerwuj usługi lokalnie — klient i usługodawca w jednej aplikacji.",
-  "start_url": "./index.html",
-  "scope": "./",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait-primary",

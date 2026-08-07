@@ -10,6 +10,72 @@ const {
 } = require("./helpers");
 
 test.describe("Lokalnie — kluczowe przepływy", function () {
+  test("odświeżenie profilu usługodawcy pozostaje na tym samym ekranie rezerwacji", async function ({
+    page,
+  }) {
+    await resetAndLogin(page, "client");
+    await page.evaluate(function () {
+      window.AppState.onboarding = null;
+      window.App.saveState();
+    });
+
+    await page.goto("/grzesiu-barber", { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(function () {
+      return (
+        window.AppState &&
+        window.AppState.screen.client === "booking" &&
+        window.AppState.params.client &&
+        window.AppState.params.client.slug === "grzesiu-barber" &&
+        !!document.querySelector(".app-screen--booking .booking__provider-card")
+      );
+    });
+
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForFunction(function () {
+      return (
+        window.AppState &&
+        window.AppState.screen.client === "booking" &&
+        window.AppState.params.client &&
+        window.AppState.params.client.slug === "grzesiu-barber" &&
+        !!document.querySelector(".app-screen--booking .booking__provider-card")
+      );
+    });
+
+    await expect(page).toHaveURL(/\/grzesiu-barber$/);
+    await expect(page.locator(".app-screen--booking .booking__provider-card")).toContainText(
+      "Grzesiu Barber"
+    );
+
+    // Service Worker nie może samoczynnie odpalać location.reload po odświeżeniu.
+    const reloadGuard = await page.evaluate(function () {
+      return new Promise(function (resolve) {
+        let reloads = 0;
+        const original = window.location.reload.bind(window.location);
+        window.location.reload = function () {
+          reloads += 1;
+        };
+        return navigator.serviceWorker.getRegistration("/").then(function (reg) {
+          if (reg && reg.waiting) {
+            reg.waiting.postMessage({ type: "SKIP_WAITING" });
+          }
+          window.setTimeout(function () {
+            window.location.reload = original;
+            resolve({
+              reloads: reloads,
+              screen: window.AppState.screen.client,
+              slug: window.AppState.params.client && window.AppState.params.client.slug,
+            });
+          }, 400);
+        });
+      });
+    });
+    expect(reloadGuard).toEqual({
+      reloads: 0,
+      screen: "booking",
+      slug: "grzesiu-barber",
+    });
+  });
+
   test("prośba → propozycje → rezerwacja (klient + usługodawca)", async function ({ page }) {
     await resetAndLogin(page, "provider");
     await goProviderCalendar(page);
@@ -311,6 +377,83 @@ test.describe("Lokalnie — kluczowe przepływy", function () {
       };
     });
     expect(state).toEqual({ bookings: 0, requests: 0, testerButtons: 0 });
+  });
+
+  test("lokalna ścieżka produkcyjna czyści resztki profilu testera z localStorage", async function ({
+    page,
+  }) {
+    await page.addInitScript(function () {
+      try {
+        if (navigator.serviceWorker && navigator.serviceWorker.register) {
+          navigator.serviceWorker.register = function () {
+            return Promise.reject(new Error("e2e: service worker disabled"));
+          };
+        }
+      } catch (err) {
+        /* ignore */
+      }
+      localStorage.removeItem("lokalnie.testerMode");
+      localStorage.setItem("lokalnie.demoDefaultOff.v1", "1");
+      localStorage.setItem(
+        "lokalnie.state",
+        JSON.stringify({
+          favorites: ["grzesiu-barber"],
+          providerProfiles: [
+            {
+              id: "grzesiu-barber",
+              slug: "grzesiu-barber",
+              name: "Grzesiu Barber",
+              visibleInSearch: true,
+              _mine: true,
+            },
+          ],
+          providerRoleActive: true,
+          activeProviderId: "grzesiu-barber",
+          loggedIn: false,
+        })
+      );
+      let api;
+      Object.defineProperty(window, "LokalnieApi", {
+        configurable: true,
+        enumerable: true,
+        get: function () {
+          return api;
+        },
+        set: function (value) {
+          api = value;
+          if (!api) return;
+          api.enabled = false;
+          api.syncFromServer = function () {
+            return Promise.resolve({ ok: false, skipped: true, reason: "e2e" });
+          };
+          api.loadCatalog = function () {
+            return Promise.resolve({ ok: true, providers: [] });
+          };
+        },
+      });
+    });
+    await page.goto("/index.html?e2e=local-prod-purge", { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(function () {
+      return !!(window.App && window.AppState);
+    });
+
+    const state = await page.evaluate(function () {
+      window.App.renderAll();
+      return {
+        testerMode: window.LokalnieApi.isTesterMode(),
+        profiles: window.AppState.providerProfiles.length,
+        favorites: window.AppState.favorites.slice(),
+        providerRoleActive: window.AppState.providerRoleActive,
+        cards: document.querySelectorAll("#app-fullscreen .provider-card").length,
+      };
+    });
+    expect(state).toEqual({
+      testerMode: false,
+      profiles: 0,
+      favorites: [],
+      providerRoleActive: false,
+      cards: 0,
+    });
   });
 
   test("edycja booking rollbackuje pola po błędzie PATCH", async function ({ page }) {

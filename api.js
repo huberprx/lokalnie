@@ -493,10 +493,20 @@
     };
   }
 
+  let syncFromServerInFlight = null;
+
   async function syncFromServer() {
     if (!window.AppState) return { ok: false, reason: "no_state" };
     // Gość bez sesji — nie ciągnij demo-usera z API do lokalnego stanu.
     if (!isProductionHostname() && !getAuthToken()) return { ok: false, reason: "guest" };
+    if (syncFromServerInFlight) return syncFromServerInFlight;
+    syncFromServerInFlight = syncFromServerOnce().finally(function () {
+      syncFromServerInFlight = null;
+    });
+    return syncFromServerInFlight;
+  }
+
+  async function syncFromServerOnce() {
     try {
       const me = await request("/me");
       if (window.App && typeof window.App.applyApiAuth === "function") {
@@ -744,6 +754,38 @@
     });
   }
 
+  function catalogEntryHasDetails(p) {
+    return !!(
+      p &&
+      (p._detailsLoaded ||
+        p._mine ||
+        (Array.isArray(p.services) && p.services.length > 0) ||
+        (Array.isArray(p.availability) && p.availability.length > 0))
+    );
+  }
+
+  /** Lista katalogu nie może wycierać services/availability z wcześniej dociągniętego profilu. */
+  function mergeCatalogListEntry(prev, next) {
+    if (!next) return prev || null;
+    if (!prev) return next;
+    const prevLoaded = catalogEntryHasDetails(prev);
+    const nextLoaded = catalogEntryHasDetails(next);
+    if (prevLoaded && !nextLoaded) {
+      return Object.assign({}, prev, next, {
+        services: Array.isArray(prev.services) ? prev.services : [],
+        availability: Array.isArray(prev.availability) ? prev.availability : [],
+        _detailsLoaded: prev._detailsLoaded != null ? !!prev._detailsLoaded : true,
+        _mine: !!(prev._mine || next._mine),
+      });
+    }
+    return Object.assign({}, prev, next);
+  }
+
+  function providerCatalogKey(p) {
+    if (!p) return "";
+    return String(p.apiId || p.id || p.slug || "");
+  }
+
   async function loadCatalog(params) {
     if (!window.AppState) return { ok: false, reason: "no_state" };
     try {
@@ -771,7 +813,20 @@
         offset += pageProviders.length;
       }
 
-      window.AppState.catalogProviders = allProviders;
+      const prevList = Array.isArray(window.AppState.catalogProviders)
+        ? window.AppState.catalogProviders
+        : [];
+      const prevByKey = {};
+      prevList.forEach(function (p) {
+        const key = providerCatalogKey(p);
+        if (key) prevByKey[key] = p;
+        if (p && p.slug) prevByKey["slug:" + p.slug] = p;
+      });
+      window.AppState.catalogProviders = allProviders.map(function (next) {
+        const byId = prevByKey[providerCatalogKey(next)];
+        const bySlug = next && next.slug ? prevByKey["slug:" + next.slug] : null;
+        return mergeCatalogListEntry(byId || bySlug || null, next);
+      });
       window.AppState._catalogSyncedAt = new Date().toISOString();
       return { ok: true, count: allProviders.length, total: total || allProviders.length };
     } catch (err) {
