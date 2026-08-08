@@ -8264,7 +8264,7 @@
             <button type="button" class="stat-card stat-card--link${
               listMode === "cancelled" ? " is-active" : ""
             }" data-action="open-dash-cancelled">
-              <span class="stat-card__num">${cancelledItemsAll.length}</span><span class="stat-card__lbl">Anulowane</span>
+              <span class="stat-card__num">${cancelledItemsAll.length}</span><span class="stat-card__lbl">Odwołane przez kl.</span>
             </button>
           </div>
           ${searchOpen ? "" : renderNotificationsBlock("provider", "Powiadomienia")}
@@ -9650,11 +9650,58 @@
     showToast("Przywrócono poprzedni termin.");
   }
 
+  /** Nagłówek panelu edycji: to samo cofnięcie co „Cofnij” na liście zmian. */
+  function undoProvCalEdit(bookingId) {
+    const draft = window.AppState.provCalAddDraft;
+    undoProvCalReschedule(bookingId);
+    const bk = (window.AppState.bookings || []).find(function (b) {
+      return b && b.id === bookingId;
+    });
+    if (draft && bk && draft.bookingId === bookingId) {
+      draft.dateISO = bk.dateISO || draft.dateISO;
+      draft.slotId = provCalAddSlotIdForBooking(bk);
+      draft.editBaseDateISO = draft.dateISO;
+      draft.editBaseFrom = String(bk.from || "");
+      draft.editBaseTo = String(bk.to || "");
+      window.AppState.provCalDate = draft.dateISO;
+      window.AppState.provCalPickerMonth = draft.dateISO.slice(0, 7);
+      moveProvCalWindowToInclude(draft.dateISO);
+    }
+    saveState();
+    renderAll();
+  }
+
   function formatRescheduleWhen(dateISO, from, to) {
     return formatDayWithDow(dateISO) + " · " + from + "–" + to;
   }
 
-  async function sendProvCalReschedule(bookingIds) {
+  /** API bez clientUserId = ręczna wizyta — nie ma kto zaakceptować propozycji. */
+  function bookingNeedsClientRescheduleProposal(booking) {
+    return !!(booking && !(booking._fromApi && !booking.clientUserId));
+  }
+
+  /** Edycja: czy karuzela/slot różni się od stanu przy otwarciu panelu. */
+  function isProvCalEditTimeDirty(draft) {
+    if (!draft || !draft.bookingId) return false;
+    if (!draft.editBaseDateISO || !draft.editBaseFrom || !draft.editBaseTo) return false;
+    if (!draft.dateISO || !draft.slotId) return false;
+    const start = parseProvCalSlotStartMin(draft.slotId);
+    if (!Number.isFinite(start)) return false;
+    const p = myProvider();
+    const duration =
+      provCalAddServiceTotals(provCalAddSelectedServices(p, draft)).duration || 30;
+    const from = minToTime(start);
+    const to = minToTime(start + Math.max(5, duration));
+    return (
+      String(draft.editBaseDateISO) !== String(draft.dateISO) ||
+      String(draft.editBaseFrom) !== from ||
+      String(draft.editBaseTo) !== to
+    );
+  }
+
+  async function sendProvCalReschedule(bookingIds, opts) {
+    opts = opts || {};
+    const quiet = !!opts.quiet;
     const ids = Array.isArray(bookingIds) ? bookingIds : bookingIds ? [bookingIds] : [];
     let sent = 0;
     let failed = 0;
@@ -9736,19 +9783,23 @@
     }
     saveState();
     renderAll();
-    if (!sent && !failed) {
-      showToast("Brak zmian do wysłania.");
-      return { sent: 0, failed: failed, skipped: skipped };
-    }
-    if (sent) hapticTap(22);
-    if (sent && failed) {
-      showToast("Wysłano: " + sent + ". Do ponowienia: " + failed + ".");
+    if (!quiet) {
+      if (!sent && !failed) {
+        showToast("Brak zmian do wysłania.");
+      } else {
+        if (sent) hapticTap(22);
+        if (sent && failed) {
+          showToast("Wysłano: " + sent + ". Do ponowienia: " + failed + ".");
+        } else if (sent) {
+          showToast(
+            sent === 1
+              ? "Wysłano propozycję zmiany terminu."
+              : "Wysłano " + sent + " propozycje zmiany terminu."
+          );
+        }
+      }
     } else if (sent) {
-      showToast(
-        sent === 1
-          ? "Wysłano propozycję zmiany terminu."
-          : "Wysłano " + sent + " propozycje zmiany terminu."
-      );
+      hapticTap(22);
     }
     return { sent: sent, failed: failed, skipped: skipped };
   }
@@ -12171,8 +12222,11 @@
               </div>
             </div>
             <div class="prov-cal-reschedule__actions">
-              <button type="button" class="btn btn--ghost btn--sm" data-action="undo-prov-cal-reschedule"
-                data-booking-id="${escapeHtml(item.bookingId)}">Cofnij</button>
+              <button type="button" class="btn btn--ghost btn--sm prov-cal-reschedule__undo" data-action="undo-prov-cal-reschedule"
+                data-booking-id="${escapeHtml(item.bookingId)}">
+                <span class="prov-cal-reschedule__undo-icon" aria-hidden="true"></span>
+                Cofnij
+              </button>
               <button type="button" class="btn btn--primary btn--sm" data-action="send-prov-cal-reschedule"
                 data-booking-id="${escapeHtml(item.bookingId)}">Wyślij</button>
             </div>
@@ -12408,7 +12462,7 @@
     draft.serviceIds = serviceIdsFromBooking(bk);
     draft.dateISO = bk.dateISO || ensureProvCalDate();
     draft.slotId = provCalAddSlotIdForBooking(bk);
-    // Punkt odniesienia sesji edycji — Zapisz wrzuca zmianę do kolejki względem tych godzin.
+    // Punkt odniesienia sesji edycji — Zapisz aktywuje się i wysyła propozycję po zmianie względem tych godzin.
     draft.editBaseDateISO = bk.dateISO || draft.dateISO;
     draft.editBaseFrom = String(bk.from || "");
     draft.editBaseTo = String(bk.to || "");
@@ -12927,6 +12981,9 @@
       const n = (draft.proposals || []).length;
       ctaDisabled = n < 1;
       ctaLabel = ("Wyślij " + (n || "") + " " + proposalCountLabel(n)).replace(/\s+/g, " ").trim();
+    } else if (draft.bookingId) {
+      // Edycja: Zapisz aktywny dopiero po zmianie terminu w karuzeli.
+      ctaDisabled = !(hasSvc && !!draft.slotId && isProvCalEditTimeDirty(draft));
     }
     document.querySelectorAll(".prov-cal-add__foot .bottom-nav__summary").forEach(function (summary) {
       const dur = summary.querySelector(".bottom-nav__summary-dur");
@@ -12940,6 +12997,7 @@
     document.querySelectorAll('[data-role="prov-cal-add-cta"]').forEach(function (cta) {
       cta.disabled = ctaDisabled;
       cta.textContent = ctaLabel;
+      cta.classList.toggle("bottom-nav__book--ready", !ctaDisabled && !!draft.bookingId && !isReplyPatch);
     });
   }
 
@@ -13324,7 +13382,9 @@
     const selected = provCalAddSelectedServices(p, draft);
     const totals = provCalAddServiceTotals(selected);
     const hasSvc = selected.length > 0;
-    const ctaDisabled = !(hasSvc && !!draft.slotId);
+    const ctaDisabled = draft.bookingId
+      ? !(hasSvc && !!draft.slotId && isProvCalEditTimeDirty(draft))
+      : !(hasSvc && !!draft.slotId);
     document.querySelectorAll(".prov-cal-add__foot .bottom-nav__summary").forEach(function (summary) {
       summary.classList.toggle("bottom-nav__summary--empty", !hasSvc);
       const dur = summary.querySelector(".bottom-nav__summary-dur");
@@ -13337,6 +13397,7 @@
     document.querySelectorAll('[data-role="prov-cal-add-cta"]').forEach(function (cta) {
       cta.disabled = ctaDisabled;
       cta.textContent = "Zapisz";
+      cta.classList.toggle("bottom-nav__book--ready", !ctaDisabled && !!draft.bookingId);
     });
   }
 
@@ -13586,9 +13647,8 @@
       booking.locationId = slot.locationId || "";
       booking.locationLabel = slot.locationLabel || "";
       if (!booking.status) booking.status = "confirmed";
-      // Rezerwacje z klientem API: zmiana czasu idzie do kolejki → „Wyślij”.
-      // Ręczne/API bez clientUserId: zapisujemy od razu (nie ma kto zaakceptować).
-      if (timeChanged && !(booking._fromApi && !booking.clientUserId)) {
+      // Karuzela i tak dokłada draft do kolejki; Zapisz poniżej wyśle propozycję.
+      if (timeChanged && bookingNeedsClientRescheduleProposal(booking)) {
         noteProvCalReschedule(
           booking.id,
           baseDateISO,
@@ -13630,19 +13690,47 @@
       }
       window.AppState.bookings.push(booking);
     }
-    const deferSlotToRescheduleProposal = !!(
-      booking &&
-      booking._fromApi &&
-      booking.clientUserId &&
-      timeChanged
-    );
-    if (
-      shouldPersistApiMutation() &&
-      booking &&
-      editing &&
-      booking._fromApi &&
-      !deferSlotToRescheduleProposal
-    ) {
+
+    // Edycja + nowy termin + klient: Zapisz = wyślij propozycję (badge znika po sukcesie).
+    if (editing && timeChanged && bookingNeedsClientRescheduleProposal(booking)) {
+      if (clientName) {
+        upsertProviderClient(p.id, {
+          name: clientName,
+          phone: clientPhone,
+          email: clientEmail,
+          address: clientAddress,
+        });
+      }
+      const sendResult = await sendProvCalReschedule(booking.id, { quiet: true });
+      if (!sendResult || !sendResult.sent) {
+        // Draft zostaje w kolejce (badge); panel zostaje otwarty do poprawki / ponowienia.
+        saveState();
+        renderAll();
+        if (!(sendResult && sendResult.failed)) {
+          showToast("Nie udało się wysłać zmiany terminu.");
+        }
+        return;
+      }
+      window.AppState.provCalDate = booking.dateISO;
+      window.AppState.provCalPickerMonth = booking.dateISO.slice(0, 7);
+      moveProvCalWindowToInclude(booking.dateISO);
+      window.AppState.provCalSelection = normalizeProvCalSelection({
+        kind: "booking",
+        bookingId: booking.id,
+        dateISO: booking.dateISO,
+        fromMin: timeToMinutes(booking.from),
+        toMin: timeToMinutes(booking.to),
+      });
+      window.AppState.provCalAddOpen = false;
+      window.AppState.provCalAddDraft = null;
+      saveState();
+      renderAll();
+      showToast("Wysłano propozycję zmiany terminu.");
+      return;
+    }
+
+    // Ręczna wizyta API (bez clientUserId) albo edycja bez zmiany czasu → zwykły PATCH.
+    if (shouldPersistApiMutation() && booking && editing && booking._fromApi) {
       try {
         const result = await window.LokalnieApi.patchBookingFromApp(
           booking,
@@ -13697,9 +13785,7 @@
       calendarSync && calendarSync.synced === false
         ? "Termin zapisany ✓ Nie udało się zsynchronizować wszystkich kalendarzy."
         : editing
-          ? isBookingInRescheduleQueue(booking.id)
-            ? "Zmiana w kolejce — wyślij propozycję klientowi."
-            : "Termin zapisany ✓"
+          ? "Termin zapisany ✓"
           : "Termin dodany ✓"
     );
   }
@@ -13860,7 +13946,11 @@
           </button>`
         : "";
 
-    const canSave = isReply ? draft.proposals.length > 0 : hasSvc && !!draft.slotId;
+    const canSave = isReply
+      ? draft.proposals.length > 0
+      : isEdit
+        ? hasSvc && !!draft.slotId && isProvCalEditTimeDirty(draft)
+        : hasSvc && !!draft.slotId;
     const priceHtml = !hasSvc ? escapeHtml("—") : formatTotalsPriceHtml(totals);
     const durText = !hasSvc ? "—" : formatDuration(totals.duration || 0);
     const serviceSummaryHtml = renderProvCalAddServiceSummaryHtml(selected);
@@ -13882,6 +13972,7 @@
       ? `Wyślij ${draft.proposals.length || ""} ${proposalCountLabel(draft.proposals.length)}`.replace(/\s+/g, " ").trim()
       : "Zapisz";
     const saveAttrs = isReply ? ` data-request-id="${escapeHtml(replyReq.id)}"` : "";
+    const saveReadyCls = !isReply && isEdit && canSave ? " bottom-nav__book--ready" : "";
     const headCenter = `<h3 class="prov-cal-add__title" id="prov-cal-add-title">${escapeHtml(title)}</h3>`;
 
     window.AppState.provCalAddMinimized = false;
@@ -13951,12 +14042,19 @@
                 <span class="bottom-nav__summary-price">${priceHtml}</span>
               </div>
             </div>
-            <button type="button" class="bottom-nav__book" data-role="prov-cal-add-cta" data-action="${saveAction}"${saveAttrs}${
+            <button type="button" class="bottom-nav__book${saveReadyCls}" data-role="prov-cal-add-cta" data-action="${saveAction}"${saveAttrs}${
               canSave ? "" : " disabled"
             }>${escapeHtml(saveLabel)}</button>
             ${deleteBtnHtml}
           </div>`;
 
+    const editUndoHtml =
+      isEdit && isProvCalEditTimeDirty(draft)
+        ? `<button type="button" class="prov-cal-add__undo" data-action="undo-prov-cal-edit"
+            data-booking-id="${escapeHtml(draft.bookingId)}" aria-label="Cofnij zmianę terminu" title="Cofnij zmianę terminu">
+            <span class="bottom-nav__icon bottom-nav__icon--back" aria-hidden="true"></span>
+          </button>`
+        : `<span class="prov-cal-add__head-spacer" aria-hidden="true"></span>`;
     const closeBtnHtml = `<button type="button" class="prov-cal-add__close" data-action="close-prov-cal-add" aria-label="Zamknij">
             <span class="bottom-nav__icon bottom-nav__icon--close" aria-hidden="true"></span>
           </button>`;
@@ -13968,7 +14066,7 @@
       <div class="prov-cal-add${isReply ? " prov-cal-add--reply" : ""}${enterCls}" data-role="prov-cal-add">
         <div class="prov-cal-add__sheet" role="dialog" aria-modal="false" aria-labelledby="prov-cal-add-title">
           <header class="prov-cal-add__head">
-            <span class="prov-cal-add__head-spacer" aria-hidden="true"></span>
+            ${editUndoHtml}
             ${headCenter}
             ${closeBtnHtml}
           </header>
@@ -14037,7 +14135,7 @@
         </div>
         <div class="prov-cal-body" data-role="prov-cal-body">
           ${renderProvCalGoogleWeek(selected, visits, {
-            queueHtml: renderProvCalQueueButton(addOpen || rescheduleOpen),
+            queueHtml: renderProvCalQueueButton(rescheduleOpen),
           })}
         </div>
         ${renderProvCalFabStack(addOpen || rescheduleOpen)}
@@ -21873,6 +21971,8 @@
     usesDesktopLayout: usesDesktopLayout,
     openProvCalEdit: openProvCalEdit,
     confirmProvCalAdd: confirmProvCalAdd,
+    syncProvCalSelectionFromAddDraft: syncProvCalSelectionFromAddDraft,
+    isProvCalEditTimeDirty: isProvCalEditTimeDirty,
     sendProvCalReschedule: sendProvCalReschedule,
     sendAllProvCalReschedule: sendAllProvCalReschedule,
     acceptProposal: acceptProposal,
@@ -22599,6 +22699,10 @@
       case "undo-prov-cal-reschedule":
         event.preventDefault();
         undoProvCalReschedule(d.bookingId);
+        break;
+      case "undo-prov-cal-edit":
+        event.preventDefault();
+        undoProvCalEdit(d.bookingId);
         break;
       case "send-prov-cal-reschedule":
         event.preventDefault();

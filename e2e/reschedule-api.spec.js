@@ -1,5 +1,5 @@
 const { test, expect } = require("@playwright/test");
-const { resetAndLogin } = require("./helpers");
+const { resetAndLogin, goProviderCalendar } = require("./helpers");
 
 test.describe("stable booking reschedule", function () {
   test("maps a server proposal without losing the confirmed slot", async function ({ page }) {
@@ -116,10 +116,9 @@ test.describe("stable booking reschedule", function () {
     ]);
   });
 
-  test("keeps failed drafts, removes successes, and never PATCHes a changed slot", async function ({
-    page,
-  }) {
+  test("edit Zapisz sends proposal immediately and clears badge queue", async function ({ page }) {
     await resetAndLogin(page, "provider");
+    await goProviderCalendar(page);
     const result = await page.evaluate(async function () {
       window.LokalnieApi.setAuthToken("e2e-token");
       window.LokalnieApi.enabled = true;
@@ -131,7 +130,7 @@ test.describe("stable booking reschedule", function () {
       };
       window.LokalnieApi.proposeBookingRescheduleFromApp = async function (booking, proposal) {
         proposalCalls += 1;
-        if (proposalCalls === 1) throw new Error("offline");
+        if (proposalCalls === 1) throw Object.assign(new Error("offline"), { status: 0 });
         return {
           booking: Object.assign({}, booking, proposal, {
             status: "proposed",
@@ -161,36 +160,136 @@ test.describe("stable booking reschedule", function () {
       });
       if (!next) throw new Error("Brak alternatywnego slotu");
       draft.slotId = next.id;
+      draft.dateISO = next.dateISO || draft.dateISO;
+      window.App.syncProvCalSelectionFromAddDraft();
+      window.App.renderAll();
       localStorage.removeItem("lokalnie.testerMode");
-      await window.App.confirmProvCalAdd();
 
-      const queuedBeforeSend = window.AppState.provCalRescheduleQueue.length;
-      const first = await window.App.sendAllProvCalReschedule();
+      const queuedAfterCarousel = window.AppState.provCalRescheduleQueue.length;
+      const queueButtonWhileEdit = !!document.querySelector(
+        '[data-action="open-prov-cal-reschedule"]'
+      );
+      const ctaDisabledAfterChange = !window.App.isProvCalEditTimeDirty
+        ? null
+        : !window.App.isProvCalEditTimeDirty(draft);
+
+      const first = await window.App.confirmProvCalAdd();
       const queuedAfterFailure = window.AppState.provCalRescheduleQueue.length;
-      const second = await window.App.sendAllProvCalReschedule();
+      const panelOpenAfterFailure = !!window.AppState.provCalAddOpen;
+
+      await window.App.confirmProvCalAdd();
       return {
         patchCalls: patchCalls,
         proposalCalls: proposalCalls,
-        queuedBeforeSend: queuedBeforeSend,
+        queuedAfterCarousel: queuedAfterCarousel,
+        queueButtonWhileEdit: queueButtonWhileEdit,
         queuedAfterFailure: queuedAfterFailure,
+        panelOpenAfterFailure: panelOpenAfterFailure,
         queuedAfterSuccess: window.AppState.provCalRescheduleQueue.length,
-        first: first,
-        second: second,
+        panelOpenAfterSuccess: !!window.AppState.provCalAddOpen,
         status: booking.status,
         revision: booking.revision,
+        firstReturned: first,
+        ctaDisabledAfterChange: ctaDisabledAfterChange,
       };
     });
 
     expect(result).toMatchObject({
       patchCalls: 0,
       proposalCalls: 2,
-      queuedBeforeSend: 1,
+      queuedAfterCarousel: 1,
+      queueButtonWhileEdit: true,
       queuedAfterFailure: 1,
+      panelOpenAfterFailure: true,
       queuedAfterSuccess: 0,
-      first: { sent: 0, failed: 1 },
-      second: { sent: 1, failed: 0 },
+      panelOpenAfterSuccess: false,
       status: "proposed",
       revision: 2,
+    });
+  });
+
+  test("drag only queues; list Wyślij sends and clears badge", async function ({ page }) {
+    await resetAndLogin(page, "provider");
+    await goProviderCalendar(page);
+    const result = await page.evaluate(async function () {
+      window.LokalnieApi.setAuthToken("e2e-token");
+      window.LokalnieApi.enabled = true;
+      let proposalCalls = 0;
+      window.LokalnieApi.proposeBookingRescheduleFromApp = async function (booking, proposal) {
+        proposalCalls += 1;
+        return {
+          booking: Object.assign({}, booking, proposal, {
+            status: "proposed",
+            reschedulePrevDateISO: booking.dateISO,
+            reschedulePrevFrom: "17:00",
+            reschedulePrevTo: "17:45",
+            revision: (booking.revision || 0) + 1,
+            _fromApi: true,
+          }),
+        };
+      };
+
+      const booking = (window.AppState.bookings || []).find(function (b) {
+        return b && b.id === "bk-demo-gb-1700";
+      });
+      booking._fromApi = true;
+      booking.clientUserId = "user-client";
+      booking.revision = 1;
+      const origDate = booking.dateISO;
+      const origFrom = booking.from;
+      const origTo = booking.to;
+
+      function toMin(t) {
+        const p = String(t).split(":");
+        return Number(p[0]) * 60 + Number(p[1] || 0);
+      }
+      function toTime(m) {
+        const h = Math.floor(m / 60);
+        const mm = m % 60;
+        return (h < 10 ? "0" : "") + h + ":" + (mm < 10 ? "0" : "") + mm;
+      }
+      const dur = toMin(origTo) - toMin(origFrom);
+      const newFromMin = toMin(origFrom) + 60;
+      const newFrom = toTime(newFromMin);
+      const newTo = toTime(newFromMin + dur);
+      booking.from = newFrom;
+      booking.to = newTo;
+      window.AppState.provCalRescheduleQueue = [
+        {
+          bookingId: booking.id,
+          origDateISO: origDate,
+          origFrom: origFrom,
+          origTo: origTo,
+          newDateISO: booking.dateISO,
+          newFrom: newFrom,
+          newTo: newTo,
+        },
+      ];
+      window.App.saveState();
+      window.App.renderAll();
+      localStorage.removeItem("lokalnie.testerMode");
+
+      const queuedBefore = window.AppState.provCalRescheduleQueue.length;
+      const send = await window.App.sendAllProvCalReschedule();
+      return {
+        proposalCalls: proposalCalls,
+        queuedBefore: queuedBefore,
+        queuedAfter: window.AppState.provCalRescheduleQueue.length,
+        send: send,
+        status: booking.status,
+        queueButtonAfterSend: !!document.querySelector(
+          '[data-action="open-prov-cal-reschedule"]'
+        ),
+      };
+    });
+
+    expect(result).toMatchObject({
+      proposalCalls: 1,
+      queuedBefore: 1,
+      queuedAfter: 0,
+      send: { sent: 1, failed: 0 },
+      status: "proposed",
+      queueButtonAfterSend: false,
     });
   });
 });

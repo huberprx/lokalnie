@@ -7,7 +7,7 @@
   const TOKEN_KEY = "lokalnie.authToken";
   const TESTER_KEY = "lokalnie.testerMode";
   const REQUEST_TIMEOUT_MS = 10000;
-  const MAX_GET_RETRIES = 1;
+  const MAX_GET_RETRIES = 2;
   const DEMO_HEADER = { "X-Demo-User": "demo" };
   const IDEMPOTENCY_SESSION_KEY = "lokalnie.pendingIdempotency";
   const LEGACY_IDEMPOTENCY_PREFIX = "lokalnie.idempotency.";
@@ -273,6 +273,20 @@
         throw err;
       } finally {
         window.clearTimeout(timeout);
+      }
+      // D1/Cloudflare może chwilowo zwrócić 5xx lub 429 podczas krótkiego
+      // przeciążenia/serializacji zapisu. GET-y są bezpieczne do ponowienia.
+      if (
+        canRetry &&
+        res &&
+        (res.status === 408 ||
+          res.status === 425 ||
+          res.status === 429 ||
+          res.status >= 500) &&
+        attempt < MAX_GET_RETRIES
+      ) {
+        attempt += 1;
+        continue;
       }
       break;
     }
@@ -832,6 +846,13 @@
     if (!window.AppState) return { ok: false, reason: "no_state" };
     try {
       const options = Object.assign({}, params || {});
+      const queryKey = JSON.stringify(
+        Object.keys(options)
+          .sort()
+          .map(function (key) {
+            return [key, options[key]];
+          })
+      );
       const pageSize = Math.min(50, Math.max(1, Number(options.limit) || 50));
       const allProviders = [];
       let total = 0;
@@ -869,11 +890,25 @@
         if (key) prevByKey[key] = p;
         if (p && p.slug) prevByKey["slug:" + p.slug] = p;
       });
+      const previousQueryKey = window.AppState._catalogQueryKey || "";
+      // Nie wymazuj działającego katalogu, jeśli ten sam odczyt chwilowo
+      // zwrócił zero rekordów. Kolejne odświeżenie nadal może zastąpić go
+      // prawidłową, pustą listą po zmianie zapytania.
+      if (allProviders.length === 0 && prevList.length > 0 && previousQueryKey === queryKey) {
+        window.AppState._catalogSyncedAt = new Date().toISOString();
+        return {
+          ok: true,
+          stale: true,
+          count: prevList.length,
+          total: total || prevList.length,
+        };
+      }
       window.AppState.catalogProviders = allProviders.map(function (next) {
         const byId = prevByKey[providerCatalogKey(next)];
         const bySlug = next && next.slug ? prevByKey["slug:" + next.slug] : null;
         return mergeCatalogListEntry(byId || bySlug || null, next);
       });
+      window.AppState._catalogQueryKey = queryKey;
       window.AppState._catalogSyncedAt = new Date().toISOString();
       return { ok: true, count: allProviders.length, total: total || allProviders.length };
     } catch (err) {
