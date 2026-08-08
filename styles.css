@@ -9136,7 +9136,7 @@ button.provider-info-pop__line {
   padding: 0 0 calc(1rem + var(--bottom-nav-clearance));
 }
 
-/* Stos: kolejka zmian / FAB „+” (prawy dolny róg kalendarza). */
+/* FAB „+” w prawym dolnym rogu kalendarza. */
 .prov-cal-fab-stack {
   position: absolute;
   right: max(0.85rem, env(safe-area-inset-right, 0px));
@@ -9148,7 +9148,26 @@ button.provider-info-pop__line {
   gap: 0.55rem;
 }
 
-body.prov-cal-dragging .prov-cal-fab-stack {
+/* Kolejka zmian: zaraz pod paskiem dni tygodnia, prawa krawędź jak „+”. */
+.prov-cal-queue-slot {
+  position: sticky;
+  top: 4.75rem;
+  z-index: 40;
+  height: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding-right: max(0.85rem, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+  overflow: visible;
+}
+
+.prov-cal-queue-slot .prov-cal-fab-queue {
+  pointer-events: auto;
+  margin-top: 0.35rem;
+}
+
+body.prov-cal-dragging .prov-cal-fab-stack,
+body.prov-cal-dragging .prov-cal-queue-slot {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease;
@@ -9197,7 +9216,7 @@ body.prov-cal-dragging .prov-cal-fab-stack {
   height: 1.15rem;
   padding: 0 0.28rem;
   border-radius: 999px;
-  background: var(--accent-provider);
+  background: var(--danger);
   color: #fff;
   font-size: 0.68rem;
   font-weight: 750;

@@ -9483,19 +9483,34 @@
 
   /**
    * Zapisz szkic zmiany terminu (bez wysyłki do klienta).
-   * prev* = pozycja przed tą zmianą; przy kolejnych przesunięciach orig zostaje z pierwszego szkicu.
+   * Działa dla confirmed i proposed (kolejne przeciągnięcie już wysłanej propozycji).
+   * prev* = pozycja przed tą zmianą; orig zostaje z pierwszego szkicu / reschedulePrev.
    */
   function noteProvCalReschedule(bookingId, prevDateISO, prevFrom, prevTo, newDateISO, newFrom, newTo) {
     const bk = (window.AppState.bookings || []).find(function (b) {
       return b && b.id === bookingId;
     });
-    if (!bk || bk.status !== "confirmed") return false;
+    if (!bk || (bk.status !== "confirmed" && bk.status !== "proposed")) return false;
     if (!prevDateISO || !prevFrom || !prevTo || !newDateISO || !newFrom || !newTo) return false;
     const queue = ensureProvCalRescheduleQueue();
     const existing = findProvCalRescheduleDraft(bookingId);
-    const origDateISO = existing ? existing.origDateISO : String(prevDateISO);
-    const origFrom = existing ? existing.origFrom : String(prevFrom);
-    const origTo = existing ? existing.origTo : String(prevTo);
+    // Orig = wcześniejszy obowiązujący termin klienta (nie aktualny szkic proposed).
+    let origDateISO;
+    let origFrom;
+    let origTo;
+    if (existing) {
+      origDateISO = existing.origDateISO;
+      origFrom = existing.origFrom;
+      origTo = existing.origTo;
+    } else if (bk.reschedulePrevDateISO && bk.reschedulePrevFrom && bk.reschedulePrevTo) {
+      origDateISO = String(bk.reschedulePrevDateISO);
+      origFrom = String(bk.reschedulePrevFrom);
+      origTo = String(bk.reschedulePrevTo);
+    } else {
+      origDateISO = String(prevDateISO);
+      origFrom = String(prevFrom);
+      origTo = String(prevTo);
+    }
     const nextDate = String(newDateISO);
     const nextFrom = String(newFrom);
     const nextTo = String(newTo);
@@ -9523,6 +9538,7 @@
         newTo: nextTo,
       });
     }
+    // Po zmianie tylko ikona z numerkiem — panel otwiera się po kliknięciu.
     return true;
   }
 
@@ -9589,7 +9605,7 @@
       const bk = (window.AppState.bookings || []).find(function (b) {
         return b && b.id === bookingId;
       });
-      if (!bk || bk.status !== "confirmed") {
+      if (!bk || (bk.status !== "confirmed" && bk.status !== "proposed")) {
         window.AppState.provCalRescheduleQueue = ensureProvCalRescheduleQueue().filter(function (q) {
           return q && q.bookingId !== bookingId;
         });
@@ -9599,9 +9615,12 @@
       bk.dateISO = item.newDateISO;
       bk.from = item.newFrom;
       bk.to = item.newTo;
-      bk.reschedulePrevDateISO = item.origDateISO;
-      bk.reschedulePrevFrom = item.origFrom;
-      bk.reschedulePrevTo = item.origTo;
+      // Pierwsza wysyłka: zapamiętaj stary confirmed. Kolejna korekta proposed: nie nadpisuj orig.
+      if (!bk.reschedulePrevDateISO || !bk.reschedulePrevFrom || !bk.reschedulePrevTo) {
+        bk.reschedulePrevDateISO = item.origDateISO;
+        bk.reschedulePrevFrom = item.origFrom;
+        bk.reschedulePrevTo = item.origTo;
+      }
       bk.status = "proposed";
       applyProposeHoldExpiry(bk, myProvider());
       const holdNote = formatProposeDeadline(bk.proposeExpiresAt);
@@ -10480,7 +10499,8 @@
    * — oś godzin stała (poza torem swipe),
    * — nagłówki + kolumny dni w osobnych clipach (przesuwane poziomo).
    */
-  function renderProvCalGoogleWeek(selectedISO, visits) {
+  function renderProvCalGoogleWeek(selectedISO, visits, opts) {
+    opts = opts || {};
     const dayCount = ensureProvCalVisibleDays();
     const weekDays = provCalVisibleDayList(selectedISO, dayCount);
     const hourH = ensureProvCalHourH();
@@ -10498,9 +10518,15 @@
       })
       .join("");
 
+    const queueHtml = opts.queueHtml || "";
+    const queueWrap = queueHtml
+      ? `<div class="prov-cal-queue-slot" data-role="prov-cal-queue-slot">${queueHtml}</div>`
+      : "";
+
     return `
       <div class="gcal gcal--week" data-role="prov-cal-gcal" data-prov-cal-day-swipe style="--gcal-days:${weekDays.length}">
         ${renderProvCalStickyDayHeads(headCols)}
+        ${queueWrap}
         <div class="gcal__timeline gcal-week__timeline" style="height:${totalH}px;--gcal-hour-h:${hourH}px" data-role="prov-cal-timeline">
           ${renderProvCalHoursHtml(hourH)}
           <div class="gcal-week__cols-clip" data-role="prov-cal-cols-clip">
@@ -11968,13 +11994,12 @@
     hapticTap(16);
   }
 
-  /** FAB „+” + (opcjonalnie) kolejka zmian terminu z numerkiem. */
-  function renderProvCalFabStack(hideStack) {
-    if (hideStack) return "";
+  /** Kolejka niewysłanych zmian terminu — przycisk pod nagłówkiem kalendarza. */
+  function renderProvCalQueueButton(hidden) {
+    if (hidden) return "";
     const queueCount = ensureProvCalRescheduleQueue().length;
-    const queueBtn =
-      queueCount > 0
-        ? `<button type="button" class="prov-cal-fab-queue" data-action="open-prov-cal-reschedule"
+    return queueCount > 0
+      ? `<button type="button" class="prov-cal-fab-queue" data-action="open-prov-cal-reschedule"
             aria-label="Zmiany terminu do wysłania: ${queueCount}" title="Zmiany terminu">
             <svg class="prov-cal-fab-queue__svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M8 6h12M8 12h12M8 18h12" />
@@ -11982,10 +12007,14 @@
             </svg>
             <span class="prov-cal-fab-queue__badge">${queueCount > 9 ? "9+" : String(queueCount)}</span>
           </button>`
-        : "";
+      : "";
+  }
+
+  /** FAB „+” pozostaje w prawym dolnym rogu kalendarza. */
+  function renderProvCalFabStack(hideStack) {
+    if (hideStack) return "";
     return `
       <div class="prov-cal-fab-stack">
-        ${queueBtn}
         <button type="button" class="prov-cal-fab" data-action="open-prov-cal-add" aria-label="Dodaj termin" title="Dodaj termin">
           <span class="prov-cal-fab__icon" aria-hidden="true">+</span>
         </button>
@@ -12266,6 +12295,10 @@
     draft.serviceIds = serviceIdsFromBooking(bk);
     draft.dateISO = bk.dateISO || ensureProvCalDate();
     draft.slotId = provCalAddSlotIdForBooking(bk);
+    // Punkt odniesienia sesji edycji — Zapisz wrzuca zmianę do kolejki względem tych godzin.
+    draft.editBaseDateISO = bk.dateISO || draft.dateISO;
+    draft.editBaseFrom = String(bk.from || "");
+    draft.editBaseTo = String(bk.to || "");
     window.AppState.provCalAddTab = "new";
     window.AppState.provCalAddMinimized = false;
     window.AppState.provCalAddDraft = draft;
@@ -13421,11 +13454,12 @@
         return;
       }
       bookingBefore = cloneMutationState(booking);
-      const prevDateISO = booking.dateISO;
-      const prevFrom = booking.from;
-      const prevTo = booking.to;
+      // Baza sesji edycji (przy otwarciu panelu) — nie aktualny stan po live-chipie.
+      const baseDateISO = draft.editBaseDateISO || booking.dateISO;
+      const baseFrom = draft.editBaseFrom || booking.from;
+      const baseTo = draft.editBaseTo || booking.to;
       const timeChanged =
-        prevDateISO !== draft.dateISO || prevFrom !== slot.from || prevTo !== slot.to;
+        baseDateISO !== draft.dateISO || baseFrom !== slot.from || baseTo !== slot.to;
       booking.clientName = clientName;
       booking.clientPhone = clientPhone;
       booking.clientEmail = clientEmail;
@@ -13441,9 +13475,9 @@
       if (timeChanged) {
         noteProvCalReschedule(
           booking.id,
-          prevDateISO,
-          prevFrom,
-          prevTo,
+          baseDateISO,
+          baseFrom,
+          baseTo,
           booking.dateISO,
           booking.from,
           booking.to
@@ -13874,9 +13908,12 @@
           </div>
         </div>
         <div class="prov-cal-body" data-role="prov-cal-body">
-          ${renderProvCalGoogleWeek(selected, visits)}
+          ${renderProvCalGoogleWeek(selected, visits, {
+            queueHtml: renderProvCalQueueButton(addOpen || rescheduleOpen),
+          })}
         </div>
-        ${renderProvCalFabStack(addOpen || rescheduleOpen)}`;
+        ${renderProvCalFabStack(addOpen || rescheduleOpen)}
+        `;
     // Desktop: panel tylko nad pulpitem (szerokość lewej kolumny; kalendarz wolny).
     // Mobile: panel w obrębie całego ekranu kalendarza jak dotychczas.
     const addPanel = renderProvCalAddPanel();
