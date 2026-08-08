@@ -16952,7 +16952,7 @@ button.time-row {
   padding-bottom: 0.5rem;
 }
 
-/* Stały pasek Zapisz nad dolnym menu (ustawienia usługodawcy). */
+/* Stały pasek Zapisz nad dolnym menu (konto klienta + ustawienia usługodawcy). */
 .settings-save-bar {
   display: flex;
   flex-shrink: 0;
@@ -16972,7 +16972,8 @@ button.time-row {
 }
 
 @media (min-width: 900px) {
-  .app-fullscreen .app-screen--settings > .settings-save-bar {
+  .app-fullscreen .app-screen--settings > .settings-save-bar,
+  .app-fullscreen .app-screen--account > .settings-save-bar {
     max-width: 40rem;
     width: 100%;
     margin-left: auto;
@@ -16983,25 +16984,29 @@ button.time-row {
 }
 
 @media (max-width: 899px) {
-  .app-fullscreen .app-screen--settings > .settings-save-bar {
+  .app-fullscreen .app-screen--settings > .settings-save-bar,
+  .app-fullscreen .app-screen--account > .settings-save-bar {
     position: fixed;
     left: 0;
     right: 0;
     bottom: var(--bottom-nav-clearance);
   }
 
-  .app-fullscreen .app-screen--settings .app-scroll {
+  .app-fullscreen .app-screen--settings .app-scroll,
+  .app-fullscreen .app-screen--account .app-scroll {
     padding-bottom: calc(var(--bottom-nav-clearance) + 4.25rem);
   }
 
-  .device-frame .app-screen--settings > .settings-save-bar {
+  .device-frame .app-screen--settings > .settings-save-bar,
+  .device-frame .app-screen--account > .settings-save-bar {
     position: absolute;
     left: 0;
     right: 0;
     bottom: var(--bottom-nav-clearance);
   }
 
-  .device-frame .app-screen--settings .app-scroll {
+  .device-frame .app-screen--settings .app-scroll,
+  .device-frame .app-screen--account .app-scroll {
     padding-bottom: calc(var(--bottom-nav-clearance) + 4.25rem);
   }
 }

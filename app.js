@@ -50,7 +50,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.237";
+  const APP_VERSION = "1.0.238";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   /** true tylko po świadomej aktualizacji PWA — wtedy wolno zrobić jeden reload. */
@@ -5239,7 +5239,24 @@
     if (status) cp.notifications.statusChanges = !!status.checked;
     if (marketing) cp.notifications.marketing = !!marketing.checked;
     ensureClientProfile();
-    queueClientProfileSync();
+  }
+
+  /** Jak „Edit profile → Save” na FB/IG: jawny zapis na serwer po kliknięciu Zapisz. */
+  async function saveClientAccountSettings() {
+    captureClientAccountFields();
+    saveState();
+    updateAppHeader(window.AppState.activeRole || "client");
+    if (isTesterMode()) {
+      showToast("Zapisano profil.");
+      return;
+    }
+    clientProfileRevision += 1;
+    const saved = await persistClientProfileNow();
+    if (!saved) {
+      showToast("Nie udało się zapisać profilu. Spróbuj ponownie.");
+      return;
+    }
+    showToast("Zapisano profil.");
   }
 
   let clientProfileSyncTimer = null;
@@ -5589,6 +5606,9 @@
               </div>`
             )}
           </div>
+        </div>
+        <div class="settings-save-bar" role="region" aria-label="Zapisz profil">
+          <button type="button" class="btn btn--primary settings-save-bar__btn" data-action="save-account-settings">Zapisz</button>
         </div>
         ${bottomNav("account")}
       </div>`;
@@ -22436,6 +22456,10 @@
       case "save-provider-settings":
         event.preventDefault();
         void saveProviderSettings();
+        break;
+      case "save-account-settings":
+        event.preventDefault();
+        void saveClientAccountSettings();
         break;
       case "delete-service":
         event.preventDefault();
