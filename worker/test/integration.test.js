@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { applyD1Migrations } from "cloudflare:test";
-import worker from "../src/index.js";
+import worker, { expireRescheduleProposals } from "../src/index.js";
 import { hashToken } from "../src/oauth.js";
 import { cleanupIdempotencyKeys } from "../src/idempotency.js";
 import { encryptToken, syncBookingToGoogle } from "../src/calendar.js";
@@ -89,14 +89,37 @@ async function seedBooking({
   dateISO = "2026-09-10",
   from = "10:00",
   to = "11:00",
+  locationLabel = null,
+  proposedDateISO = null,
+  proposedFrom = null,
+  proposedTo = null,
+  proposedLocationLabel = null,
+  rescheduleExpiresAt = null,
+  revision = 0,
 }) {
   await env.DB.prepare(
     `INSERT INTO bookings (
       id, provider_id, client_user_id, client_name, client_email, service_ids_json, service_names_json,
-      date_iso, time_from, time_to, status
-    ) VALUES (?, 'provider-1', ?, 'Client', 'client@example.com', '[]', '[]', ?, ?, ?, ?)`
+      date_iso, time_from, time_to, location_label, status,
+      proposed_date_iso, proposed_time_from, proposed_time_to, proposed_location_label,
+      reschedule_expires_at, revision
+    ) VALUES (?, 'provider-1', ?, 'Client', 'client@example.com', '[]', '[]', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(id, clientUserId, dateISO, from, to, status)
+    .bind(
+      id,
+      clientUserId,
+      dateISO,
+      from,
+      to,
+      locationLabel,
+      status,
+      proposedDateISO,
+      proposedFrom,
+      proposedTo,
+      proposedLocationLabel,
+      rescheduleExpiresAt,
+      revision
+    )
     .run();
 }
 
@@ -758,6 +781,456 @@ describe("booking transitions and atomic collisions", () => {
       "SELECT status FROM booking_requests WHERE id='rq-overlap'"
     ).first();
     expect(request.status).toBe("proposed");
+  });
+});
+
+describe("booking reschedule workflow", () => {
+  async function setProposeHoldHours(hours) {
+    await env.DB.prepare(
+      `UPDATE provider_profiles SET booking_rules_json=? WHERE id='provider-1'`
+    )
+      .bind(JSON.stringify({ proposeHoldHours: hours, minLeadHours: 0, futureDays: 60, cancelHours: 24 }))
+      .run();
+  }
+
+  it("proposes a reschedule without moving the binding slot", async () => {
+    await setProposeHoldHours(6);
+    await seedBooking({ id: "bk-reschedule" });
+    const response = await api("/bookings/bk-reschedule/reschedule", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      key: "reschedule-propose",
+      body: {
+        dateISO: "2026-09-11",
+        from: "14:00",
+        to: "15:00",
+        locationLabel: "Studio A",
+        expectedRevision: 0,
+      },
+    });
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.booking).toMatchObject({
+      dateISO: "2026-09-10",
+      from: "10:00",
+      to: "11:00",
+      proposedDateISO: "2026-09-11",
+      proposedFrom: "14:00",
+      proposedTo: "15:00",
+      proposedLocationLabel: "Studio A",
+      status: "proposed",
+      revision: 1,
+    });
+    expect(payload.booking.rescheduleExpiresAt).toBeTruthy();
+    expect(payload.calendar).toBeUndefined();
+
+    const email = await env.DB.prepare(
+      "SELECT template, payload_json FROM email_outbox WHERE template='booking_proposed'"
+    ).first();
+    expect(email).toBeTruthy();
+    const emailPayload = JSON.parse(email.payload_json);
+    expect(emailPayload.previousDateISO).toBe("2026-09-10");
+    expect(emailPayload.dateISO).toBe("2026-09-11");
+  });
+
+  it("blocks create/patch/accept against both current and unexpired proposed slots", async () => {
+    await seedBooking({
+      id: "bk-dual",
+      status: "proposed",
+      dateISO: "2026-09-10",
+      from: "10:00",
+      to: "11:00",
+      proposedDateISO: "2026-09-11",
+      proposedFrom: "14:00",
+      proposedTo: "15:00",
+      rescheduleExpiresAt: "2099-01-01T00:00:00.000Z",
+      revision: 1,
+    });
+
+    const againstCurrent = await api("/bookings", {
+      method: "POST",
+      key: "block-current",
+      body: {
+        providerId: "provider-1",
+        clientName: "Client",
+        dateISO: "2026-09-10",
+        from: "10:30",
+        to: "11:30",
+      },
+    });
+    expect(againstCurrent.status).toBe(409);
+
+    const againstProposed = await api("/bookings", {
+      method: "POST",
+      key: "block-proposed",
+      body: {
+        providerId: "provider-1",
+        clientName: "Client",
+        dateISO: "2026-09-11",
+        from: "14:15",
+        to: "14:45",
+      },
+    });
+    expect(againstProposed.status).toBe(409);
+
+    await seedBooking({
+      id: "bk-mover",
+      dateISO: "2026-09-20",
+      from: "09:00",
+      to: "10:00",
+    });
+    const patchIntoProposed = await api("/bookings/bk-mover", {
+      method: "PATCH",
+      token: PROVIDER_TOKEN,
+      key: "block-patch-proposed",
+      body: { dateISO: "2026-09-11", from: "14:00", to: "14:30" },
+    });
+    expect(patchIntoProposed.status).toBe(409);
+
+    await seedRequest({
+      id: "rq-dual",
+      proposals: [{ id: "prop-dual", dateISO: "2026-09-11", from: "14:10", to: "14:40" }],
+    });
+    const acceptIntoProposed = await api("/requests/rq-dual/accept", {
+      method: "POST",
+      key: "block-accept-proposed",
+      body: { proposalId: "prop-dual" },
+    });
+    expect(acceptIntoProposed.status).toBe(409);
+  });
+
+  it("ignores expired proposed slots for overlap before cleanup", async () => {
+    await seedBooking({
+      id: "bk-expired-prop",
+      status: "proposed",
+      proposedDateISO: "2026-09-11",
+      proposedFrom: "14:00",
+      proposedTo: "15:00",
+      rescheduleExpiresAt: "2020-01-01T00:00:00.000Z",
+      revision: 2,
+    });
+    const create = await api("/bookings", {
+      method: "POST",
+      key: "allow-expired-proposed",
+      body: {
+        providerId: "provider-1",
+        clientName: "Client",
+        dateISO: "2026-09-11",
+        from: "14:00",
+        to: "15:00",
+      },
+    });
+    expect(create.status).toBe(201);
+  });
+
+  it("accepts a proposal, moves the slot, and emails the provider", async () => {
+    await seedBooking({
+      id: "bk-accept",
+      status: "proposed",
+      dateISO: "2026-09-10",
+      from: "10:00",
+      to: "11:00",
+      proposedDateISO: "2026-09-12",
+      proposedFrom: "16:00",
+      proposedTo: "17:00",
+      proposedLocationLabel: "Room 2",
+      rescheduleExpiresAt: "2099-01-01T00:00:00.000Z",
+      revision: 3,
+    });
+    const response = await api("/bookings/bk-accept/reschedule/accept", {
+      method: "POST",
+      key: "reschedule-accept",
+      body: { expectedRevision: 3 },
+    });
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.booking).toMatchObject({
+      dateISO: "2026-09-12",
+      from: "16:00",
+      to: "17:00",
+      locationLabel: "Room 2",
+      proposedDateISO: null,
+      status: "confirmed",
+      revision: 4,
+    });
+    expect(payload.calendar).toEqual({ connected: false, synced: false, results: [] });
+
+    const oldSlotFree = await api("/bookings", {
+      method: "POST",
+      key: "old-slot-free",
+      body: {
+        providerId: "provider-1",
+        clientName: "Client",
+        dateISO: "2026-09-10",
+        from: "10:00",
+        to: "11:00",
+      },
+    });
+    expect(oldSlotFree.status).toBe(201);
+
+    const email = await env.DB.prepare(
+      "SELECT to_email, template FROM email_outbox WHERE template='booking_reschedule_accepted'"
+    ).first();
+    expect(email?.to_email).toBe("provider@example.com");
+  });
+
+  it("rejects a proposal, keeps the current slot, and frees the candidate", async () => {
+    await seedBooking({
+      id: "bk-reject",
+      status: "proposed",
+      dateISO: "2026-09-10",
+      from: "10:00",
+      to: "11:00",
+      proposedDateISO: "2026-09-13",
+      proposedFrom: "09:00",
+      proposedTo: "10:00",
+      rescheduleExpiresAt: "2099-01-01T00:00:00.000Z",
+      revision: 1,
+    });
+    const response = await api("/bookings/bk-reject/reschedule/reject", {
+      method: "POST",
+      key: "reschedule-reject",
+      body: { expectedRevision: 1 },
+    });
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.booking).toMatchObject({
+      dateISO: "2026-09-10",
+      from: "10:00",
+      to: "11:00",
+      proposedDateISO: null,
+      status: "confirmed",
+      revision: 2,
+    });
+
+    const candidateFree = await api("/bookings", {
+      method: "POST",
+      key: "candidate-free",
+      body: {
+        providerId: "provider-1",
+        clientName: "Client",
+        dateISO: "2026-09-13",
+        from: "09:00",
+        to: "10:00",
+      },
+    });
+    expect(candidateFree.status).toBe(201);
+
+    const email = await env.DB.prepare(
+      "SELECT to_email, template FROM email_outbox WHERE template='booking_reschedule_rejected'"
+    ).first();
+    expect(email?.to_email).toBe("provider@example.com");
+  });
+
+  it("revises a proposal while keeping the binding slot", async () => {
+    await setProposeHoldHours(24);
+    await seedBooking({
+      id: "bk-revise",
+      status: "proposed",
+      dateISO: "2026-09-10",
+      from: "10:00",
+      to: "11:00",
+      proposedDateISO: "2026-09-11",
+      proposedFrom: "14:00",
+      proposedTo: "15:00",
+      rescheduleExpiresAt: "2099-01-01T00:00:00.000Z",
+      revision: 1,
+    });
+    const response = await api("/bookings/bk-revise/reschedule", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      key: "reschedule-revise",
+      body: {
+        dateISO: "2026-09-14",
+        from: "11:00",
+        to: "12:00",
+        expectedRevision: 1,
+      },
+    });
+    expect(response.status).toBe(200);
+    const booking = (await response.json()).booking;
+    expect(booking.dateISO).toBe("2026-09-10");
+    expect(booking.proposedDateISO).toBe("2026-09-14");
+    expect(booking.revision).toBe(2);
+
+    const oldCandidateFree = await api("/bookings", {
+      method: "POST",
+      key: "old-candidate-free",
+      body: {
+        providerId: "provider-1",
+        clientName: "Client",
+        dateISO: "2026-09-11",
+        from: "14:00",
+        to: "15:00",
+      },
+    });
+    expect(oldCandidateFree.status).toBe(201);
+  });
+
+  it("rejects overlapping propose and stale revisions atomically", async () => {
+    await seedBooking({ id: "bk-occupied-slot", dateISO: "2026-09-15", from: "10:00", to: "11:00" });
+    await seedBooking({
+      id: "bk-stale",
+      dateISO: "2026-09-16",
+      from: "10:00",
+      to: "11:00",
+      revision: 2,
+    });
+
+    const overlap = await api("/bookings/bk-stale/reschedule", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      key: "reschedule-overlap",
+      body: {
+        dateISO: "2026-09-15",
+        from: "10:30",
+        to: "11:30",
+        expectedRevision: 2,
+      },
+    });
+    expect(overlap.status).toBe(409);
+    expect((await overlap.json()).error).toBe("booking_overlap");
+
+    const stale = await api("/bookings/bk-stale/reschedule", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      key: "reschedule-stale",
+      body: {
+        dateISO: "2026-09-17",
+        from: "10:00",
+        to: "11:00",
+        expectedRevision: 0,
+      },
+    });
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).error).toBe("stale_booking");
+  });
+
+  it("enforces auth and rejects client PATCH confirm when proposed_* is present", async () => {
+    await seedBooking({
+      id: "bk-auth",
+      status: "proposed",
+      proposedDateISO: "2026-09-18",
+      proposedFrom: "12:00",
+      proposedTo: "13:00",
+      rescheduleExpiresAt: "2099-01-01T00:00:00.000Z",
+      revision: 1,
+    });
+
+    const stranger = await api("/bookings/bk-auth/reschedule", {
+      method: "POST",
+      token: OTHER_TOKEN,
+      key: "reschedule-stranger",
+      body: {
+        dateISO: "2026-09-19",
+        from: "12:00",
+        to: "13:00",
+        expectedRevision: 1,
+      },
+    });
+    expect(stranger.status).toBe(403);
+
+    const clientPropose = await api("/bookings/bk-auth/reschedule", {
+      method: "POST",
+      key: "reschedule-client-forbidden",
+      body: {
+        dateISO: "2026-09-19",
+        from: "12:00",
+        to: "13:00",
+        expectedRevision: 1,
+      },
+    });
+    expect(clientPropose.status).toBe(403);
+
+    const providerAccept = await api("/bookings/bk-auth/reschedule/accept", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      key: "reschedule-provider-accept",
+      body: { expectedRevision: 1 },
+    });
+    expect(providerAccept.status).toBe(403);
+
+    const patchConfirm = await api("/bookings/bk-auth", {
+      method: "PATCH",
+      key: "reschedule-patch-confirm",
+      body: { status: "confirmed" },
+    });
+    expect(patchConfirm.status).toBe(409);
+    expect((await patchConfirm.json()).error).toBe("reschedule_accept_required");
+
+    const cancel = await api("/bookings/bk-auth", {
+      method: "PATCH",
+      key: "reschedule-cancel-clears",
+      body: { status: "cancelled" },
+    });
+    expect(cancel.status).toBe(200);
+    const row = await env.DB.prepare(
+      "SELECT status, proposed_date_iso, revision FROM bookings WHERE id='bk-auth'"
+    ).first();
+    expect(row.status).toBe("cancelled");
+    expect(row.proposed_date_iso).toBeNull();
+  });
+
+  it("expires proposals via helper and rejects accept after expiry", async () => {
+    await seedBooking({
+      id: "bk-expire",
+      status: "proposed",
+      dateISO: "2026-09-10",
+      from: "10:00",
+      to: "11:00",
+      proposedDateISO: "2026-09-21",
+      proposedFrom: "10:00",
+      proposedTo: "11:00",
+      rescheduleExpiresAt: "2020-01-01T00:00:00.000Z",
+      revision: 4,
+    });
+
+    const acceptExpired = await api("/bookings/bk-expire/reschedule/accept", {
+      method: "POST",
+      key: "accept-expired",
+      body: { expectedRevision: 4 },
+    });
+    expect(acceptExpired.status).toBe(409);
+    expect((await acceptExpired.json()).error).toBe("reschedule_expired");
+
+    const result = await expireRescheduleProposals(env);
+    expect(result.expired).toBe(1);
+    const row = await env.DB.prepare("SELECT * FROM bookings WHERE id='bk-expire'").first();
+    expect(row.status).toBe("confirmed");
+    expect(row.date_iso).toBe("2026-09-10");
+    expect(row.proposed_date_iso).toBeNull();
+    expect(row.revision).toBe(5);
+  });
+
+  it("replays reschedule propose without duplicate emails", async () => {
+    await setProposeHoldHours(24);
+    await seedBooking({ id: "bk-idem", dateISO: "2026-09-22", from: "09:00", to: "10:00" });
+    const body = {
+      dateISO: "2026-09-23",
+      from: "11:00",
+      to: "12:00",
+      expectedRevision: 0,
+    };
+    const first = await api("/bookings/bk-idem/reschedule", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      key: "reschedule-idem",
+      body,
+    });
+    const second = await api("/bookings/bk-idem/reschedule", {
+      method: "POST",
+      token: PROVIDER_TOKEN,
+      key: "reschedule-idem",
+      body,
+    });
+    expect(first.status).toBe(200);
+    expect(await second.text()).toBe(await first.text());
+    const emails = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM email_outbox WHERE template='booking_proposed'"
+    ).first();
+    expect(emails.count).toBe(1);
+    const row = await env.DB.prepare("SELECT revision FROM bookings WHERE id='bk-idem'").first();
+    expect(row.revision).toBe(1);
   });
 });
 

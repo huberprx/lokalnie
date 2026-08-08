@@ -304,6 +304,11 @@
     if (!b) return null;
     const providerId = toAppProviderId(b.providerId);
     const p = findKnownProvider(providerId) || findKnownProvider(b.providerId);
+    const hasRescheduleProposal = !!(
+      b.proposedDateISO &&
+      b.proposedFrom &&
+      b.proposedTo
+    );
     return {
       id: b.id,
       providerId: providerId,
@@ -316,16 +321,51 @@
       clientAddress: b.clientAddress || "",
       serviceIds: Array.isArray(b.serviceIds) ? b.serviceIds : [],
       serviceNames: Array.isArray(b.serviceNames) ? b.serviceNames : [],
-      dateISO: b.dateISO || "",
-      from: b.from || "",
-      to: b.to || "",
+      dateISO: hasRescheduleProposal ? b.proposedDateISO : b.dateISO || "",
+      from: hasRescheduleProposal ? b.proposedFrom : b.from || "",
+      to: hasRescheduleProposal ? b.proposedTo : b.to || "",
       locationId: b.locationId || null,
-      locationLabel: b.locationLabel || "",
+      locationLabel: hasRescheduleProposal
+        ? b.proposedLocationLabel || b.locationLabel || ""
+        : b.locationLabel || "",
       status: b.status || "pending",
       requestId: b.requestId || null,
+      proposedDateISO: b.proposedDateISO || null,
+      proposedFrom: b.proposedFrom || null,
+      proposedTo: b.proposedTo || null,
+      proposedLocationLabel: b.proposedLocationLabel || null,
+      reschedulePrevDateISO: hasRescheduleProposal ? b.dateISO || "" : null,
+      reschedulePrevFrom: hasRescheduleProposal ? b.from || "" : null,
+      reschedulePrevTo: hasRescheduleProposal ? b.to || "" : null,
+      rescheduleExpiresAt: b.rescheduleExpiresAt || null,
+      proposeExpiresAt: b.rescheduleExpiresAt || b.proposeExpiresAt || null,
+      revision: b.revision == null ? null : b.revision,
       side: "client",
       _fromApi: true,
     };
+  }
+
+  function mergeBookingResponseIntoApp(target, serverBooking) {
+    const mapped =
+      serverBooking && serverBooking._fromApi ? serverBooking : mapBookingToApp(serverBooking);
+    if (!target || !mapped) return mapped;
+    const previousSide = target.side;
+    [
+      "proposedDateISO",
+      "proposedFrom",
+      "proposedTo",
+      "proposedLocationLabel",
+      "reschedulePrevDateISO",
+      "reschedulePrevFrom",
+      "reschedulePrevTo",
+      "rescheduleExpiresAt",
+      "proposeExpiresAt",
+    ].forEach(function (key) {
+      delete target[key];
+    });
+    Object.assign(target, mapped);
+    if (previousSide) target.side = previousSide;
+    return target;
   }
 
   function mapRequestToApp(r) {
@@ -1115,6 +1155,61 @@
     return { booking: res && res.booking, calendar: (res && res.calendar) || null };
   }
 
+  function bookingRevisionOrZero(booking) {
+    const value = booking && booking.revision;
+    return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  }
+
+  async function proposeBookingRescheduleFromApp(booking, proposal) {
+    if (!booking || !booking.id) return null;
+    proposal = proposal || booking;
+    const expectedRevision = bookingRevisionOrZero(booking);
+    const payload = {
+      dateISO: proposal.dateISO || proposal.newDateISO,
+      from: proposal.from || proposal.newFrom,
+      to: proposal.to || proposal.newTo,
+      locationLabel:
+        proposal.locationLabel == null ? booking.locationLabel || null : proposal.locationLabel,
+      expectedRevision: expectedRevision,
+    };
+    const res = await idempotentRequest(
+      "propose-booking-reschedule",
+      String(booking.id) + "." + String(expectedRevision),
+      "/bookings/" + encodeURIComponent(booking.id) + "/reschedule",
+      { method: "POST", json: payload }
+    );
+    return {
+      booking: mapBookingToApp(res && res.booking),
+      calendar: (res && res.calendar) || null,
+    };
+  }
+
+  async function decideBookingRescheduleFromApp(booking, decision) {
+    if (!booking || !booking.id) return null;
+    const expectedRevision = bookingRevisionOrZero(booking);
+    const res = await idempotentRequest(
+      decision + "-booking-reschedule",
+      String(booking.id) + "." + String(expectedRevision),
+      "/bookings/" + encodeURIComponent(booking.id) + "/reschedule/" + decision,
+      {
+        method: "POST",
+        json: { expectedRevision: expectedRevision },
+      }
+    );
+    return {
+      booking: mapBookingToApp(res && res.booking),
+      calendar: (res && res.calendar) || null,
+    };
+  }
+
+  function acceptBookingRescheduleFromApp(booking) {
+    return decideBookingRescheduleFromApp(booking, "accept");
+  }
+
+  function rejectBookingRescheduleFromApp(booking) {
+    return decideBookingRescheduleFromApp(booking, "reject");
+  }
+
   async function resizeImageForUpload(file, maxDimension) {
     const max = maxDimension || 1024;
     const source = await (typeof createImageBitmap === "function"
@@ -1274,6 +1369,8 @@
     deleteServices: deleteServices,
     updateServicesBookingMode: updateServicesBookingMode,
     upsertClient: upsertClient,
+    mapBookingToApp: mapBookingToApp,
+    mergeBookingResponseIntoApp: mergeBookingResponseIntoApp,
     createBookingFromApp: createBookingFromApp,
     createRequestFromApp: createRequestFromApp,
     proposeRequestFromApp: proposeRequestFromApp,
@@ -1282,6 +1379,9 @@
     requestMoreRequestFromApp: requestMoreRequestFromApp,
     updateBookingStatusFromApp: updateBookingStatusFromApp,
     patchBookingFromApp: patchBookingFromApp,
+    proposeBookingRescheduleFromApp: proposeBookingRescheduleFromApp,
+    acceptBookingRescheduleFromApp: acceptBookingRescheduleFromApp,
+    rejectBookingRescheduleFromApp: rejectBookingRescheduleFromApp,
     releaseIdempotencyKey: releaseIdempotencyKey,
     uploadAvatar: uploadAvatar,
     uploadServicePhoto: uploadServicePhoto,

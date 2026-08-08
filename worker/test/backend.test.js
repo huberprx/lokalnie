@@ -2,7 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import { requireAdmin, requireDemoUser } from "../src/auth.js";
 import { detectImageType } from "../src/index.js";
 import { sessionTokenFromCookie } from "../src/oauth.js";
-import { canTransitionBooking, hasOverlap } from "../src/bookings.js";
+import {
+  bookingOverlapBindArgs,
+  bookingOverlapPredicateSql,
+  canTransitionBooking,
+  computeRescheduleExpiresAt,
+  hasCompleteProposedSlot,
+  hasOverlap,
+  isRescheduleExpired,
+} from "../src/bookings.js";
 import { sendViaResend } from "../src/email.js";
 import { json, withCors } from "../src/http.js";
 import { withIdempotency } from "../src/idempotency.js";
@@ -139,10 +147,78 @@ describe("booking validation", () => {
           dateISO: "2026-08-03",
           from: "10:00",
           to: "11:00",
+          nowIso: "2026-08-03T08:00:00.000Z",
         }
       )
     ).resolves.toBe(true);
-    expect(bind).toHaveBeenCalled();
+    expect(prepare.mock.calls[0][0]).toContain("proposed_date_iso");
+    expect(bind).toHaveBeenCalledWith(
+      "provider-1",
+      ...bookingOverlapBindArgs({
+        dateISO: "2026-08-03",
+        from: "10:00",
+        to: "11:00",
+        nowIso: "2026-08-03T08:00:00.000Z",
+      }),
+      null,
+      null
+    );
+  });
+
+  it("centralizes dual-slot overlap SQL and reschedule helpers", () => {
+    const sql = bookingOverlapPredicateSql("occupied");
+    expect(sql).toContain("occupied.date_iso = ?");
+    expect(sql).toContain("occupied.proposed_date_iso = ?");
+    expect(sql).toContain("reschedule_expires_at IS NULL OR occupied.reschedule_expires_at > ?");
+    expect(
+      bookingOverlapBindArgs({
+        dateISO: "2026-09-10",
+        from: "10:00",
+        to: "11:00",
+        nowIso: "2026-09-01T00:00:00.000Z",
+      })
+    ).toEqual([
+      "2026-09-10",
+      "11:00",
+      "10:00",
+      "2026-09-10",
+      "11:00",
+      "10:00",
+      "2026-09-01T00:00:00.000Z",
+    ]);
+    expect(hasCompleteProposedSlot({ proposed_date_iso: "2026-09-11", proposed_time_from: "12:00", proposed_time_to: "13:00" })).toBe(
+      true
+    );
+    expect(hasCompleteProposedSlot({ proposed_date_iso: "2026-09-11" })).toBe(false);
+    expect(computeRescheduleExpiresAt(0, new Date("2026-09-01T00:00:00.000Z"))).toBeNull();
+    expect(computeRescheduleExpiresAt(undefined, new Date("2026-09-01T00:00:00.000Z"))).toBe(
+      "2026-09-02T00:00:00.000Z"
+    );
+    expect(computeRescheduleExpiresAt(6, new Date("2026-09-01T00:00:00.000Z"))).toBe(
+      "2026-09-01T06:00:00.000Z"
+    );
+    expect(
+      isRescheduleExpired(
+        {
+          proposed_date_iso: "2026-09-11",
+          proposed_time_from: "12:00",
+          proposed_time_to: "13:00",
+          reschedule_expires_at: "2026-09-01T00:00:00.000Z",
+        },
+        "2026-09-01T01:00:00.000Z"
+      )
+    ).toBe(true);
+    expect(
+      isRescheduleExpired(
+        {
+          proposed_date_iso: "2026-09-11",
+          proposed_time_from: "12:00",
+          proposed_time_to: "13:00",
+          reschedule_expires_at: null,
+        },
+        "2026-09-01T01:00:00.000Z"
+      )
+    ).toBe(false);
   });
 
   it("uses explicit client and provider status matrices", () => {
@@ -245,6 +321,26 @@ describe("email and CORS", () => {
     expect(rendered.html).toContain("Otwórz Lokalnie");
     expect(rendered.html).toContain("Ada &lt;Test&gt;");
     expect(rendered.html).not.toContain("Ada <Test>");
+  });
+
+  it("renders reschedule proposal and decision templates", () => {
+    const proposed = renderEmail("booking_proposed", {
+      previousDateISO: "2026-09-10",
+      previousFrom: "10:00",
+      previousTo: "11:00",
+      dateISO: "2026-09-11",
+      from: "12:00",
+      to: "13:00",
+      bookingId: "bk_1",
+    });
+    expect(proposed.text).toContain("Poprzedni termin: 2026-09-10, 10:00–11:00");
+    expect(proposed.text).toContain("Data: 2026-09-11");
+    expect(renderEmail("booking_reschedule_accepted", { bookingId: "bk_1" }).subject).toBe(
+      "Klient zaakceptował nowy termin"
+    );
+    expect(renderEmail("booking_reschedule_rejected", { bookingId: "bk_1" }).subject).toBe(
+      "Propozycja zmiany terminu odrzucona"
+    );
   });
 
   it("simulates email delivery without a key outside production", async () => {

@@ -202,6 +202,18 @@
       (err && err.data && (err.data.error || err.data.code)) || (err && err.message) || ""
     ).toLowerCase();
     if (
+      code === "stale_booking" ||
+      code.indexOf("stale_booking") !== -1
+    ) {
+      return "Ta rezerwacja zmieniła się na innym urządzeniu. Odśwież kalendarz i spróbuj ponownie.";
+    }
+    if (
+      code === "reschedule_expired" ||
+      code.indexOf("reschedule_expired") !== -1
+    ) {
+      return "Propozycja zmiany terminu wygasła lub została już rozstrzygnięta.";
+    }
+    if (
       (err && err.status === 409) ||
       code === "slot_taken" ||
       code === "booking_overlap" ||
@@ -1222,6 +1234,8 @@
 
     (window.AppState.bookings || []).forEach(function (bk) {
       if (!bk || bk.status !== "proposed" || !bk.proposeExpiresAt) return;
+      // Dla rezerwacji z API wyłącznie serwer zmienia status po wygaśnięciu.
+      if (bk._fromApi) return;
       const t = Date.parse(bk.proposeExpiresAt);
       if (!isFinite(t) || t > now) return;
       if (bk.reschedulePrevDateISO && bk.reschedulePrevFrom && bk.reschedulePrevTo) {
@@ -4263,16 +4277,26 @@
     });
     (window.AppState.bookings || []).forEach((bk) => {
       if (exceptBookingId && bk.id === exceptBookingId) return;
-      if (
-        bk.providerId === provider.id &&
-        bk.dateISO === dateISO &&
-        (bk.status === "confirmed" || bk.status === "proposed")
-      ) {
+      if (bk.providerId === provider.id && (bk.status === "confirmed" || bk.status === "proposed")) {
         // Wygasły hold proposed nie blokuje (sweep i tak go zdejmie).
-        if (bk.status === "proposed" && bk.proposeExpiresAt && !isProposeHoldActive(bk.proposeExpiresAt)) {
+        if (
+          !bk._fromApi &&
+          bk.status === "proposed" &&
+          bk.proposeExpiresAt &&
+          !isProposeHoldActive(bk.proposeExpiresAt)
+        ) {
           return;
         }
-        busy.push([timeToMin(bk.from), timeToMin(bk.to)]);
+        if (bk.dateISO === dateISO) {
+          busy.push([timeToMin(bk.from), timeToMin(bk.to)]);
+        }
+        if (
+          bk.reschedulePrevDateISO === dateISO &&
+          bk.reschedulePrevFrom &&
+          bk.reschedulePrevTo
+        ) {
+          busy.push([timeToMin(bk.reschedulePrevFrom), timeToMin(bk.reschedulePrevTo)]);
+        }
       }
     });
     const exceptRequestId =
@@ -9415,17 +9439,39 @@
   }
 
   function activeDayBookings(dateISO, exceptId) {
-    return (window.AppState.bookings || []).filter(function (b) {
-      if (!b || b.dateISO !== dateISO) return false;
-      if (exceptId && b.id === exceptId) return false;
-      if (b.status !== "confirmed" && b.status !== "proposed") return false;
-      if (b.status === "proposed" && b.proposeExpiresAt && !isProposeHoldActive(b.proposeExpiresAt)) {
-        return false;
+    return (window.AppState.bookings || []).reduce(function (out, b) {
+      if (!b) return out;
+      if (exceptId && b.id === exceptId) return out;
+      if (b.status !== "confirmed" && b.status !== "proposed") return out;
+      if (
+        !b._fromApi &&
+        b.status === "proposed" &&
+        b.proposeExpiresAt &&
+        !isProposeHoldActive(b.proposeExpiresAt)
+      ) {
+        return out;
       }
-      const from = timeToMinutes(b.from);
-      const to = timeToMinutes(b.to);
-      return !isNaN(from) && !isNaN(to) && to > from;
-    });
+      if (b.dateISO === dateISO) {
+        const from = timeToMinutes(b.from);
+        const to = timeToMinutes(b.to);
+        if (!isNaN(from) && !isNaN(to) && to > from) out.push(b);
+      }
+      if (
+        b.reschedulePrevDateISO === dateISO &&
+        b.reschedulePrevFrom &&
+        b.reschedulePrevTo
+      ) {
+        out.push(
+          Object.assign({}, b, {
+            dateISO: b.reschedulePrevDateISO,
+            from: b.reschedulePrevFrom,
+            to: b.reschedulePrevTo,
+            _rescheduleCurrentSlot: true,
+          })
+        );
+      }
+      return out;
+    }, []);
   }
 
   function clearProvCalDropTargets() {
@@ -9475,6 +9521,21 @@
         return item && item.bookingId === bookingId;
       }) || null
     );
+  }
+
+  const provCalRescheduleInFlight = {};
+
+  function mergeAuthoritativeBooking(target, result) {
+    const booking = result && result.booking;
+    if (!target || !booking) return target;
+    if (
+      window.LokalnieApi &&
+      typeof window.LokalnieApi.mergeBookingResponseIntoApp === "function"
+    ) {
+      return window.LokalnieApi.mergeBookingResponseIntoApp(target, booking);
+    }
+    Object.assign(target, booking);
+    return target;
   }
 
   function isBookingInRescheduleQueue(bookingId) {
@@ -9593,15 +9654,23 @@
     return formatDayWithDow(dateISO) + " · " + from + "–" + to;
   }
 
-  function sendProvCalReschedule(bookingIds) {
+  async function sendProvCalReschedule(bookingIds) {
     const ids = Array.isArray(bookingIds) ? bookingIds : bookingIds ? [bookingIds] : [];
-    const queue = ensureProvCalRescheduleQueue();
     let sent = 0;
-    ids.forEach(function (bookingId) {
-      const item = queue.find(function (q) {
+    let failed = 0;
+    let skipped = 0;
+    for (const bookingId of ids) {
+      const item = ensureProvCalRescheduleQueue().find(function (q) {
         return q && q.bookingId === bookingId;
       });
-      if (!item) return;
+      if (!item) {
+        skipped += 1;
+        continue;
+      }
+      if (provCalRescheduleInFlight[bookingId]) {
+        skipped += 1;
+        continue;
+      }
       const bk = (window.AppState.bookings || []).find(function (b) {
         return b && b.id === bookingId;
       });
@@ -9609,12 +9678,35 @@
         window.AppState.provCalRescheduleQueue = ensureProvCalRescheduleQueue().filter(function (q) {
           return q && q.bookingId !== bookingId;
         });
-        return;
+        skipped += 1;
+        continue;
       }
       // Upewnij się, że na wizycie jest nowy termin ze szkicu.
       bk.dateISO = item.newDateISO;
       bk.from = item.newFrom;
       bk.to = item.newTo;
+      if (shouldPersistApiMutation() && bk._fromApi) {
+        provCalRescheduleInFlight[bookingId] = true;
+        try {
+          const result = await window.LokalnieApi.proposeBookingRescheduleFromApp(bk, {
+            dateISO: item.newDateISO,
+            from: item.newFrom,
+            to: item.newTo,
+            locationLabel: bk.locationLabel || null,
+          });
+          mergeAuthoritativeBooking(bk, result);
+          window.AppState.provCalRescheduleQueue = ensureProvCalRescheduleQueue().filter(function (q) {
+            return q && q.bookingId !== bookingId;
+          });
+          sent += 1;
+        } catch (err) {
+          failed += 1;
+          showToast(apiMutationErrorMessage(err, "Nie udało się wysłać zmiany terminu."));
+        } finally {
+          delete provCalRescheduleInFlight[bookingId];
+        }
+        continue;
+      }
       // Pierwsza wysyłka: zapamiętaj stary confirmed. Kolejna korekta proposed: nie nadpisuj orig.
       if (!bk.reschedulePrevDateISO || !bk.reschedulePrevFrom || !bk.reschedulePrevTo) {
         bk.reschedulePrevDateISO = item.origDateISO;
@@ -9638,29 +9730,34 @@
         return q && q.bookingId !== bookingId;
       });
       sent += 1;
-    });
+    }
     if (!ensureProvCalRescheduleQueue().length) {
       window.AppState.provCalRescheduleOpen = false;
     }
     saveState();
     renderAll();
-    if (!sent) {
+    if (!sent && !failed) {
       showToast("Brak zmian do wysłania.");
-      return;
+      return { sent: 0, failed: failed, skipped: skipped };
     }
-    hapticTap(22);
-    showToast(
-      sent === 1
-        ? "Wysłano propozycję zmiany terminu."
-        : "Wysłano " + sent + " propozycje zmiany terminu."
-    );
+    if (sent) hapticTap(22);
+    if (sent && failed) {
+      showToast("Wysłano: " + sent + ". Do ponowienia: " + failed + ".");
+    } else if (sent) {
+      showToast(
+        sent === 1
+          ? "Wysłano propozycję zmiany terminu."
+          : "Wysłano " + sent + " propozycje zmiany terminu."
+      );
+    }
+    return { sent: sent, failed: failed, skipped: skipped };
   }
 
-  function sendAllProvCalReschedule() {
+  async function sendAllProvCalReschedule() {
     const ids = ensureProvCalRescheduleQueue().map(function (item) {
       return item.bookingId;
     });
-    sendProvCalReschedule(ids);
+    return sendProvCalReschedule(ids);
   }
 
   function openProvCalReschedule() {
@@ -9729,13 +9826,29 @@
       if (exceptBookingId && b.id === exceptBookingId) return false;
       if (providerId && b.providerId && b.providerId !== providerId) return false;
       if (b.status !== "confirmed" && b.status !== "proposed") return false;
-      if (b.status === "proposed" && b.proposeExpiresAt && !isProposeHoldActive(b.proposeExpiresAt)) {
+      if (
+        !b._fromApi &&
+        b.status === "proposed" &&
+        b.proposeExpiresAt &&
+        !isProposeHoldActive(b.proposeExpiresAt)
+      ) {
         return false;
       }
-      const bFrom = timeToMinutes(b.from);
-      const bTo = timeToMinutes(b.to);
-      if (isNaN(bFrom) || isNaN(bTo) || !(bTo > bFrom)) return false;
-      return fromMin < bTo && bFrom < toMin;
+      const ranges = [{ dateISO: b.dateISO, from: b.from, to: b.to }];
+      if (b.reschedulePrevDateISO && b.reschedulePrevFrom && b.reschedulePrevTo) {
+        ranges.push({
+          dateISO: b.reschedulePrevDateISO,
+          from: b.reschedulePrevFrom,
+          to: b.reschedulePrevTo,
+        });
+      }
+      return ranges.some(function (range) {
+        if (range.dateISO !== dateISO) return false;
+        const bFrom = timeToMinutes(range.from);
+        const bTo = timeToMinutes(range.to);
+        if (isNaN(bFrom) || isNaN(bTo) || !(bTo > bFrom)) return false;
+        return fromMin < bTo && bFrom < toMin;
+      });
     });
     if (conflict) return { ok: false, conflict: conflict };
     // Hold z propozycji na prośbę — blokuje jak wizyta (do akceptacji / wygaśnięcia).
@@ -13443,6 +13556,7 @@
     let booking = null;
     let bookingBefore = null;
     let calendarSync = null;
+    let timeChanged = false;
     const rescheduleQueueBefore = cloneMutationState(ensureProvCalRescheduleQueue());
     const editing = !!draft.bookingId;
     if (editing) {
@@ -13458,7 +13572,7 @@
       const baseDateISO = draft.editBaseDateISO || booking.dateISO;
       const baseFrom = draft.editBaseFrom || booking.from;
       const baseTo = draft.editBaseTo || booking.to;
-      const timeChanged =
+      timeChanged =
         baseDateISO !== draft.dateISO || baseFrom !== slot.from || baseTo !== slot.to;
       booking.clientName = clientName;
       booking.clientPhone = clientPhone;
@@ -13472,7 +13586,9 @@
       booking.locationId = slot.locationId || "";
       booking.locationLabel = slot.locationLabel || "";
       if (!booking.status) booking.status = "confirmed";
-      if (timeChanged) {
+      // Rezerwacje z klientem API: zmiana czasu idzie do kolejki → „Wyślij”.
+      // Ręczne/API bez clientUserId: zapisujemy od razu (nie ma kto zaakceptować).
+      if (timeChanged && !(booking._fromApi && !booking.clientUserId)) {
         noteProvCalReschedule(
           booking.id,
           baseDateISO,
@@ -13514,7 +13630,19 @@
       }
       window.AppState.bookings.push(booking);
     }
-    if (shouldPersistApiMutation() && booking && editing && booking._fromApi) {
+    const deferSlotToRescheduleProposal = !!(
+      booking &&
+      booking._fromApi &&
+      booking.clientUserId &&
+      timeChanged
+    );
+    if (
+      shouldPersistApiMutation() &&
+      booking &&
+      editing &&
+      booking._fromApi &&
+      !deferSlotToRescheduleProposal
+    ) {
       try {
         const result = await window.LokalnieApi.patchBookingFromApp(
           booking,
@@ -19459,6 +19587,12 @@
     const req = (window.AppState.requests || []).find((r) => r.id === bk.requestId);
     const reqBefore = cloneMutationState(req);
     let calendarSync = null;
+    const isApiReschedule = !!(
+      bk._fromApi &&
+      bk.reschedulePrevDateISO &&
+      bk.reschedulePrevFrom &&
+      bk.reschedulePrevTo
+    );
     bk.status = "confirmed";
     delete bk.reschedulePrevDateISO;
     delete bk.reschedulePrevFrom;
@@ -19470,7 +19604,10 @@
     }
     if (shouldPersistApiMutation() && bk._fromApi) {
       try {
-        const result = await window.LokalnieApi.updateBookingStatusFromApp(bk.id, "confirmed");
+        const result = isApiReschedule
+          ? await window.LokalnieApi.acceptBookingRescheduleFromApp(bkBefore)
+          : await window.LokalnieApi.updateBookingStatusFromApp(bk.id, "confirmed");
+        if (isApiReschedule) mergeAuthoritativeBooking(bk, result);
         calendarSync = result && result.calendar;
       } catch (err) {
         Object.keys(bk).forEach(function (key) { delete bk[key]; });
@@ -19512,7 +19649,8 @@
       clearProposeHoldExpiry(bk);
       if (shouldPersistApiMutation() && bk._fromApi) {
         try {
-          await window.LokalnieApi.updateBookingStatusFromApp(bk.id, "confirmed");
+          const result = await window.LokalnieApi.rejectBookingRescheduleFromApp(bkBefore);
+          mergeAuthoritativeBooking(bk, result);
         } catch (err) {
           Object.keys(bk).forEach(function (key) { delete bk[key]; });
           Object.assign(bk, bkBefore);
@@ -21735,6 +21873,10 @@
     usesDesktopLayout: usesDesktopLayout,
     openProvCalEdit: openProvCalEdit,
     confirmProvCalAdd: confirmProvCalAdd,
+    sendProvCalReschedule: sendProvCalReschedule,
+    sendAllProvCalReschedule: sendAllProvCalReschedule,
+    acceptProposal: acceptProposal,
+    rejectProposal: rejectProposal,
     declineRequestProposals: declineRequestProposals,
     cancelClientRequest: cancelClientRequest,
     rejectRequest: rejectRequest,

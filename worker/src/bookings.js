@@ -21,27 +21,67 @@ export function canTransitionBooking(role, fromStatus, toStatus) {
   return !!matrix[fromStatus]?.has(toStatus);
 }
 
+/** True when a complete reschedule candidate is stored on the row. */
+export function hasCompleteProposedSlot(row) {
+  return !!(row?.proposed_date_iso && row?.proposed_time_from && row?.proposed_time_to);
+}
+
+/** proposeHoldHours=0 → no auto-expiry (NULL). Missing/invalid → default 24h. */
+export function computeRescheduleExpiresAt(proposeHoldHours, now = new Date()) {
+  const hours = Number(proposeHoldHours);
+  const holdHours = Number.isFinite(hours) ? hours : 24;
+  if (holdHours <= 0) return null;
+  return new Date(now.getTime() + holdHours * 60 * 60 * 1000).toISOString();
+}
+
+export function isRescheduleExpired(row, nowIso = new Date().toISOString()) {
+  if (!hasCompleteProposedSlot(row)) return false;
+  if (row.reschedule_expires_at == null) return false;
+  return String(row.reschedule_expires_at) < String(nowIso);
+}
+
+/**
+ * SQL fragment: candidate (dateISO/from/to) collides with an active current slot
+ * OR an unexpired proposed_* slot. Bind via bookingOverlapBindArgs.
+ */
+export function bookingOverlapPredicateSql(alias = "occupied") {
+  return `(
+    (
+      ${alias}.date_iso = ?
+      AND ${alias}.status IN ('confirmed', 'pending', 'proposed')
+      AND ${alias}.time_from < ?
+      AND ${alias}.time_to > ?
+    )
+    OR (
+      ${alias}.proposed_date_iso = ?
+      AND ${alias}.status IN ('confirmed', 'pending', 'proposed')
+      AND ${alias}.proposed_time_from < ?
+      AND ${alias}.proposed_time_to > ?
+      AND (${alias}.reschedule_expires_at IS NULL OR ${alias}.reschedule_expires_at > ?)
+    )
+  )`;
+}
+
+/** Bind order for bookingOverlapPredicateSql: current slot, then proposed slot + now. */
+export function bookingOverlapBindArgs({ dateISO, from, to, nowIso }) {
+  return [dateISO, to, from, dateISO, to, from, nowIso];
+}
+
 export async function hasOverlap(
   env,
-  { providerId, dateISO, from, to, excludeBookingId = null }
+  { providerId, dateISO, from, to, excludeBookingId = null, nowIso = new Date().toISOString() }
 ) {
-  const placeholders = ACTIVE_BOOKING_STATUSES.map(() => "?").join(", ");
+  const overlap = bookingOverlapPredicateSql("occupied");
   const row = await env.DB.prepare(
-    `SELECT id FROM bookings
-     WHERE provider_id = ?
-       AND date_iso = ?
-       AND status IN (${placeholders})
-       AND time_from < ?
-       AND time_to > ?
-       AND (? IS NULL OR id <> ?)
+    `SELECT occupied.id FROM bookings AS occupied
+     WHERE occupied.provider_id = ?
+       AND ${overlap}
+       AND (? IS NULL OR occupied.id <> ?)
      LIMIT 1`
   )
     .bind(
       providerId,
-      dateISO,
-      ...ACTIVE_BOOKING_STATUSES,
-      to,
-      from,
+      ...bookingOverlapBindArgs({ dateISO, from, to, nowIso }),
       excludeBookingId,
       excludeBookingId
     )

@@ -18,7 +18,14 @@ import {
   normalizeStringArray,
   isValidDateISO,
 } from "./validate.js";
-import { canTransitionBooking } from "./bookings.js";
+import {
+  canTransitionBooking,
+  bookingOverlapBindArgs,
+  bookingOverlapPredicateSql,
+  computeRescheduleExpiresAt,
+  hasCompleteProposedSlot,
+  isRescheduleExpired,
+} from "./bookings.js";
 import { cleanupIdempotencyKeys, withIdempotency } from "./idempotency.js";
 import { enforceRateLimit, rateLimitScope } from "./rateLimit.js";
 import { decryptPhone, encryptPhone } from "./pii.js";
@@ -84,6 +91,7 @@ export default {
         processDueEmails(env),
         cleanupIdempotencyKeys(env),
         cleanupRetention(env),
+        expireRescheduleProposals(env),
         geocodePendingBatch(env, 10),
       ])
     );
@@ -107,6 +115,31 @@ export async function cleanupRetention(env) {
     emailOutbox: Number(outboxResult?.meta?.changes || 0),
     geocodeCache: Number(cacheResult?.meta?.changes || 0),
   };
+}
+
+/** Wygasłe propozycje zmiany: czyści proposed_*, wraca do confirmed, zostawia aktualny slot. */
+export async function expireRescheduleProposals(env) {
+  const ts = nowIso();
+  const result = await env.DB.prepare(
+    `UPDATE bookings
+     SET proposed_date_iso=NULL,
+         proposed_time_from=NULL,
+         proposed_time_to=NULL,
+         proposed_location_label=NULL,
+         reschedule_expires_at=NULL,
+         status='confirmed',
+         revision=revision+1,
+         updated_at=?
+     WHERE status='proposed'
+       AND reschedule_expires_at IS NOT NULL
+       AND reschedule_expires_at < ?
+       AND proposed_date_iso IS NOT NULL
+       AND proposed_time_from IS NOT NULL
+       AND proposed_time_to IS NOT NULL`
+  )
+    .bind(ts, ts)
+    .run();
+  return { expired: Number(result?.meta?.changes || 0) };
 }
 
 async function routeRequest(request, env, ctx) {
@@ -264,6 +297,19 @@ async function routeRequest(request, env, ctx) {
       if (parts[0] === "bookings" && parts[1] && !parts[2]) {
         if (request.method === "GET") return getBooking(request, env, parts[1]);
         if (request.method === "PATCH") return patchBooking(request, env, parts[1]);
+      }
+
+      if (parts[0] === "bookings" && parts[1] && parts[2] === "reschedule") {
+        const bookingId = parts[1];
+        if (!parts[3] && request.method === "POST") {
+          return proposeBookingReschedule(request, env, bookingId);
+        }
+        if (parts[3] === "accept" && !parts[4] && request.method === "POST") {
+          return acceptBookingReschedule(request, env, bookingId);
+        }
+        if (parts[3] === "reject" && !parts[4] && request.method === "POST") {
+          return rejectBookingReschedule(request, env, bookingId);
+        }
       }
 
       if (path === "/requests") {
@@ -787,6 +833,7 @@ async function createBookingMutation(request, env, auth) {
 
   const bookingId = id("bk");
   const ts = nowIso();
+  const overlapSql = bookingOverlapPredicateSql("occupied");
 
   const activeStatus = ["confirmed", "pending", "proposed"].includes(status) ? 1 : 0;
   const insertStatement = env.DB.prepare(
@@ -798,10 +845,7 @@ async function createBookingMutation(request, env, auth) {
     WHERE ? = 0 OR NOT EXISTS (
       SELECT 1 FROM bookings AS occupied
       WHERE occupied.provider_id=?
-        AND occupied.date_iso=?
-        AND occupied.status IN ('confirmed', 'pending', 'proposed')
-        AND occupied.time_from < ?
-        AND occupied.time_to > ?
+        AND ${overlapSql}
     )`
   )
     .bind(
@@ -824,9 +868,12 @@ async function createBookingMutation(request, env, auth) {
       ts,
       activeStatus,
       providerId,
-      body.dateISO,
-      body.to,
-      body.from
+      ...bookingOverlapBindArgs({
+        dateISO: body.dateISO,
+        from: body.from,
+        to: body.to,
+        nowIso: ts,
+      })
     );
   const statements = [insertStatement];
   if (auth.provider?.id === providerId) {
@@ -935,6 +982,9 @@ async function patchBookingMutation(request, env, auth, bookingId) {
     if (changesSlot || !canTransitionBooking("client", row.status, body.status)) {
       return json({ error: "client_update_forbidden" }, 403);
     }
+    if (body.status === "confirmed" && hasCompleteProposedSlot(row)) {
+      return json({ error: "reschedule_accept_required" }, 409);
+    }
     status = body.status;
   } else {
     if (
@@ -970,20 +1020,26 @@ async function patchBookingMutation(request, env, auth, bookingId) {
   }
 
   const activeStatus = ["confirmed", "pending", "proposed"].includes(status) ? 1 : 0;
+  const clearProposed = status === "cancelled" || status === "rejected";
+  const proposedDateISO = clearProposed ? null : row.proposed_date_iso;
+  const proposedFrom = clearProposed ? null : row.proposed_time_from;
+  const proposedTo = clearProposed ? null : row.proposed_time_to;
+  const proposedLocationLabel = clearProposed ? null : row.proposed_location_label;
+  const rescheduleExpiresAt = clearProposed ? null : row.reschedule_expires_at;
   const ts = nowIso();
+  const overlapSql = bookingOverlapPredicateSql("occupied");
   const updateStatement = env.DB.prepare(
     `UPDATE bookings
-     SET status=?, date_iso=?, time_from=?, time_to=?, location_label=?, updated_at=?
+     SET status=?, date_iso=?, time_from=?, time_to=?, location_label=?,
+         proposed_date_iso=?, proposed_time_from=?, proposed_time_to=?,
+         proposed_location_label=?, reschedule_expires_at=?, updated_at=?
      WHERE id=?
        AND (
          ? = 0 OR NOT EXISTS (
            SELECT 1 FROM bookings AS occupied
            WHERE occupied.provider_id=?
-             AND occupied.date_iso=?
-             AND occupied.status IN ('confirmed', 'pending', 'proposed')
-             AND occupied.time_from < ?
-             AND occupied.time_to > ?
              AND occupied.id <> ?
+             AND ${overlapSql}
          )
        )`
   )
@@ -993,14 +1049,17 @@ async function patchBookingMutation(request, env, auth, bookingId) {
       from,
       to,
       locationLabel,
+      proposedDateISO,
+      proposedFrom,
+      proposedTo,
+      proposedLocationLabel,
+      rescheduleExpiresAt,
       ts,
       bookingId,
       activeStatus,
       row.provider_id,
-      dateISO,
-      to,
-      from,
-      bookingId
+      bookingId,
+      ...bookingOverlapBindArgs({ dateISO, from, to, nowIso: ts })
     );
   const statements = [updateStatement];
   if (status !== row.status && row.client_email) {
@@ -1021,6 +1080,352 @@ async function patchBookingMutation(request, env, auth, bookingId) {
   const updated = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
   const calendar = await syncBookingToGoogle(env, bookingId);
   return json({ booking: await mapBooking(updated, env), calendar });
+}
+
+function parseExpectedRevision(value) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) return null;
+  return value;
+}
+
+async function proposeBookingReschedule(request, env, bookingId) {
+  const auth = await requireProvider(request, env);
+  if (auth.error) return auth.error;
+  return withIdempotency(
+    request,
+    env,
+    { userId: auth.user.id, endpoint: `/bookings/${bookingId}/reschedule` },
+    () => proposeBookingRescheduleMutation(request, env, auth, bookingId)
+  );
+}
+
+async function proposeBookingRescheduleMutation(request, env, auth, bookingId) {
+  const row = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
+  if (!row) return json({ error: "not_found" }, 404);
+  if (auth.provider?.id !== row.provider_id) return json({ error: "forbidden" }, 403);
+  if (!["confirmed", "proposed"].includes(row.status)) {
+    return json({ error: "invalid_status_transition" }, 409);
+  }
+
+  const body = await readJson(request);
+  if (!body) return json({ error: "invalid_json" }, 400);
+  const expectedRevision = parseExpectedRevision(body.expectedRevision);
+  if (expectedRevision == null) return json({ error: "invalid_revision" }, 400);
+
+  const slotError = validateSlot({ dateISO: body.dateISO, from: body.from, to: body.to });
+  if (slotError) return json({ error: slotError }, 400);
+  const windowError = validateBookingWindow({
+    dateISO: body.dateISO,
+    from: body.from,
+    minLeadHours: 0,
+  });
+  if (windowError) return json({ error: windowError }, 400);
+  const locationResult = normalizeText(body.locationLabel, 240);
+  if (locationResult.error) return json({ error: "location_too_long" }, 400);
+
+  const provider = await env.DB.prepare(
+    "SELECT booking_rules_json FROM provider_profiles WHERE id=?"
+  )
+    .bind(row.provider_id)
+    .first();
+  let bookingRules = {};
+  try {
+    bookingRules = JSON.parse(provider?.booking_rules_json || "{}");
+  } catch {
+    bookingRules = {};
+  }
+  const expiresAt = computeRescheduleExpiresAt(bookingRules.proposeHoldHours);
+  const ts = nowIso();
+  const overlapSql = bookingOverlapPredicateSql("occupied");
+
+  const updateStatement = env.DB.prepare(
+    `UPDATE bookings
+     SET proposed_date_iso=?,
+         proposed_time_from=?,
+         proposed_time_to=?,
+         proposed_location_label=?,
+         reschedule_expires_at=?,
+         status='proposed',
+         revision=revision+1,
+         updated_at=?
+     WHERE id=?
+       AND revision=?
+       AND status IN ('confirmed', 'proposed')
+       AND NOT EXISTS (
+         SELECT 1 FROM bookings AS occupied
+         WHERE occupied.provider_id=?
+           AND occupied.id <> ?
+           AND ${overlapSql}
+       )`
+  ).bind(
+    body.dateISO,
+    body.from,
+    body.to,
+    locationResult.value,
+    expiresAt,
+    ts,
+    bookingId,
+    expectedRevision,
+    row.provider_id,
+    bookingId,
+    ...bookingOverlapBindArgs({
+      dateISO: body.dateISO,
+      from: body.from,
+      to: body.to,
+      nowIso: ts,
+    })
+  );
+
+  const statements = [updateStatement];
+  if (row.client_email) {
+    statements.push(
+      prepareEmailOutbox(env, {
+        toEmail: row.client_email,
+        template: "booking_proposed",
+        payload: {
+          bookingId,
+          clientName: row.client_name,
+          previousDateISO: row.date_iso,
+          previousFrom: row.time_from,
+          previousTo: row.time_to,
+          dateISO: body.dateISO,
+          from: body.from,
+          to: body.to,
+          status: "proposed",
+        },
+        conditionSql:
+          "EXISTS (SELECT 1 FROM bookings WHERE id=? AND status='proposed' AND revision=? AND updated_at=?)",
+        conditionBinds: [bookingId, expectedRevision + 1, ts],
+      })
+    );
+  }
+
+  const [update] = await env.DB.batch(statements);
+  if (!update.meta?.changes) {
+    const current = await env.DB.prepare("SELECT revision, status FROM bookings WHERE id=?")
+      .bind(bookingId)
+      .first();
+    if (!current || current.revision !== expectedRevision) {
+      return json({ error: "stale_booking" }, 409);
+    }
+    return json({ error: "booking_overlap" }, 409);
+  }
+
+  const updated = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
+  return json({ booking: await mapBooking(updated, env) });
+}
+
+async function acceptBookingReschedule(request, env, bookingId) {
+  const auth = await requireDemoUser(request, env);
+  if (auth.error) return auth.error;
+  return withIdempotency(
+    request,
+    env,
+    { userId: auth.user.id, endpoint: `/bookings/${bookingId}/reschedule/accept` },
+    () => acceptBookingRescheduleMutation(request, env, auth, bookingId)
+  );
+}
+
+async function acceptBookingRescheduleMutation(request, env, auth, bookingId) {
+  const row = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
+  if (!row) return json({ error: "not_found" }, 404);
+  if (!row.client_user_id || row.client_user_id !== auth.user.id) {
+    return json({ error: "forbidden" }, 403);
+  }
+
+  const body = await readJson(request);
+  if (!body) return json({ error: "invalid_json" }, 400);
+  const expectedRevision = parseExpectedRevision(body.expectedRevision);
+  if (expectedRevision == null) return json({ error: "invalid_revision" }, 400);
+
+  if (row.status !== "proposed" || !hasCompleteProposedSlot(row)) {
+    return json({ error: "reschedule_expired" }, 409);
+  }
+  const ts = nowIso();
+  if (isRescheduleExpired(row, ts)) {
+    return json({ error: "reschedule_expired" }, 409);
+  }
+
+  const overlapSql = bookingOverlapPredicateSql("occupied");
+  const updateStatement = env.DB.prepare(
+    `UPDATE bookings
+     SET date_iso=proposed_date_iso,
+         time_from=proposed_time_from,
+         time_to=proposed_time_to,
+         location_label=COALESCE(proposed_location_label, location_label),
+         proposed_date_iso=NULL,
+         proposed_time_from=NULL,
+         proposed_time_to=NULL,
+         proposed_location_label=NULL,
+         reschedule_expires_at=NULL,
+         status='confirmed',
+         revision=revision+1,
+         updated_at=?
+     WHERE id=?
+       AND revision=?
+       AND status='proposed'
+       AND proposed_date_iso IS NOT NULL
+       AND proposed_time_from IS NOT NULL
+       AND proposed_time_to IS NOT NULL
+       AND (reschedule_expires_at IS NULL OR reschedule_expires_at > ?)
+       AND NOT EXISTS (
+         SELECT 1 FROM bookings AS occupied
+         WHERE occupied.provider_id=?
+           AND occupied.id <> ?
+           AND ${overlapSql}
+       )`
+  ).bind(
+    ts,
+    bookingId,
+    expectedRevision,
+    ts,
+    row.provider_id,
+    bookingId,
+    ...bookingOverlapBindArgs({
+      dateISO: row.proposed_date_iso,
+      from: row.proposed_time_from,
+      to: row.proposed_time_to,
+      nowIso: ts,
+    })
+  );
+
+  const provider = await env.DB.prepare("SELECT email, name FROM provider_profiles WHERE id=?")
+    .bind(row.provider_id)
+    .first();
+  const statements = [updateStatement];
+  if (provider?.email) {
+    statements.push(
+      prepareEmailOutbox(env, {
+        toEmail: provider.email,
+        template: "booking_reschedule_accepted",
+        payload: {
+          bookingId,
+          providerName: provider.name,
+          clientName: row.client_name,
+          previousDateISO: row.date_iso,
+          previousFrom: row.time_from,
+          previousTo: row.time_to,
+          dateISO: row.proposed_date_iso,
+          from: row.proposed_time_from,
+          to: row.proposed_time_to,
+          status: "confirmed",
+        },
+        conditionSql:
+          "EXISTS (SELECT 1 FROM bookings WHERE id=? AND status='confirmed' AND revision=? AND updated_at=?)",
+        conditionBinds: [bookingId, expectedRevision + 1, ts],
+      })
+    );
+  }
+
+  const [update] = await env.DB.batch(statements);
+  if (!update.meta?.changes) {
+    const current = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
+    if (!current || current.revision !== expectedRevision) {
+      return json({ error: "stale_booking" }, 409);
+    }
+    if (
+      current.status !== "proposed" ||
+      !hasCompleteProposedSlot(current) ||
+      isRescheduleExpired(current, ts)
+    ) {
+      return json({ error: "reschedule_expired" }, 409);
+    }
+    return json({ error: "booking_overlap" }, 409);
+  }
+
+  const updated = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
+  const calendar = await syncBookingToGoogle(env, bookingId);
+  return json({ booking: await mapBooking(updated, env), calendar });
+}
+
+async function rejectBookingReschedule(request, env, bookingId) {
+  const auth = await requireDemoUser(request, env);
+  if (auth.error) return auth.error;
+  return withIdempotency(
+    request,
+    env,
+    { userId: auth.user.id, endpoint: `/bookings/${bookingId}/reschedule/reject` },
+    () => rejectBookingRescheduleMutation(request, env, auth, bookingId)
+  );
+}
+
+async function rejectBookingRescheduleMutation(request, env, auth, bookingId) {
+  const row = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
+  if (!row) return json({ error: "not_found" }, 404);
+  const isProvider = auth.provider?.id === row.provider_id;
+  const isClient = row.client_user_id === auth.user.id;
+  if (!isProvider && !isClient) return json({ error: "forbidden" }, 403);
+
+  const body = await readJson(request);
+  if (!body) return json({ error: "invalid_json" }, 400);
+  const expectedRevision = parseExpectedRevision(body.expectedRevision);
+  if (expectedRevision == null) return json({ error: "invalid_revision" }, 400);
+
+  if (row.status !== "proposed" || !hasCompleteProposedSlot(row)) {
+    return json({ error: "reschedule_expired" }, 409);
+  }
+
+  const ts = nowIso();
+  const updateStatement = env.DB.prepare(
+    `UPDATE bookings
+     SET proposed_date_iso=NULL,
+         proposed_time_from=NULL,
+         proposed_time_to=NULL,
+         proposed_location_label=NULL,
+         reschedule_expires_at=NULL,
+         status='confirmed',
+         revision=revision+1,
+         updated_at=?
+     WHERE id=?
+       AND revision=?
+       AND status='proposed'
+       AND proposed_date_iso IS NOT NULL
+       AND proposed_time_from IS NOT NULL
+       AND proposed_time_to IS NOT NULL`
+  ).bind(ts, bookingId, expectedRevision);
+
+  const provider = await env.DB.prepare("SELECT email, name FROM provider_profiles WHERE id=?")
+    .bind(row.provider_id)
+    .first();
+  const notifyEmail = isClient ? provider?.email : row.client_email;
+  const notifyTemplate = "booking_reschedule_rejected";
+  const statements = [updateStatement];
+  if (notifyEmail) {
+    statements.push(
+      prepareEmailOutbox(env, {
+        toEmail: notifyEmail,
+        template: notifyTemplate,
+        payload: {
+          bookingId,
+          providerName: provider?.name,
+          clientName: row.client_name,
+          previousDateISO: row.proposed_date_iso,
+          previousFrom: row.proposed_time_from,
+          previousTo: row.proposed_time_to,
+          dateISO: row.date_iso,
+          from: row.time_from,
+          to: row.time_to,
+          status: "confirmed",
+        },
+        conditionSql:
+          "EXISTS (SELECT 1 FROM bookings WHERE id=? AND status='confirmed' AND revision=? AND updated_at=?)",
+        conditionBinds: [bookingId, expectedRevision + 1, ts],
+      })
+    );
+  }
+
+  const [update] = await env.DB.batch(statements);
+  if (!update.meta?.changes) {
+    const current = await env.DB.prepare("SELECT revision, status FROM bookings WHERE id=?")
+      .bind(bookingId)
+      .first();
+    if (!current || current.revision !== expectedRevision) {
+      return json({ error: "stale_booking" }, 409);
+    }
+    return json({ error: "reschedule_expired" }, 409);
+  }
+
+  const updated = await env.DB.prepare("SELECT * FROM bookings WHERE id=?").bind(bookingId).first();
+  return json({ booking: await mapBooking(updated, env) });
 }
 
 async function listRequests(request, env) {
@@ -1269,6 +1674,7 @@ async function acceptRequestMutation(request, env, auth, requestId) {
 
   const bookingId = id("bk");
   const ts = nowIso();
+  const overlapSql = bookingOverlapPredicateSql("occupied");
   const insertStatement = env.DB.prepare(
     `INSERT INTO bookings (
       id, provider_id, client_user_id, client_name, client_phone, client_email,
@@ -1283,10 +1689,7 @@ async function acceptRequestMutation(request, env, auth, requestId) {
       AND NOT EXISTS (
         SELECT 1 FROM bookings AS occupied
         WHERE occupied.provider_id=?
-          AND occupied.date_iso=?
-          AND occupied.status IN ('confirmed', 'pending', 'proposed')
-          AND occupied.time_from < ?
-          AND occupied.time_to > ?
+          AND ${overlapSql}
       )
       AND NOT EXISTS (
         SELECT 1 FROM bookings WHERE request_id=?
@@ -1311,9 +1714,12 @@ async function acceptRequestMutation(request, env, auth, requestId) {
       requestId,
       auth.user.id,
       row.provider_id,
-      chosen.dateISO,
-      chosen.to,
-      chosen.from,
+      ...bookingOverlapBindArgs({
+        dateISO: chosen.dateISO,
+        from: chosen.from,
+        to: chosen.to,
+        nowIso: ts,
+      }),
       requestId
     );
   const updateStatement = env.DB.prepare(

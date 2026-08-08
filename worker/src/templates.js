@@ -7,6 +7,8 @@ const SUBJECTS = {
   booking_proposed: "Zaproponowano zmianę rezerwacji",
   booking_rejected: "Rezerwacja odrzucona",
   booking_cancelled: "Rezerwacja odwołana",
+  booking_reschedule_accepted: "Klient zaakceptował nowy termin",
+  booking_reschedule_rejected: "Propozycja zmiany terminu odrzucona",
   request_new: "Nowa prośba o termin",
   request_proposed: "Otrzymałeś propozycje terminów",
 };
@@ -18,6 +20,8 @@ const INTROS = {
   booking_proposed: "Usługodawca zaproponował zmianę terminu. Sprawdź szczegóły w aplikacji.",
   booking_rejected: "Niestety ta rezerwacja została odrzucona.",
   booking_cancelled: "Rezerwacja została odwołana.",
+  booking_reschedule_accepted: "Klient zaakceptował proponowaną zmianę terminu.",
+  booking_reschedule_rejected: "Propozycja zmiany terminu została odrzucona — obowiązuje dotychczasowy termin.",
   request_new: "Klient prosi o termin. Odpowiedz w aplikacji Lokalnie.",
   request_proposed: "Masz nowe propozycje terminów do wyboru.",
 };
@@ -46,6 +50,16 @@ function buildDetailRows(payload) {
   const rows = [];
   if (payload.providerName) rows.push(["Usługodawca", String(payload.providerName)]);
   if (payload.clientName) rows.push(["Klient", String(payload.clientName)]);
+  if (payload.previousDateISO) {
+    const prevTime =
+      payload.previousFrom && payload.previousTo
+        ? `${payload.previousFrom}–${payload.previousTo}`
+        : payload.previousFrom || payload.previousTo || null;
+    rows.push([
+      "Poprzedni termin",
+      prevTime ? `${payload.previousDateISO}, ${prevTime}` : String(payload.previousDateISO),
+    ]);
+  }
   if (payload.dateISO) rows.push(["Data", String(payload.dateISO)]);
   if (payload.from && payload.to) rows.push(["Godzina", `${payload.from}–${payload.to}`]);
   if (payload.status) {
