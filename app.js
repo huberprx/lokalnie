@@ -10749,7 +10749,115 @@
 
   function provCalAddSlotIdForBooking(booking) {
     if (!booking || !booking.dateISO || !booking.from) return null;
-    return "slot-" + booking.dateISO + "-" + timeToMin(booking.from);
+    const from = timeToMin(booking.from);
+    const toRaw = timeToMin(booking.to || booking.from);
+    const to = toRaw > from ? toRaw : from + 30;
+    // Ten sam format / locKey co karuzela (z bloku dostępności), nie surowe booking.locationId.
+    const slot = slotFromFreeRange(booking.dateISO, from, to);
+    if (slot) return slot.id;
+    const locKey = booking.locationId || "na";
+    return "slot-" + booking.dateISO + "-" + from + "-" + locKey;
+  }
+
+  /** Chip zaznaczony: dokładne id albo ten sam start (różny locKey / stary format). */
+  function isProvCalAddSlotChipSelected(draft, slot) {
+    if (!draft || !slot || !draft.slotId) return false;
+    if (draft.slotId === slot.id) return true;
+    const start = parseProvCalSlotStartMin(draft.slotId);
+    return Number.isFinite(start) && timeToMinutes(slot.from) === start;
+  }
+
+  /** Jeśli draft.slotId ma stary format (bez locKey) — dopasuj po starcie do chipa z listy. */
+  function alignProvCalAddDraftSlotId(draft, slots) {
+    if (!draft || !Array.isArray(slots) || !slots.length) return;
+    if (draft.slotId && slots.some(function (s) { return s.id === draft.slotId; })) return;
+    let start = parseProvCalSlotStartMin(draft.slotId);
+    if (!Number.isFinite(start) && draft.bookingId) {
+      const bk = (window.AppState.bookings || []).find(function (b) {
+        return b && b.id === draft.bookingId;
+      });
+      if (bk && bk.from) start = timeToMin(bk.from);
+    }
+    if (!Number.isFinite(start)) return;
+    const byStart = slots.find(function (s) {
+      return timeToMinutes(s.from) === start;
+    });
+    if (byStart) draft.slotId = byStart.id;
+  }
+
+  /**
+   * Po zmianie długości usług: zachowaj start, przelicz koniec i slotId.
+   * W edycji wizyty — podgląd na kalendarzu (to samo co chip na karuzeli).
+   */
+  function rematchProvCalAddDraftSlotKeepingStart(draft) {
+    if (!draft || draft.requestId) return false;
+    const p = myProvider();
+    if (!p || !draft.dateISO) return false;
+    const duration =
+      provCalAddServiceTotals(provCalAddSelectedServices(p, draft)).duration || 30;
+    let start = parseProvCalSlotStartMin(draft.slotId);
+    if (!Number.isFinite(start) && draft.bookingId) {
+      const bk0 = (window.AppState.bookings || []).find(function (b) {
+        return b && b.id === draft.bookingId;
+      });
+      if (bk0 && bk0.from) {
+        start = timeToMin(bk0.from);
+        if (bk0.dateISO) draft.dateISO = bk0.dateISO;
+      }
+    }
+    if (!Number.isFinite(start)) {
+      draft.slotId = null;
+      return false;
+    }
+    const end = start + Math.max(5, duration);
+    const realIds = (draft.serviceIds || []).filter(function (id) {
+      return !isProvCalAddDurationId(id);
+    });
+    const slotOpts = slotOptsForServiceIds(
+      p,
+      realIds,
+      Object.assign(
+        { ignoreLead: true },
+        draft.bookingId ? { exceptBookingId: draft.bookingId } : {}
+      )
+    );
+    let slots = computeSlots(p, draft.dateISO, duration, slotOpts);
+    let match = slots.find(function (s) {
+      return timeToMinutes(s.from) === start;
+    });
+    if (!match && isProvCalFreeRange(draft.dateISO, start, end, draft.bookingId || null)) {
+      match = slotFromFreeRange(draft.dateISO, start, end);
+    }
+    draft.slotId = match ? match.id : null;
+
+    if (draft.bookingId && draft.slotId) {
+      const bk = (window.AppState.bookings || []).find(function (b) {
+        return b && b.id === draft.bookingId;
+      });
+      if (bk) {
+        const prevDate = bk.dateISO;
+        const prevFrom = bk.from;
+        const prevTo = bk.to;
+        moveBookingTimes(draft.bookingId, start, end, draft.dateISO);
+        noteProvCalReschedule(
+          draft.bookingId,
+          prevDate,
+          prevFrom,
+          prevTo,
+          bk.dateISO,
+          bk.from,
+          bk.to
+        );
+        window.AppState.provCalSelection = normalizeProvCalSelection({
+          kind: "booking",
+          bookingId: bk.id,
+          dateISO: bk.dateISO,
+          fromMin: start,
+          toMin: end,
+        });
+      }
+    }
+    return !!draft.slotId;
   }
 
   function serviceIdsFromBooking(booking) {
@@ -12195,6 +12303,7 @@
         window.AppState.provCalAddMinimized = false;
         saveState();
         renderAll();
+        scheduleScrollProvCalAddTimeToSelected();
         hapticTap(16);
       }, delay);
       return;
@@ -12205,6 +12314,7 @@
     if (!desktop) window.AppState.screen.provider = "calendar";
     saveState();
     renderAll();
+    scheduleScrollProvCalAddTimeToSelected();
     hapticTap(16);
   }
 
@@ -12408,8 +12518,8 @@
     if (!draftHasProvCalAddInne(draft)) {
       // Dołącz „Inne” do już wybranych usług z oferty — nie kasuj ich.
       setProvCalAddInneMinutesOnDraft(draft, PROV_CAL_ADD_DURATION_OPTS[1].durationMin || 30);
-      draft.slotId = null;
-      syncProvCalSelectionFromAddDraft();
+      rematchProvCalAddDraftSlotKeepingStart(draft);
+      if (!draft.bookingId) syncProvCalSelectionFromAddDraft();
       draft.serviceScheduleDirty = true;
     }
     draft.servicePickOpen = true;
@@ -12467,8 +12577,8 @@
     setProvCalAddInneMinutesOnDraft(draft, minutes);
     const durSvc = durationServiceForMinutes(minutes);
     if (prev !== (draft.serviceIds || []).join(",")) {
-      draft.slotId = null;
-      syncProvCalSelectionFromAddDraft();
+      rematchProvCalAddDraftSlotKeepingStart(draft);
+      if (!draft.bookingId) syncProvCalSelectionFromAddDraft();
       draft.serviceScheduleDirty = true;
     }
     saveState();
@@ -12693,8 +12803,11 @@
     draft.serviceScheduleDirty = false;
     draft.servicePickOpen = false;
     setProvCalAddServicePickOpen(false);
+    rematchProvCalAddDraftSlotKeepingStart(draft);
+    if (!draft.bookingId) syncProvCalSelectionFromAddDraft();
     saveState();
     renderAll();
+    scheduleScrollProvCalAddTimeToSelected();
   }
 
   /** Start slotu w minutach z id `slot-YYYY-MM-DD-<min>-…`. */
@@ -12856,14 +12969,13 @@
   }
 
   /**
-   * Panel „+” → siatka: szkic na kalendarzu podąża za godziną wybraną w karuzeli;
-   * odznaczenie chipa zdejmuje szkic. Tryb odpowiedzi i edycji pomijamy —
-   * propozycje renderuje renderProvCalProposalDraftsHtml, edycja ma selekcję wizyty.
+   * Panel „+” → siatka: szkic / edytowana wizyta podąża za chipem i długością usług.
+   * Tryb odpowiedzi pomijamy — propozycje renderuje renderProvCalProposalDraftsHtml.
    */
   function syncProvCalSelectionFromAddDraft() {
     if (!window.AppState.provCalAddOpen) return false;
     const draft = window.AppState.provCalAddDraft;
-    if (!draft || draft.requestId || draft.bookingId) return false;
+    if (!draft || draft.requestId) return false;
     let dateISO = null;
     let fromMin = NaN;
     let toMin = NaN;
@@ -12876,6 +12988,51 @@
           provCalAddServiceTotals(provCalAddSelectedServices(myProvider(), draft)).duration || 30;
         toMin = fromMin + Math.max(5, dur);
       }
+    }
+    // Edycja istniejącej wizyty: przenieś podgląd + kolejkę zmiany terminu.
+    if (draft.bookingId) {
+      if (!(dateISO && isFinite(fromMin) && toMin > fromMin)) return false;
+      const bk = (window.AppState.bookings || []).find(function (b) {
+        return b && b.id === draft.bookingId;
+      });
+      if (!bk) return false;
+      const prevDate = bk.dateISO;
+      const prevFrom = bk.from;
+      const prevTo = bk.to;
+      const same =
+        prevDate === dateISO &&
+        prevFrom === minToTime(fromMin) &&
+        prevTo === minToTime(toMin);
+      if (!same) {
+        moveBookingTimes(draft.bookingId, fromMin, toMin, dateISO);
+        noteProvCalReschedule(
+          draft.bookingId,
+          prevDate,
+          prevFrom,
+          prevTo,
+          bk.dateISO,
+          bk.from,
+          bk.to
+        );
+      }
+      const nextSel = normalizeProvCalSelection({
+        kind: "booking",
+        bookingId: bk.id,
+        dateISO: bk.dateISO,
+        fromMin: fromMin,
+        toMin: toMin,
+      });
+      const changed =
+        provCalSelectionKey(window.AppState.provCalSelection) !== provCalSelectionKey(nextSel) ||
+        !same;
+      window.AppState.provCalSelection = nextSel;
+      draft.dateISO = dateISO;
+      if (window.AppState.provCalDate !== dateISO) {
+        window.AppState.provCalDate = dateISO;
+        window.AppState.provCalPickerMonth = dateISO.slice(0, 7);
+      }
+      if (!provCalWindowContainsDate(dateISO)) moveProvCalWindowToInclude(dateISO);
+      return changed;
     }
     const next =
       dateISO && isFinite(fromMin) && toMin > fromMin
@@ -12957,14 +13114,25 @@
       return !isProvCalAddDurationId(id);
     });
     const duration = provCalAddServiceTotals(provCalAddSelectedServices(p, draft)).duration || 30;
-    const slotOpts = slotOptsForServiceIds(p, realIds, {});
-    let slots = computeSlots(p, draft.dateISO, duration, Object.assign({ ignoreLead: true }, slotOpts));
-    if (draft.slotId && !slots.some(function (s) { return s.id === draft.slotId; })) {
+    const slotOpts = slotOptsForServiceIds(
+      p,
+      realIds,
+      Object.assign(
+        { ignoreLead: true },
+        draft.bookingId ? { exceptBookingId: draft.bookingId } : {}
+      )
+    );
+    let slots = computeSlots(p, draft.dateISO, duration, slotOpts);
+    alignProvCalAddDraftSlotId(draft, slots);
+    if (draft.slotId && !slots.some(function (s) { return isProvCalAddSlotChipSelected(draft, s); })) {
       const resolved = resolveProvCalAddSlot(draft, duration, slotOpts);
       if (resolved) {
-        slots = slots.concat([resolved]).sort(function (a, b) {
-          return timeToMinutes(a.from) - timeToMinutes(b.from);
-        });
+        draft.slotId = resolved.id;
+        if (!slots.some(function (s) { return s.id === resolved.id; })) {
+          slots = slots.concat([resolved]).sort(function (a, b) {
+            return timeToMinutes(a.from) - timeToMinutes(b.from);
+          });
+        }
       }
     }
     const listEls = document.querySelectorAll('[data-role="prov-cal-add-time-list"]');
@@ -12981,7 +13149,7 @@
       } else {
         listEl.innerHTML = slots
           .map(function (s) {
-            const on = draft.slotId === s.id;
+            const on = isProvCalAddSlotChipSelected(draft, s);
             return `<button type="button" class="time-row time-row--chip${on ? " time-row--selected" : ""}" data-action="prov-cal-add-slot" data-slot="${escapeHtml(s.id)}" aria-label="Wybierz ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${on ? "true" : "false"}">
             <span class="time-row__info">
               <span class="time-row__range">${escapeHtml(s.from)}→${escapeHtml(s.to)}</span>
@@ -13066,8 +13234,8 @@
       draft.serviceIds.splice(idx, 1);
     }
     if (!draft.serviceIds.length) draft.serviceIds = [PROV_CAL_ADD_DEFAULT_DURATION_ID];
-    draft.slotId = null;
-    syncProvCalSelectionFromAddDraft();
+    rematchProvCalAddDraftSlotKeepingStart(draft);
+    if (!draft.bookingId) syncProvCalSelectionFromAddDraft();
     draft.servicePickOpen = true;
     draft.serviceScheduleDirty = true;
     saveState();
@@ -13093,6 +13261,9 @@
     const draft = ensureProvCalAddDraft();
     if (draft.requestId) {
       toggleReplyProposalSlot(draft, slotId);
+    } else if (draft.bookingId) {
+      // Edycja wizyty: chip zawsze wybiera termin (bez odznaczania — wizyta musi mieć godzinę).
+      draft.slotId = slotId || draft.slotId;
     } else {
       // Drugi klik w ten sam chip odznacza godzinę — szkic znika z siatki.
       draft.slotId = draft.slotId === slotId ? null : slotId || null;
@@ -13100,6 +13271,7 @@
     syncProvCalSelectionFromAddDraft();
     saveState();
     renderAll();
+    scheduleScrollProvCalAddTimeToSelected();
   }
 
   function toggleReplyProposalSlot(draft, slotId) {
@@ -13386,7 +13558,14 @@
     const realIds = (draft.serviceIds || []).filter(function (id) {
       return !isProvCalAddDurationId(id);
     });
-    const slotOpts = slotOptsForServiceIds(p, realIds, isEdit ? { exceptBookingId: draft.bookingId } : {});
+    const slotOpts = slotOptsForServiceIds(
+      p,
+      realIds,
+      Object.assign(
+        isEdit || !isReply ? { ignoreLead: true } : {},
+        isEdit ? { exceptBookingId: draft.bookingId } : {}
+      )
+    );
     const allAvailDates = ((p && p.availability) || [])
       .map(function (d) {
         return d.dateISO;
@@ -13404,7 +13583,8 @@
           return d.dateISO;
         });
     let activeDate = draft.dateISO;
-    if (stripDates.length && stripDates.indexOf(activeDate) === -1) {
+    // Edycja wizyty: nie przeskakuj dnia draftu, nawet gdy lead „wycina” poranne sloty.
+    if (!isEdit && stripDates.length && stripDates.indexOf(activeDate) === -1) {
       activeDate = stripDates[0];
       draft.dateISO = activeDate;
     } else if (!activeDate) {
@@ -13420,14 +13600,30 @@
         return slotMatchesDayPart(s, dayPart);
       });
     }
+    if (!isReply) alignProvCalAddDraftSlotId(draft, slots);
     // Slot spoza siatki 15 min (np. luka 10 min między wizytami) — nie kasuj,
     // tylko dołącz do karuzeli, jeśli nadal jest wolny.
-    if (!isReply && draft.slotId && !slots.some(function (s) { return s.id === draft.slotId; })) {
+    if (!isReply && draft.slotId && !slots.some(function (s) { return isProvCalAddSlotChipSelected(draft, s); })) {
       const resolved = resolveProvCalAddSlot(draft, duration, slotOpts);
       if (resolved) {
-        slots = slots.concat([resolved]).sort(function (a, b) {
-          return timeToMinutes(a.from) - timeToMinutes(b.from);
-        });
+        draft.slotId = resolved.id;
+        if (!slots.some(function (s) { return s.id === resolved.id; })) {
+          slots = slots.concat([resolved]).sort(function (a, b) {
+            return timeToMinutes(a.from) - timeToMinutes(b.from);
+          });
+        }
+      } else if (isEdit) {
+        // Edycja: zawsze pokaż chip aktualnego startu (nawet spoza siatki / past lead).
+        const start = parseProvCalSlotStartMin(draft.slotId);
+        if (Number.isFinite(start)) {
+          const synth = slotFromFreeRange(activeDate, start, start + duration);
+          if (synth) {
+            draft.slotId = synth.id;
+            slots = slots.concat([synth]).sort(function (a, b) {
+              return timeToMinutes(a.from) - timeToMinutes(b.from);
+            });
+          }
+        }
       } else {
         draft.slotId = null;
       }
@@ -13443,7 +13639,7 @@
       : slots.length
         ? slots
             .map(function (s) {
-              const on = isReply ? chosenIds.has(s.id) : draft.slotId === s.id;
+              const on = isReply ? chosenIds.has(s.id) : isProvCalAddSlotChipSelected(draft, s);
               return `
           <button type="button" class="time-row time-row--chip${on ? " time-row--selected" : ""}" data-action="prov-cal-add-slot" data-slot="${escapeHtml(s.id)}"
             aria-label="${isReply ? (on ? "Usuń" : "Dodaj") : "Wybierz"} ${escapeHtml(s.from)}–${escapeHtml(s.to)}" aria-pressed="${on ? "true" : "false"}">
