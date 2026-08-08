@@ -898,6 +898,338 @@ test.describe("Lokalnie — kluczowe przepływy", function () {
     });
   });
 
+  test("realny providerId z API trafia do kalendarza usługodawcy", async function ({ page }) {
+    await page.addInitScript(function () {
+      if (navigator.serviceWorker && navigator.serviceWorker.register) {
+        navigator.serviceWorker.register = function () {
+          return Promise.reject(new Error("e2e: service worker disabled"));
+        };
+      }
+    });
+    await page.route("https://api.lokalnie.app/**", async function (route) {
+      const path = new URL(route.request().url()).pathname;
+      const payloads = {
+        "/me": {
+          authenticated: true,
+          user: {
+            id: "user_d401ed447b1f4d89",
+            name: "Hubert prx",
+            email: "bhkocury@gmail.com",
+            phone: "+48 500 600 700",
+            roles: { client: true, provider: true },
+          },
+          provider: {
+            id: "provider_094c71954dbb47dc",
+            slug: "bhkocury-1",
+            name: "BHkocury #1",
+            category: "beauty",
+            city: "Poznań",
+            address: "Testowa 1",
+            about: "",
+            email: "bhkocury@gmail.com",
+            emailVisible: true,
+            phone: "+48 500 600 700",
+            bookingMode: "auto",
+            visibleInSearch: true,
+            multiSelect: true,
+            locations: [{ id: "salon", label: "Salon", address: "Testowa 1", toneIndex: 0 }],
+            socialLinks: [],
+            bookingRules: {
+              futureDays: 60,
+              minLeadHours: 2,
+              cancelHours: 24,
+              proposeHoldHours: 24,
+              policy: "",
+            },
+            deactivated: false,
+          },
+        },
+        "/provider/me/services": {
+          services: [
+            {
+              id: "svc-bh-1",
+              name: "Konsultacja",
+              bookingMode: "auto",
+              durationMin: 30,
+              price: 100,
+              photoIds: [],
+              locationIds: ["salon"],
+              variants: [],
+            },
+          ],
+        },
+        "/provider/me/availability": { availability: [] },
+        "/provider/me/clients": {
+          clients: [
+            {
+              id: "pc_dc7257348f2c412a",
+              name: "Hubert prx",
+              email: "bhkocury@gmail.com",
+              phone: "",
+            },
+          ],
+        },
+        "/bookings": {
+          bookings: [
+            {
+              id: "bk_09b0d87dabe54458",
+              providerId: "provider_094c71954dbb47dc",
+              clientName: "hubert przychodniak",
+              clientEmail: "hubert.przychodniak@gmail.com",
+              serviceIds: ["svc-bh-1"],
+              serviceNames: ["Konsultacja"],
+              dateISO: "2026-08-08",
+              from: "11:00",
+              to: "11:30",
+              status: "confirmed",
+            },
+            {
+              id: "bk_eba941b7b8aa4af8",
+              providerId: "provider_094c71954dbb47dc",
+              clientName: "Skanowski pl",
+              clientEmail: "skanowski.pl@gmail.com",
+              serviceIds: ["svc-bh-1"],
+              serviceNames: ["Konsultacja"],
+              dateISO: "2026-08-10",
+              from: "09:00",
+              to: "09:30",
+              status: "confirmed",
+            },
+          ],
+        },
+        "/requests": { requests: [] },
+        "/calendar/connections": { connections: [] },
+      };
+      const body = payloads[path];
+      await route.fulfill({
+        status: body ? 200 : 404,
+        contentType: "application/json",
+        body: JSON.stringify(body || { error: "not_found" }),
+      });
+    });
+    await page.goto("/index.html?e2e=provider-calendar-real-id", {
+      waitUntil: "domcontentloaded",
+    });
+    await page.waitForFunction(function () {
+      return !!(window.App && window.LokalnieApi && window.App.providerVisits);
+    });
+
+    const result = await page.evaluate(async function () {
+      window.LokalnieApi.setAuthToken("bhkocury-token");
+      window.AppState.loggedIn = true;
+      const synced = await window.LokalnieApi.syncFromServer();
+      const visits = window.App.providerVisits();
+      window.AppState.activeRole = "provider";
+      window.AppState.screen.provider = "dashboard";
+      window.AppState.dashListMode = "visits";
+      window.App.saveState();
+      window.App.renderAll();
+      // Desktop: pulpit jest w .prov-desk__dash; mobile: .app-screen--dashboard.
+      const dashRoot =
+        document.querySelector("#app-fullscreen .prov-desk__dash") ||
+        document.querySelector("#app-fullscreen .app-screen--dashboard") ||
+        document.querySelector("#app-fullscreen");
+      const dashText = (dashRoot && dashRoot.textContent) || "";
+      window.AppState.screen.provider = "calendar";
+      window.AppState.provCalVisibleDays = 7;
+      window.AppState.provCalDate = "2026-08-08";
+      window.AppState.provCalWindowStart = "2026-08-03";
+      window.App.renderAll();
+      const eventsAug8 = document.querySelectorAll(
+        '#app-fullscreen .gcal__event[data-booking-id="bk_09b0d87dabe54458"]'
+      ).length;
+      window.AppState.provCalDate = "2026-08-10";
+      window.AppState.provCalWindowStart = "2026-08-10";
+      window.App.renderAll();
+      const eventsAug10 = document.querySelectorAll(
+        '#app-fullscreen .gcal__event[data-booking-id="bk_eba941b7b8aa4af8"]'
+      ).length;
+      return {
+        synced: synced.ok,
+        myProviderId: window.App.myProviderId(),
+        visitCount: visits.length,
+        visitIds: visits
+          .map(function (b) {
+            return b.id;
+          })
+          .sort(),
+        dashHasHubert: dashText.indexOf("hubert przychodniak") !== -1,
+        dashHasSkanowski: dashText.indexOf("Skanowski pl") !== -1,
+        eventsAug8: eventsAug8,
+        eventsAug10: eventsAug10,
+      };
+    });
+
+    expect(result).toEqual({
+      synced: true,
+      myProviderId: "provider_094c71954dbb47dc",
+      visitCount: 2,
+      visitIds: ["bk_09b0d87dabe54458", "bk_eba941b7b8aa4af8"],
+      dashHasHubert: true,
+      dashHasSkanowski: true,
+      eventsAug8: 1,
+      eventsAug10: 1,
+    });
+  });
+
+  test("kalendarz usługodawcy dopasowuje booking po aliasie apiId", async function ({ page }) {
+    await resetAndLogin(page, "provider");
+    const result = await page.evaluate(function () {
+      localStorage.removeItem("lokalnie.testerMode");
+      window.AppState.providerProfiles = [
+        {
+          id: "bhkocury-1",
+          slug: "bhkocury-1",
+          apiId: "provider_094c71954dbb47dc",
+          name: "BHkocury #1",
+          category: "beauty",
+          city: "Poznań",
+          services: [],
+          availability: [],
+          _mine: true,
+          _fromApi: true,
+        },
+      ];
+      window.AppState.activeProviderId = "bhkocury-1";
+      window.AppState.myProvider = window.AppState.providerProfiles[0];
+      window.AppState.providerRoleActive = true;
+      window.AppState.bookings = [
+        {
+          id: "bk-alias-own",
+          providerId: "provider_094c71954dbb47dc",
+          clientName: "Klient Alias",
+          serviceNames: ["Usługa"],
+          dateISO: "2026-08-12",
+          from: "10:00",
+          to: "10:30",
+          status: "confirmed",
+          _fromApi: true,
+        },
+        {
+          id: "bk-alias-foreign",
+          providerId: "provider-other",
+          clientName: "Obcy Klient",
+          serviceNames: ["Usługa"],
+          dateISO: "2026-08-12",
+          from: "11:00",
+          to: "11:30",
+          status: "confirmed",
+          _fromApi: true,
+        },
+      ];
+      window.AppState.activeRole = "provider";
+      window.AppState.screen.provider = "calendar";
+      window.AppState.provCalVisibleDays = 7;
+      window.AppState.provCalDate = "2026-08-12";
+      window.AppState.provCalWindowStart = "2026-08-10";
+      window.App.saveState();
+      window.App.renderAll();
+      const visits = window.App.providerVisits();
+      return {
+        myProviderId: window.App.myProviderId(),
+        idSet: window.App.myProviderIdSet().sort(),
+        visitIds: visits
+          .map(function (b) {
+            return b.id;
+          })
+          .sort(),
+        foreignHidden: !visits.some(function (b) {
+          return b.id === "bk-alias-foreign";
+        }),
+        eventOwn: document.querySelectorAll(
+          '#app-fullscreen .gcal__event[data-booking-id="bk-alias-own"]'
+        ).length,
+        eventForeign: document.querySelectorAll(
+          '#app-fullscreen .gcal__event[data-booking-id="bk-alias-foreign"]'
+        ).length,
+      };
+    });
+    expect(result).toEqual({
+      myProviderId: "bhkocury-1",
+      idSet: ["bhkocury-1", "provider_094c71954dbb47dc"],
+      visitIds: ["bk-alias-own"],
+      foreignHidden: true,
+      eventOwn: 1,
+      eventForeign: 0,
+    });
+  });
+
+  test("brak profilu usługodawcy nie pokazuje wizyt demo w kalendarzu", async function ({ page }) {
+    await page.addInitScript(function () {
+      try {
+        if (navigator.serviceWorker && navigator.serviceWorker.register) {
+          navigator.serviceWorker.register = function () {
+            return Promise.reject(new Error("e2e: service worker disabled"));
+          };
+        }
+      } catch (err) {
+        /* ignore */
+      }
+      let api;
+      Object.defineProperty(window, "LokalnieApi", {
+        configurable: true,
+        enumerable: true,
+        get: function () {
+          return api;
+        },
+        set: function (value) {
+          api = value;
+          if (!api) return;
+          api.enabled = false;
+          api.isProductionHostname = function () {
+            return true;
+          };
+          api.syncFromServer = function () {
+            return Promise.resolve({ ok: false, skipped: true });
+          };
+        },
+      });
+    });
+    await page.goto("/index.html?e2e=provider-no-demo-fallback", {
+      waitUntil: "domcontentloaded",
+    });
+    await page.waitForFunction(function () {
+      return !!(window.App && window.AppState && window.App.providerVisits);
+    });
+
+    const result = await page.evaluate(function () {
+      window.AppState.loggedIn = true;
+      window.AppState.providerProfiles = [];
+      window.AppState.myProvider = null;
+      window.AppState.activeProviderId = null;
+      window.AppState.providerRoleActive = false;
+      window.AppState.bookings = [
+        {
+          id: "bk-demo-leak",
+          providerId: "grzesiu-barber",
+          clientName: "Demo Leak",
+          serviceNames: ["Strzyżenie"],
+          dateISO: "2026-08-08",
+          from: "12:00",
+          to: "12:30",
+          status: "confirmed",
+        },
+      ];
+      window.AppState.activeRole = "provider";
+      window.AppState.screen.provider = "calendar";
+      window.AppState.provCalDate = "2026-08-08";
+      window.App.saveState();
+      window.App.renderAll();
+      return {
+        myProviderId: window.App.myProviderId(),
+        idSet: window.App.myProviderIdSet(),
+        visitCount: window.App.providerVisits().length,
+        eventCount: document.querySelectorAll("#app-fullscreen .gcal__event").length,
+      };
+    });
+    expect(result).toEqual({
+      myProviderId: "",
+      idSet: [],
+      visitCount: 0,
+      eventCount: 0,
+    });
+  });
+
   test("katalog z API nie znika przy filtrze daty bez availability", async function ({ page }) {
     await resetAndLogin(page, "client");
     await page.evaluate(function () {

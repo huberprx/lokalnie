@@ -50,7 +50,7 @@
   const DAY_PART_SHORT = { am: "przed poł.", pm: "po poł.", any: "dowolnie" };
   const DAY_PART_SPLIT_MIN = 12 * 60;
 
-  const APP_VERSION = "1.0.236";
+  const APP_VERSION = "1.0.237";
   const PENDING_INTENT_KEY = "lokalnie.pendingIntent";
   const PENDING_DRAFT_KEY = "lokalnie.pendingDraft";
   /** true tylko po świadomej aktualizacji PWA — wtedy wolno zrobić jeden reload. */
@@ -7599,14 +7599,37 @@
   function myProvider() {
     ensureProviderProfiles();
     if (window.AppState && window.AppState.myProvider) return window.AppState.myProvider;
-    // Tester / demo bez własnej listy — katalogowy mock.
+    // Tester / demo bez własnej listy — katalogowy mock. Poza testerem: null (nie demo).
     if (isTesterMode()) return getProviderById(MY_PROVIDER_ID);
-    return getProviderById(MY_PROVIDER_ID);
+    return null;
   }
 
   function myProviderId() {
     const p = myProvider();
-    return (p && p.id) || MY_PROVIDER_ID;
+    return (p && p.id) || "";
+  }
+
+  /** Aliasy aktywnego profilu: rekordy z API i lokalne mogą trzymać id, apiId albo slug. */
+  function myProviderIdSet() {
+    const p = myProvider();
+    if (!p) return [];
+    const out = [];
+    const seen = Object.create(null);
+    [p.id, p.apiId, p.slug].forEach(function (value) {
+      if (!value) return;
+      const key = String(value);
+      if (seen[key]) return;
+      seen[key] = true;
+      out.push(key);
+    });
+    return out;
+  }
+
+  function belongsToMyProvider(item, ids) {
+    if (!item || item.providerId == null || item.providerId === "") return false;
+    const aliases = ids || myProviderIdSet();
+    if (!aliases.length) return false;
+    return aliases.indexOf(String(item.providerId)) !== -1;
   }
 
   function isOwnedProvider(p) {
@@ -7825,9 +7848,12 @@
   }
 
   function providerOpenRequests() {
+    const ids = myProviderIdSet();
     return (window.AppState.requests || [])
       .filter(function (r) {
-        return r && r.providerId === MY_PROVIDER_ID && (r.status === "pending" || r.status === "proposed");
+        return (
+          belongsToMyProvider(r, ids) && (r.status === "pending" || r.status === "proposed")
+        );
       })
       .slice()
       .sort(function (a, b) {
@@ -7923,15 +7949,16 @@
 
   /** Ostatnio odrzucone: wizyty + prośby (bez duplikatów), od najnowszych. */
   function providerRecentRejected() {
+    const ids = myProviderIdSet();
     const bookings = (window.AppState.bookings || []).filter(function (b) {
-      return b && b.providerId === MY_PROVIDER_ID && b.status === "rejected";
+      return belongsToMyProvider(b, ids) && b.status === "rejected";
     });
     const linkedReq = Object.create(null);
     bookings.forEach(function (b) {
       if (b.requestId) linkedReq[b.requestId] = true;
     });
     const requests = (window.AppState.requests || []).filter(function (r) {
-      return r && r.providerId === MY_PROVIDER_ID && r.status === "rejected" && !linkedReq[r.id];
+      return belongsToMyProvider(r, ids) && r.status === "rejected" && !linkedReq[r.id];
     });
     const items = bookings
       .map(function (b) {
@@ -7960,9 +7987,10 @@
 
   /** Ostatnio anulowane wizyty (od najnowszych). */
   function providerRecentCancelled() {
+    const ids = myProviderIdSet();
     return (window.AppState.bookings || [])
       .filter(function (b) {
-        return b && b.providerId === MY_PROVIDER_ID && b.status === "cancelled";
+        return belongsToMyProvider(b, ids) && b.status === "cancelled";
       })
       .map(function (b) {
         return {
@@ -8027,8 +8055,12 @@
     const compact = !!opts.compact;
     const searchOpen = !!window.AppState.dashSearchOpen;
     const searchQ = dashSearchQuery();
+    const myIds = myProviderIdSet();
     const upcomingAll = (window.AppState.bookings || [])
-      .filter((b) => b.providerId === MY_PROVIDER_ID && (b.status === "confirmed" || b.status === "proposed"))
+      .filter(
+        (b) =>
+          belongsToMyProvider(b, myIds) && (b.status === "confirmed" || b.status === "proposed")
+      )
       .sort((a, b) => (a.dateISO + a.from).localeCompare(b.dateISO + b.from));
     const upcoming = searchQ
       ? upcomingAll.filter(function (b) {
@@ -8124,7 +8156,7 @@
 
     let clientsHitsHtml = "";
     if (searchOpen && searchQ) {
-      const clients = collectProviderClients(MY_PROVIDER_ID).filter(function (c) {
+      const clients = collectProviderClients(myProviderIdSet()).filter(function (c) {
         return (
           dashTextMatches(c.name, searchQ) ||
           dashTextMatches(c.phone, searchQ) ||
@@ -8359,11 +8391,12 @@
   }
 
   function providerVisits() {
+    const ids = myProviderIdSet();
     return (window.AppState.bookings || [])
       .filter(function (b) {
         // Anulowane i odrzucone nie zajmują miejsca na siatce — zostają w historii / filtrach.
         return (
-          b.providerId === MY_PROVIDER_ID &&
+          belongsToMyProvider(b, ids) &&
           b.dateISO &&
           b.from &&
           b.to &&
@@ -10784,8 +10817,21 @@
     return open[0];
   }
 
-  /** Unikalni klienci usługodawcy (zapisani + z wizyt/próśb). */
-  function collectProviderClients(providerId) {
+  /** Unikalni klienci usługodawcy (zapisani + z wizyt/próśb). providerIdOrIds: string | string[]. */
+  function collectProviderClients(providerIdOrIds) {
+    const ids = (Array.isArray(providerIdOrIds)
+      ? providerIdOrIds
+      : providerIdOrIds
+        ? [providerIdOrIds]
+        : []
+    )
+      .filter(Boolean)
+      .map(String);
+    if (!ids.length) return [];
+    const idSet = Object.create(null);
+    ids.forEach(function (id) {
+      idSet[id] = true;
+    });
     const seen = Object.create(null);
     const list = [];
     function add(entry) {
@@ -10809,9 +10855,11 @@
       seen[key] = client;
       list.push(client);
     }
-    ensureProviderClientsList(providerId).forEach(add);
+    ids.forEach(function (providerId) {
+      ensureProviderClientsList(providerId).forEach(add);
+    });
     (window.AppState.bookings || []).forEach(function (b) {
-      if (!b || b.providerId !== providerId) return;
+      if (!b || !idSet[String(b.providerId)]) return;
       add({
         name: b.clientName,
         phone: b.clientPhone,
@@ -10820,7 +10868,7 @@
       });
     });
     (window.AppState.requests || []).forEach(function (r) {
-      if (!r || r.providerId !== providerId) return;
+      if (!r || !idSet[String(r.providerId)]) return;
       add({
         name: r.clientName,
         phone: r.clientPhone,
@@ -13731,8 +13779,9 @@
   }
 
   function renderRequests() {
+    const ids = myProviderIdSet();
     const all = (window.AppState.requests || []).filter(function (r) {
-      return r.providerId === MY_PROVIDER_ID;
+      return belongsToMyProvider(r, ids);
     });
     const pending = all.filter(function (r) {
       return r.status === "pending";
@@ -21439,6 +21488,10 @@
     openProvider: openProvider,
     getProviderBySlug: getProviderBySlug,
     refreshBookingDraftUI: refreshBookingDraftUI,
+    myProviderId: myProviderId,
+    myProviderIdSet: myProviderIdSet,
+    providerVisits: providerVisits,
+    belongsToMyProvider: belongsToMyProvider,
   };
 
   // ─────────────────────────────────────────────────────────
